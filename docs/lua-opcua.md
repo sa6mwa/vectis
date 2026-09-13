@@ -429,6 +429,13 @@ that operation, the method returns the standard structured OPC UA error table.
 `server:load_pubsub_configuration(bytes)` loads a previously serialized byte
 string and returns `true` or a structured OPC UA error.
 
+`call_method` and `call_method_many` execute the remote method once per Lua
+call. Each string-like output currently has a 512-byte decoding buffer. If an
+output exceeds that capacity, the call returns `nil, err` with `ERR_RANGE`;
+it does not retry the method to resize the buffer. The method may already have
+executed, so callers must not treat that error as proof that no side effect
+occurred or blindly retry non-idempotent methods.
+
 ## Server Example
 
 ```lua

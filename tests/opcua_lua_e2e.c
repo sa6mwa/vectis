@@ -51,6 +51,18 @@ static int open_opcua(void *lua_state) {
   return luaopen_opcua((lua_State *)lua_state);
 }
 
+static cpkt_opcua_result large_method(const cpkt_opcua_value *inputs,
+                                      size_t input_count,
+                                      cpkt_opcua_value *output, void *user) {
+  static char text[1024];
+  (void)inputs;
+  (void)input_count;
+  ++*(int *)user;
+  memset(text, 'x', sizeof(text));
+  cpkt_opcua_value_string(output, text, sizeof(text));
+  return CPKT_OPCUA_OK;
+}
+
 static int fail_result(cpkt_opcua_result result, cpkt_opcua_status status,
                        const char *operation) {
   fprintf(stderr, "%s failed: %s", operation, cpkt_opcua_result_string(result));
@@ -644,6 +656,7 @@ int main(int argc, char **argv) {
   unsigned short port;
   unsigned short lua_server_port;
   long method_factor;
+  int large_method_calls = 0;
   int method_input_types[1];
   int thread_started;
   int failed;
@@ -701,6 +714,14 @@ int main(int argc, char **argv) {
         status, "server add method");
   }
   if (!failed) {
+    failed = expect_ok(cpkt_opcua_server_add_method(
+                           server, cpkt_opcua_node_id_numeric(1u, 7104u),
+                           method_object_node, "large", "Large", NULL, 0u,
+                           CPKT_OPCUA_VALUE_STRING, large_method,
+                           &large_method_calls, &status),
+                       status, "add large method");
+  }
+  if (!failed) {
     failed = expect_ok(cpkt_opcua_server_endpoint_url(server, endpoint_url,
                                                       sizeof(endpoint_url),
                                                       &endpoint_required),
@@ -739,6 +760,13 @@ int main(int argc, char **argv) {
   if (thread_started) {
     loop.stop = 1;
     pthread_join(thread, NULL);
+    if (!failed && script_path != NULL &&
+        large_method_calls != (vectis_bin != NULL ? 4 : 2)) {
+      fprintf(stderr,
+              "large methods executed %d times instead of once per request\n",
+              large_method_calls);
+      failed = 1;
+    }
     if (!failed && loop.result != CPKT_OPCUA_OK) {
       failed = fail_result(loop.result, 0u, "server iterate");
     }

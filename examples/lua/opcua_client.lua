@@ -1206,6 +1206,16 @@ assert(method_values ~= nil,
        method_values_err and method_values_err.message or
        "client call method many")
 assert(method_values[1]:get() == 12)
+-- A result that exceeds the adapter buffer must never cause a second call.
+local large_method_node = opcua.node_id_numeric(1, 7104)
+local large_result, large_error =
+    client:call_method(method_object, large_method_node, {})
+assert(large_result == nil and large_error.result == opcua.ERR_RANGE)
+assert(large_error.message:find("not retried", 1, true))
+large_result, large_error =
+    client:call_method_many(method_object, large_method_node, {}, 1)
+assert(large_result == nil and large_error.result == opcua.ERR_RANGE)
+assert(large_error.message:find("not retried", 1, true))
 local client_range, client_range_err =
     client:read_integer_array_range(remote_array, "1:2")
 assert(client_range ~= nil,

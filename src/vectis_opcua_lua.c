@@ -3610,11 +3610,11 @@ static int vectis_opcua_lua_client_call_method_async(lua_State *lua) {
   client = vectis_opcua_lua_client_handle(lua, 1);
   object_node_id = vectis_opcua_lua_node_id_at(lua, 2);
   method_node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  lua_settop(lua, 7);
   inputs = vectis_opcua_lua_value_array_from_lua(
       lua, 4, &input_count, "opcua client async method inputs");
   output_count = (size_t)vectis_opcua_lua_check_ulong(lua, 5, "output_count");
   if (output_count == 0u) {
-    free(inputs);
     return luaL_error(lua, "output_count must be non-zero");
   }
   luaL_checktype(lua, 6, LUA_TFUNCTION);
@@ -3633,7 +3633,6 @@ static int vectis_opcua_lua_client_call_method_async(lua_State *lua) {
   if (callback->outputs == NULL || callback->string_buffers == NULL ||
       callback->string_buffer_sizes == NULL ||
       callback->required_string_sizes == NULL) {
-    free(inputs);
     vectis_opcua_lua_async_callback_free(callback);
     return luaL_error(lua, "opcua call_method_async allocation failed");
   }
@@ -3641,7 +3640,6 @@ static int vectis_opcua_lua_client_call_method_async(lua_State *lua) {
     callback->string_buffer_sizes[i] = buffer_size;
     callback->string_buffers[i] = (char *)malloc(buffer_size);
     if (callback->string_buffers[i] == NULL) {
-      free(inputs);
       vectis_opcua_lua_async_callback_free(callback);
       return luaL_error(lua,
                         "opcua call_method_async buffer allocation failed");
@@ -3654,7 +3652,6 @@ static int vectis_opcua_lua_client_call_method_async(lua_State *lua) {
       vectis_opcua_lua_async_call_cb, callback, &request_id, callback->outputs,
       callback->string_buffers, callback->string_buffer_sizes,
       callback->required_string_sizes, &status);
-  free(inputs);
   if (result != CPKT_OPCUA_OK) {
     vectis_opcua_lua_async_callback_free(callback);
     return vectis_opcua_lua_push_error(lua, result, status,
@@ -4261,12 +4258,39 @@ static void vectis_opcua_lua_value_field(lua_State *lua, int index,
   lua_pop(lua, 1);
 }
 
+/* C-call-scoped native storage: Lua closes these guards on both normal return
+ * and argument-error unwinding, including failures in subsequent options. */
+static int vectis_opcua_lua_array_close(lua_State *lua) {
+  void **storage = (void **)lua_touserdata(lua, 1);
+  free(*storage);
+  *storage = NULL;
+  return 0;
+}
+
+static void *vectis_opcua_lua_array_allocate(lua_State *lua, size_t size) {
+  void **storage = (void **)lua_newuserdatauv(lua, sizeof(*storage), 0);
+  *storage = NULL;
+  if (luaL_newmetatable(lua, "opcua.array_guard")) {
+    lua_pushcfunction(lua, vectis_opcua_lua_array_close);
+    lua_setfield(lua, -2, "__close");
+    lua_pushcfunction(lua, vectis_opcua_lua_array_close);
+    lua_setfield(lua, -2, "__gc");
+  }
+  lua_setmetatable(lua, -2);
+  lua_toclose(lua, -1);
+  *storage = malloc(size);
+  if (*storage == NULL)
+    luaL_error(lua, "opcua array allocation failed");
+  return *storage;
+}
+
 static int *vectis_opcua_lua_int_array_field(lua_State *lua, int index,
                                              const char *field,
                                              size_t *count_out) {
   int *values;
   size_t count;
   size_t i;
+  int array_index;
 
   *count_out = 0u;
   lua_getfield(lua, index, field);
@@ -4280,18 +4304,14 @@ static int *vectis_opcua_lua_int_array_field(lua_State *lua, int index,
     (void)luaL_error(lua, "%s size overflow", field);
     return NULL;
   }
-  values = (int *)malloc(sizeof(int) * (count == 0u ? 1u : count));
-  if (values == NULL) {
-    lua_pop(lua, 1);
-    (void)luaL_error(lua, "%s allocation failed", field);
-    return NULL;
-  }
+  array_index = lua_gettop(lua);
+  values = (int *)vectis_opcua_lua_array_allocate(
+      lua, sizeof(int) * (count == 0u ? 1u : count));
   for (i = 0u; i < count; ++i) {
-    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    lua_rawgeti(lua, array_index, (lua_Integer)i + 1);
     values[i] = (int)luaL_checkinteger(lua, -1);
     lua_pop(lua, 1);
   }
-  lua_pop(lua, 1);
   *count_out = count;
   return values;
 }
@@ -4304,17 +4324,14 @@ vectis_opcua_lua_ulong_array_from_lua(lua_State *lua, int index,
   size_t i;
 
   *count_out = 0u;
+  index = lua_absindex(lua, index);
   count = vectis_opcua_lua_array_len(lua, index, context);
   if (count > ((size_t)-1) / sizeof(unsigned long)) {
     (void)luaL_error(lua, "%s size overflow", context);
     return NULL;
   }
-  values = (unsigned long *)malloc(sizeof(unsigned long) *
-                                   (count == 0u ? 1u : count));
-  if (values == NULL) {
-    (void)luaL_error(lua, "%s allocation failed", context);
-    return NULL;
-  }
+  values = (unsigned long *)vectis_opcua_lua_array_allocate(
+      lua, sizeof(unsigned long) * (count == 0u ? 1u : count));
   for (i = 0u; i < count; ++i) {
     lua_rawgeti(lua, index, (lua_Integer)i + 1);
     values[i] = vectis_opcua_lua_check_ulong(lua, -1, context);
@@ -4348,6 +4365,7 @@ vectis_opcua_lua_value_array_from_lua(lua_State *lua, int index,
   size_t i;
 
   *count_out = 0u;
+  index = lua_absindex(lua, index);
   if (lua_isnoneornil(lua, index)) {
     return NULL;
   }
@@ -4356,12 +4374,8 @@ vectis_opcua_lua_value_array_from_lua(lua_State *lua, int index,
     (void)luaL_error(lua, "%s size overflow", context);
     return NULL;
   }
-  values = (cpkt_opcua_value *)malloc(sizeof(cpkt_opcua_value) *
-                                      (count == 0u ? 1u : count));
-  if (values == NULL) {
-    (void)luaL_error(lua, "%s allocation failed", context);
-    return NULL;
-  }
+  values = (cpkt_opcua_value *)vectis_opcua_lua_array_allocate(
+      lua, sizeof(cpkt_opcua_value) * (count == 0u ? 1u : count));
   for (i = 0u; i < count; ++i) {
     lua_rawgeti(lua, index, (lua_Integer)i + 1);
     vectis_opcua_lua_value_from_lua(lua, -1, &values[i]);
@@ -5755,6 +5769,7 @@ static int vectis_opcua_lua_server_add_method(lua_State *lua) {
   const char *browse_name;
   const char *display_name;
   int *input_types;
+  int callback_index;
   size_t input_count;
   int output_type;
   cpkt_opcua_status status;
@@ -5782,17 +5797,16 @@ static int vectis_opcua_lua_server_add_method(lua_State *lua) {
     lua_getfield(lua, 2, "handler");
   }
   luaL_checktype(lua, -1, LUA_TFUNCTION);
+  callback_index = lua_gettop(lua);
   output_type =
       vectis_opcua_lua_table_int(lua, 2, "output_type", CPKT_OPCUA_VALUE_EMPTY);
   input_types =
       vectis_opcua_lua_int_array_field(lua, 2, "input_types", &input_count);
-  callback = vectis_opcua_lua_method_callback_new(lua, -1, 1u);
-  lua_pop(lua, 1);
+  callback = vectis_opcua_lua_method_callback_new(lua, callback_index, 1u);
   status = 0u;
   result = cpkt_opcua_server_add_method(
       server, node_id, parent_node_id, browse_name, display_name, input_types,
       input_count, output_type, vectis_opcua_lua_method_cb, callback, &status);
-  free(input_types);
   if (result != CPKT_OPCUA_OK) {
     vectis_opcua_lua_method_callback_free(callback);
     return vectis_opcua_lua_push_error(lua, result, status,
@@ -5811,6 +5825,7 @@ static int vectis_opcua_lua_server_add_method_many(lua_State *lua) {
   const char *browse_name;
   const char *display_name;
   int *input_types;
+  int callback_index;
   int *output_types;
   size_t input_count;
   size_t output_count;
@@ -5839,25 +5854,22 @@ static int vectis_opcua_lua_server_add_method_many(lua_State *lua) {
     lua_getfield(lua, 2, "handler");
   }
   luaL_checktype(lua, -1, LUA_TFUNCTION);
+  callback_index = lua_gettop(lua);
   input_types =
       vectis_opcua_lua_int_array_field(lua, 2, "input_types", &input_count);
   output_types =
       vectis_opcua_lua_int_array_field(lua, 2, "output_types", &output_count);
   if (output_count == 0u) {
-    free(input_types);
-    free(output_types);
     return luaL_error(lua,
                       "opcua server add_method_many requires output_types");
   }
-  callback = vectis_opcua_lua_method_callback_new(lua, -1, output_count);
-  lua_pop(lua, 1);
+  callback =
+      vectis_opcua_lua_method_callback_new(lua, callback_index, output_count);
   status = 0u;
   result = cpkt_opcua_server_add_method_many(
       server, node_id, parent_node_id, browse_name, display_name, input_types,
       input_count, output_types, output_count, vectis_opcua_lua_method_many_cb,
       callback, &status);
-  free(input_types);
-  free(output_types);
   if (result != CPKT_OPCUA_OK) {
     vectis_opcua_lua_method_callback_free(callback);
     return vectis_opcua_lua_push_error(lua, result, status,
@@ -6322,7 +6334,6 @@ static int vectis_opcua_lua_server_write_array_dimensions(lua_State *lua) {
   status = 0u;
   result = cpkt_opcua_server_write_array_dimensions(server, node_id, dimensions,
                                                     dimension_count, &status);
-  free(dimensions);
   if (result != CPKT_OPCUA_OK) {
     return vectis_opcua_lua_push_error(lua, result, status,
                                        "opcua server write array dimensions");
@@ -8334,7 +8345,6 @@ static int vectis_opcua_lua_client_write_array_dimensions(lua_State *lua) {
   status = 0u;
   result = cpkt_opcua_client_write_array_dimensions(client, node_id, dimensions,
                                                     dimension_count, &status);
-  free(dimensions);
   if (result != CPKT_OPCUA_OK) {
     return vectis_opcua_lua_push_error(lua, result, status,
                                        "opcua client write array dimensions");
@@ -9620,7 +9630,6 @@ static int vectis_opcua_lua_client_call_method(lua_State *lua) {
   size_t input_count;
   cpkt_opcua_value output;
   char stack_buffer[512];
-  char *buffer;
   size_t required_size;
   cpkt_opcua_status status;
   cpkt_opcua_result result;
@@ -9628,38 +9637,24 @@ static int vectis_opcua_lua_client_call_method(lua_State *lua) {
   client = vectis_opcua_lua_client_handle(lua, 1);
   object_node_id = vectis_opcua_lua_node_id_at(lua, 2);
   method_node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  lua_settop(lua, 4);
   inputs = vectis_opcua_lua_value_array_from_lua(lua, 4, &input_count,
                                                  "opcua client method inputs");
-  buffer = stack_buffer;
   required_size = 0u;
   cpkt_opcua_value_clear(&output);
   status = 0u;
   result = cpkt_opcua_client_call_method(
       client, object_node_id, method_node_id, inputs, input_count, &output,
-      buffer, sizeof(stack_buffer), &required_size, &status);
-  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
-    buffer = (char *)malloc(required_size + 1u);
-    if (buffer == NULL) {
-      free(inputs);
-      return luaL_error(lua, "opcua client method output allocation failed");
-    }
-    cpkt_opcua_value_clear(&output);
-    result = cpkt_opcua_client_call_method(
-        client, object_node_id, method_node_id, inputs, input_count, &output,
-        buffer, required_size + 1u, NULL, &status);
-  }
-  free(inputs);
+      stack_buffer, sizeof(stack_buffer), &required_size, &status);
   if (result != CPKT_OPCUA_OK) {
-    if (buffer != stack_buffer) {
-      free(buffer);
-    }
-    return vectis_opcua_lua_push_error(lua, result, status,
-                                       "opcua client call method");
+    return vectis_opcua_lua_push_error(
+        lua, result, status,
+        result == CPKT_OPCUA_ERR_RANGE
+            ? "opcua method output exceeds capacity; method may have executed; "
+              "not retried"
+            : "opcua client call method");
   }
   (void)vectis_opcua_lua_push_value_copy(lua, &output);
-  if (buffer != stack_buffer) {
-    free(buffer);
-  }
   return 1;
 }
 
@@ -9694,11 +9689,11 @@ static int vectis_opcua_lua_client_call_method_many(lua_State *lua) {
   client = vectis_opcua_lua_client_handle(lua, 1);
   object_node_id = vectis_opcua_lua_node_id_at(lua, 2);
   method_node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  lua_settop(lua, 5);
   inputs = vectis_opcua_lua_value_array_from_lua(lua, 4, &input_count,
                                                  "opcua client method inputs");
   output_count = (size_t)vectis_opcua_lua_check_ulong(lua, 5, "output_count");
   if (output_count == 0u) {
-    free(inputs);
     return luaL_error(lua, "output_count must be non-zero");
   }
   outputs = (cpkt_opcua_value *)calloc(output_count, sizeof(*outputs));
@@ -9707,7 +9702,6 @@ static int vectis_opcua_lua_client_call_method_many(lua_State *lua) {
   required_sizes = (size_t *)calloc(output_count, sizeof(*required_sizes));
   if (outputs == NULL || buffers == NULL || buffer_sizes == NULL ||
       required_sizes == NULL) {
-    free(inputs);
     free(outputs);
     vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
     free(buffer_sizes);
@@ -9718,7 +9712,6 @@ static int vectis_opcua_lua_client_call_method_many(lua_State *lua) {
     buffer_sizes[i] = 512u;
     buffers[i] = (char *)malloc(buffer_sizes[i]);
     if (buffers[i] == NULL) {
-      free(inputs);
       free(outputs);
       vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
       free(buffer_sizes);
@@ -9731,39 +9724,17 @@ static int vectis_opcua_lua_client_call_method_many(lua_State *lua) {
   result = cpkt_opcua_client_call_method_many(
       client, object_node_id, method_node_id, inputs, input_count, outputs,
       output_count, buffers, buffer_sizes, required_sizes, &status);
-  if (result == CPKT_OPCUA_ERR_RANGE) {
-    for (i = 0u; i < output_count; ++i) {
-      if (required_sizes[i] > buffer_sizes[i]) {
-        char *new_buffer;
-
-        new_buffer = (char *)realloc(buffers[i], required_sizes[i] + 1u);
-        if (new_buffer == NULL) {
-          free(inputs);
-          free(outputs);
-          vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
-          free(buffer_sizes);
-          free(required_sizes);
-          return luaL_error(
-              lua, "opcua client method many output allocation failed");
-        }
-        buffers[i] = new_buffer;
-        buffer_sizes[i] = required_sizes[i] + 1u;
-      }
-      required_sizes[i] = 0u;
-      cpkt_opcua_value_clear(&outputs[i]);
-    }
-    result = cpkt_opcua_client_call_method_many(
-        client, object_node_id, method_node_id, inputs, input_count, outputs,
-        output_count, buffers, buffer_sizes, required_sizes, &status);
-  }
-  free(inputs);
   if (result != CPKT_OPCUA_OK) {
     free(outputs);
     vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
     free(buffer_sizes);
     free(required_sizes);
-    return vectis_opcua_lua_push_error(lua, result, status,
-                                       "opcua client call method many");
+    return vectis_opcua_lua_push_error(
+        lua, result, status,
+        result == CPKT_OPCUA_ERR_RANGE
+            ? "opcua method output exceeds capacity; method may have executed; "
+              "not retried"
+            : "opcua client call method many");
   }
   lua_newtable(lua);
   for (i = 0u; i < output_count; ++i) {

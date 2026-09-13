@@ -63,6 +63,20 @@ if(TARGET vectis_bin)
   add_executable(vectis_opcua_lua_e2e
     opcua_lua_e2e.c
     $<TARGET_OBJECTS:vectis_opcua_lua>)
+  add_executable(vectis_opcua_lua_cleanup unit/test_vectis_opcua_lua_cleanup.c)
+  target_include_directories(vectis_opcua_lua_cleanup PRIVATE
+    "${CMAKE_SOURCE_DIR}/src")
+  target_link_libraries(vectis_opcua_lua_cleanup PRIVATE
+    ${vectis_test_link_target} cpkt::lua_runtime cpkt::opcua)
+  set_target_properties(vectis_opcua_lua_cleanup PROPERTIES
+    C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_opcua_lua_cleanup PRIVATE
+      -UNDEBUG -Wall -Wextra -Werror -Wpedantic)
+  endif()
+  add_test(NAME vectis_opcua_lua_cleanup COMMAND vectis_opcua_lua_cleanup)
+  set_tests_properties(vectis_opcua_lua_cleanup PROPERTIES
+    LABELS "unit;lua;local" TIMEOUT 30)
   target_include_directories(vectis_opcua_lua_e2e PRIVATE
     "${VECTIS_EXTERNAL_ROOT}/include")
   target_compile_definitions(vectis_opcua_lua_e2e PRIVATE
