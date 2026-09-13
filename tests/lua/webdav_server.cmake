@@ -278,6 +278,20 @@ for _, prefix in ipairs({"/open", "/disk"}) do
     depth = 0, destination = base .. prefix .. "/depth-move/file",
   })).ok)
   for _, operation in ipairs({webdav.copy, webdav.move}) do
+    for _, value in ipairs({"false", "true", "f", "t", "0", "1", "T, F", "FF"}) do
+      local result = operation(request_opts(source, {
+        destination = base .. destination, headers = {Overwrite = value},
+      }))
+      assert(result.status == 400, value .. ": " .. tostring(result.status))
+      assert(webdav.get(request_opts(source)).body == original)
+      assert(webdav.get(request_opts(destination)).body == "keep destination")
+    end
+    local refused = operation(request_opts(source, {
+      destination = base .. destination, headers = {Overwrite = "F"},
+    }))
+    assert(refused.status == 412)
+    assert(webdav.get(request_opts(source)).body == original)
+    assert(webdav.get(request_opts(destination)).body == "keep destination")
     for _, headers in ipairs({{["If-Match"] = '"stale"'}, {["If-None-Match"] = "*"}}) do
       local result = operation(request_opts(source, {
         destination = base .. destination, headers = headers,
@@ -292,6 +306,19 @@ for _, prefix in ipairs({"/open", "/disk"}) do
   assert(webdav.get(request_opts(destination)).body == original)
   assert(webdav.move(request_opts(destination, {destination = base .. prefix .. "/public/matched.txt",
     headers = {["If-Match"] = "*"}})).status == 201)
+  for _, operation in ipairs({webdav.copy, webdav.move}) do
+    for _, headers in ipairs({{}, {Overwrite = "T"}}) do
+      local src = prefix .. "/public/overwrite-source"
+      local dst = prefix .. "/public/overwrite-target"
+      assert(webdav.put(request_opts(src, {body = "replacement"})).ok)
+      assert(webdav.put(request_opts(dst, {body = "original"})).ok)
+      assert(operation(request_opts(src, {destination = base .. dst, headers = headers})).status == 201)
+      assert(webdav.get(request_opts(dst)).body == "replacement")
+      local remaining = webdav.get(request_opts(src))
+      if operation == webdav.move then assert(remaining.status == 404)
+      else assert(remaining.body == "replacement") end
+    end
+  end
 end
 
 local native_required = webdav.get(request_opts("/native/protected.txt"))

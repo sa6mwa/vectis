@@ -16289,14 +16289,17 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
       return VECTIS_OK;
     }
     overwrite_header = vectis_request_header(request, "overwrite");
+    if (overwrite_header != NULL && strcmp(overwrite_header, "T") != 0 &&
+        strcmp(overwrite_header, "F") != 0) {
+      return vectis_response_status(response, 400, error);
+    }
     depth_header = vectis_request_header(request, "depth");
     if (method == VECTIS_HTTP_COPY && depth_header != NULL &&
         strcmp(depth_header, "0") != 0 &&
         strcmp(depth_header, "infinity") != 0) {
       return vectis_response_status(response, 400, error);
     }
-    overwrite =
-        overwrite_header == NULL || strcasecmp(overwrite_header, "F") != 0;
+    overwrite = overwrite_header == NULL || strcmp(overwrite_header, "T") == 0;
     webdav_status =
         method == VECTIS_HTTP_COPY
             ? vectis_webdav_copy_conditional(
