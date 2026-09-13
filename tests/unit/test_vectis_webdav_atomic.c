@@ -145,6 +145,7 @@ static void test_authorization_preflight(const char *root) {
   char direct[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   int mode;
   int operation;
+  int created;
   vectis_webdav_status status;
   assert(snprintf(direct, sizeof(direct), "%s/direct", root) > 0);
   assert(mkdir(direct, 0700) == 0);
@@ -166,9 +167,11 @@ static void test_authorization_preflight(const char *root) {
         status = vectis_internal_webdav_delete_authorized(
             &config, "/source", NULL, NULL, check_mutation_lock, &check);
       } else {
+        created = 99;
         status = vectis_internal_webdav_transfer_authorized(
             &config, "/source", "/target", 1, operation == 2, 0, NULL, NULL,
-            check_mutation_lock, &check);
+            check_mutation_lock, &check, &created);
+        assert(created == 0);
       }
       assert(status == VECTIS_WEBDAV_INVALID);
       assert(check.calls == operation + 1);
@@ -182,7 +185,8 @@ static void test_authorization_preflight(const char *root) {
     check.allow = 1;
     assert(vectis_internal_webdav_transfer_authorized(
                &config, "/source", "/target", 1, 1, 0, NULL, NULL,
-               check_mutation_lock, &check) == VECTIS_WEBDAV_OK);
+               check_mutation_lock, &check, &created) == VECTIS_WEBDAV_OK);
+    assert(created == 0);
     assert(vectis_internal_webdav_delete_authorized(
                &config, "/target", NULL, NULL, check_mutation_lock, &check) ==
            VECTIS_WEBDAV_OK);

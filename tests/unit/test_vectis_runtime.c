@@ -5264,7 +5264,8 @@ static void assert_kore_smoke(void) {
   status =
       vectis_http_execute(&http, &request, &embedded_webdav_response, &error);
   assert(status == VECTIS_OK);
-  assert(embedded_webdav_response.status_code == 201L);
+  assert(embedded_webdav_response.status_code == 204L);
+  assert(embedded_webdav_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_webdav_response);
 
   vectis_http_request_init(&request);

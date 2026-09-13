@@ -16390,6 +16390,7 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
   char target[VECTIS_WEBDAV_PATH_MAX + 1u];
   int authorized;
   int overwrite;
+  int created;
 
   (void)app;
   data = (vectis_webdav_route_data *)userdata;
@@ -16443,13 +16444,13 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
     }
     response_body.data = body.data;
     response_body.size = body.size;
-    webdav_status = vectis_webdav_put_conditional(
+    webdav_status = vectis_internal_webdav_put_conditional(
         &data->storage, resource, (const unsigned char *)response_body.data,
         response_body.size, vectis_request_header(request, "if-match"),
-        vectis_request_header(request, "if-none-match"));
+        vectis_request_header(request, "if-none-match"), &created);
     vectis_mutable_bytes_cleanup(&body);
     return webdav_status == VECTIS_WEBDAV_OK
-               ? vectis_response_status(response, 201, error)
+               ? vectis_response_status(response, created ? 201 : 204, error)
                : vectis_webdav_status_response(webdav_status, response, error);
   }
   if (method == VECTIS_HTTP_DELETE) {
@@ -16521,11 +16522,11 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
             : (depth_header != NULL && strcmp(depth_header, "infinity") != 0),
         vectis_request_header(request, "if-match"),
         vectis_request_header(request, "if-none-match"),
-        vectis_webdav_authorize_mutation, &walk);
+        vectis_webdav_authorize_mutation, &walk, &created);
     if (walk.status != VECTIS_OK || !walk.authorized)
       return walk.status;
     return webdav_status == VECTIS_WEBDAV_OK
-               ? vectis_response_status(response, 201, error)
+               ? vectis_response_status(response, created ? 201 : 204, error)
                : vectis_webdav_status_response(webdav_status, response, error);
   }
   return vectis_response_status(response, 405, error);

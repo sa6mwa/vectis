@@ -270,7 +270,7 @@ static void test_destination_authority(const vectis_webdav_config *storage) {
                                             response, &error) == VECTIS_OK,
              "dispatch authority transfer");
       expect(vectis_internal_response_status_code(response) ==
-                 (i < 6u ? 400 : 201),
+                 (i < 6u ? 400 : 204),
              "reject unsupported destination and accept local authority");
       body = NULL;
       size = 0u;

@@ -189,7 +189,7 @@ for _, mount in ipairs({"/open", "/disk"}) do
     return webdav.put(request_opts(path, {headers = headers, body = body or "bad"}))
   end
   assert(put({["If-Match"] = "*"}).status == 412)
-  assert(put({["If-None-Match"] = "*"}, "original").ok)
+  assert(put({["If-None-Match"] = "*"}, "original").status == 201)
   local original = webdav.get(request_opts(path))
   local etag = assert(original.headers:match('etag: ([^\r\n]+)'))
   assert(etag:match('^"%x+"$'))
@@ -199,10 +199,39 @@ for _, mount in ipairs({"/open", "/disk"}) do
   assert(put({["If-None-Match"] = "W/" .. etag}).status == 412)
   assert(put({["If-Match"] = etag .. ','}).status == 400)
   assert(webdav.get(request_opts(path)).body == "original")
-  assert(put({["If-Match"] = '"wrong", ' .. etag}, "updated").ok)
+  local replaced = put({["If-Match"] = '"wrong", ' .. etag}, "updated")
+  assert(replaced.status == 204 and replaced.body == "")
   assert(put({["If-Match"] = etag}).status == 412)
   assert(webdav.get(request_opts(path)).body == "updated")
   assert(webdav.delete(request_opts(path)).ok)
+  assert(put({}, "recreated").status == 201)
+  assert(put({}, "replaced").status == 204)
+  assert(webdav.delete(request_opts(path)).ok)
+  for _, operation in ipairs({webdav.copy, webdav.move}) do
+    for _, collection in ipairs({false, true}) do
+      local src, dst = mount .. "/status-source", mount .. "/status-target"
+      local function seed()
+        if collection then
+          assert(webdav.mkcol(request_opts(src)).status == 201)
+          assert(webdav.put(request_opts(src .. "/child", {body = "child"})).status == 201)
+        else
+          assert(webdav.put(request_opts(src, {body = "source"})).status == 201)
+        end
+      end
+      seed()
+      for _, expected in ipairs({201, 204, 201}) do
+        local result = operation(request_opts(src, {destination = base .. dst}))
+        assert(result.status == expected, tostring(result.status))
+        assert(result.body == "")
+        assert(webdav.get(request_opts(collection and dst .. "/child" or dst)).body ==
+          (collection and "child" or "source"))
+        if operation == webdav.move then seed() end
+        if expected == 204 then assert(webdav.delete(request_opts(dst)).status == 204) end
+      end
+      assert(webdav.delete(request_opts(src)).status == 204)
+      assert(webdav.delete(request_opts(dst)).status == 204)
+    end
+  end
 end
 
 local open_mkcol = webdav.mkcol(request_opts("/open/public"))
@@ -326,7 +355,7 @@ for _, prefix in ipairs({"/open", "/disk"}) do
     end
   end
   assert(webdav.copy(request_opts(source, {destination = base .. destination,
-    headers = {["If-Match"] = "*"}})).status == 201)
+    headers = {["If-Match"] = "*"}})).status == 204)
   assert(webdav.get(request_opts(destination)).body == original)
   assert(webdav.move(request_opts(destination, {destination = base .. prefix .. "/public/matched.txt",
     headers = {["If-Match"] = "*"}})).status == 201)
@@ -336,7 +365,8 @@ for _, prefix in ipairs({"/open", "/disk"}) do
       local dst = prefix .. "/public/overwrite-target"
       assert(webdav.put(request_opts(src, {body = "replacement"})).ok)
       assert(webdav.put(request_opts(dst, {body = "original"})).ok)
-      assert(operation(request_opts(src, {destination = base .. dst, headers = headers})).status == 201)
+      local replaced = operation(request_opts(src, {destination = base .. dst, headers = headers}))
+      assert(replaced.status == 204 and replaced.body == "")
       assert(webdav.get(request_opts(dst)).body == "replacement")
       local remaining = webdav.get(request_opts(src))
       if operation == webdav.move then assert(remaining.status == 404)
@@ -396,7 +426,7 @@ for _, site in ipairs({"open", "disk"}) do
       assert(webdav.get(request_opts(raw .. dst .. "/keep.txt")).body == "keep")
     end
     assert(webdav.copy(request_opts(guard .. dst, {destination = base .. guard .. src, depth = 0})).status == 404)
-    assert(webdav.copy(request_opts(guard .. src, {destination = base .. guard .. dst, depth = 0})).status == 201)
+    assert(webdav.copy(request_opts(guard .. src, {destination = base .. guard .. dst, depth = 0})).status == 204)
     assert(read_file(physical) == "protected")
     for _, method in ipairs({"GET", "HEAD", "OPTIONS", "PROPFIND", "PUT", "MKCOL", "DELETE", "COPY", "MOVE"}) do
       local result = webdav.request(request_opts(raw .. src .. "/" .. hidden, {
