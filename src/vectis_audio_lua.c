@@ -421,8 +421,15 @@ static float *vectis_audio_lua_frame_array(lua_State *lua, int index,
     return NULL;
   }
   for (i = 0u; i < count; i++) {
+    int is_number;
     lua_rawgeti(lua, index, (lua_Integer)i + 1);
-    frames[i] = (float)luaL_checknumber(lua, -1);
+    frames[i] = (float)lua_tonumberx(lua, -1, &is_number);
+    if (!is_number) {
+      free(frames);
+      luaL_error(lua, "audio frame array element %I must be a number",
+                 (lua_Integer)i + 1);
+      return NULL;
+    }
     lua_pop(lua, 1);
   }
   *out_count = count;
@@ -884,6 +891,9 @@ static int vectis_audio_lua_capture_read(lua_State *lua) {
   if (requested < 0) {
     return luaL_error(lua, "audio capture frame capacity must be non-negative");
   }
+  if ((lua_Unsigned)requested > ((lua_Unsigned)((size_t)-1) / sizeof(float))) {
+    return luaL_error(lua, "audio capture frame capacity is too large");
+  }
   frames = NULL;
   if (requested > 0) {
     frames = (float *)malloc((size_t)requested * sizeof(float));
@@ -1191,6 +1201,9 @@ static int vectis_audio_lua_segment_read(lua_State *lua) {
   requested = luaL_checkinteger(lua, 2);
   if (requested < 0) {
     return luaL_error(lua, "audio segment frame capacity must be non-negative");
+  }
+  if ((lua_Unsigned)requested > ((lua_Unsigned)((size_t)-1) / sizeof(float))) {
+    return luaL_error(lua, "audio segment frame capacity is too large");
   }
   frames = NULL;
   if (requested > 0) {

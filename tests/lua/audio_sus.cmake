@@ -220,12 +220,22 @@ local ptt = assert(audio.ptt.open({
     local segment_info = segment:info()
     ptt_segments = ptt_segments + 1
     assert(segment_info.frame_count > 0)
+    for _, capacity in ipairs({-1, 0x4000000000000000, 0x4000000000000001, math.maxinteger}) do
+      local ok, err = pcall(segment.read_f32_mono_16k, segment, capacity)
+      assert(not ok and err:find("frame capacity", 1, true))
+    end
     local pulled, pulled_count = assert(segment:read_f32_mono_16k(segment_info.frame_count))
     assert(pulled_count == segment_info.frame_count)
     assert(#pulled == pulled_count)
   end,
 }))
 assert(ptt:press() == true)
+for _, invalid in ipairs({{}, false, "not-a-number"}) do
+  frames[160] = invalid
+  local ok, err = pcall(ptt.push_f32_mono_16k, ptt, frames)
+  assert(not ok and err:find("element 160 must be a number", 1, true))
+end
+frames[160] = 0.0
 assert(ptt:push_f32_mono_16k(frames) == true)
 assert(ptt:release() == true)
 assert(ptt:flush() == true)

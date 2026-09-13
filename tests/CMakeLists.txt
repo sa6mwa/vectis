@@ -106,6 +106,22 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_cli_version PROPERTIES
     LABELS "smoke;local"
     TIMEOUT 30)
+  add_executable(vectis_audio_lua_validation
+    unit/test_vectis_audio_lua_validation.c)
+  target_include_directories(vectis_audio_lua_validation PRIVATE
+    "${CMAKE_SOURCE_DIR}/src")
+  target_link_libraries(vectis_audio_lua_validation PRIVATE
+    ${vectis_test_link_target} cpkt::lua_runtime cpkt::audio)
+  set_target_properties(vectis_audio_lua_validation PROPERTIES
+    C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_audio_lua_validation PRIVATE
+      -UNDEBUG -Wall -Wextra -Werror -Wpedantic)
+  endif()
+  add_test(NAME vectis_audio_lua_validation
+    COMMAND vectis_audio_lua_validation)
+  set_tests_properties(vectis_audio_lua_validation PROPERTIES
+    LABELS "unit;lua;local" TIMEOUT 30)
   add_executable(vectis_smith_cli_stream
     unit/test_vectis_smith_cli_stream.c)
   target_include_directories(vectis_smith_cli_stream PRIVATE
