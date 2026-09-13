@@ -364,12 +364,23 @@ assert(aborted_model == nil)
 assert(type(aborted_err) == "table")
 assert(aborted_err.result == sus.ERR_CALLBACK)
 
+local log_thread = coroutine.create(function()
+  assert(sus.set_log_sink(function(event)
+    assert(type(event.message) == "string")
+  end))
+end)
+assert(coroutine.resume(log_thread))
+log_thread = nil
+collectgarbage("collect")
 local missing_model, missing_model_err = sus.open_path({
   path = "/__vectis_missing_sus_model__.bin",
   cpu_only = true,
 })
 assert(missing_model == nil)
 assert(type(missing_model_err) == "table")
+assert(sus.set_log_sink(nil))
+-- Leave a sink registered to exercise native unregistration at Lua teardown.
+assert(sus.set_log_sink(function() end))
 
 print("lua audio sus smoke ok")
 ]])

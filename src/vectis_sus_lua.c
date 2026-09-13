@@ -14,6 +14,8 @@
 
 typedef struct vectis_sus_model_lua {
   cpkt_sus *sus;
+  size_t transcribers;
+  int closed;
 } vectis_sus_model_lua;
 
 typedef struct vectis_sus_transcriber_lua {
@@ -22,6 +24,9 @@ typedef struct vectis_sus_transcriber_lua {
   int segment_ref;
   int progress_ref;
   int abort_ref;
+  int language_ref;
+  int prompt_ref;
+  vectis_sus_model_lua *model;
 } vectis_sus_transcriber_lua;
 
 typedef struct vectis_sus_cache_status_lua {
@@ -41,7 +46,8 @@ typedef struct vectis_sus_log_lua {
 
 int luaopen_sus(lua_State *lua);
 
-static vectis_sus_log_lua vectis_sus_lua_log = {NULL, LUA_NOREF};
+static vectis_sus_log_lua *vectis_sus_lua_log;
+static char vectis_sus_lua_log_key;
 
 static void vectis_sus_lua_set_string(lua_State *lua, const char *key,
                                       const char *value) {
@@ -427,6 +433,7 @@ static float *vectis_sus_lua_frame_array(lua_State *lua, int index,
   size_t count;
   size_t i;
   float *frames;
+  int is_number;
 
   luaL_checktype(lua, index, LUA_TTABLE);
   raw_count = (lua_Unsigned)lua_rawlen(lua, index);
@@ -446,7 +453,12 @@ static float *vectis_sus_lua_frame_array(lua_State *lua, int index,
   }
   for (i = 0u; i < count; i++) {
     lua_rawgeti(lua, index, (lua_Integer)i + 1);
-    frames[i] = (float)luaL_checknumber(lua, -1);
+    frames[i] = (float)lua_tonumberx(lua, -1, &is_number);
+    if (!is_number) {
+      free(frames);
+      luaL_argerror(lua, index, "sus frames must contain only numbers");
+      return NULL;
+    }
     lua_pop(lua, 1);
   }
   *out_count = count;
@@ -542,6 +554,8 @@ static vectis_sus_model_lua *vectis_sus_lua_new_model(lua_State *lua,
 
   handle = (vectis_sus_model_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
   handle->sus = sus;
+  handle->transcribers = 0u;
+  handle->closed = 0;
   luaL_getmetatable(lua, VECTIS_SUS_MODEL);
   lua_setmetatable(lua, -2);
   return handle;
@@ -575,6 +589,10 @@ vectis_sus_lua_transcriber_unref(vectis_sus_transcriber_lua *handle) {
     luaL_unref(handle->lua, LUA_REGISTRYINDEX, handle->abort_ref);
     handle->abort_ref = LUA_NOREF;
   }
+  luaL_unref(handle->lua, LUA_REGISTRYINDEX, handle->language_ref);
+  luaL_unref(handle->lua, LUA_REGISTRYINDEX, handle->prompt_ref);
+  handle->language_ref = LUA_NOREF;
+  handle->prompt_ref = LUA_NOREF;
 }
 
 static vectis_sus_transcriber_lua *
@@ -582,25 +600,37 @@ vectis_sus_lua_new_transcriber(lua_State *lua) {
   vectis_sus_transcriber_lua *handle;
 
   handle =
-      (vectis_sus_transcriber_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
+      (vectis_sus_transcriber_lua *)lua_newuserdatauv(lua, sizeof(*handle), 2);
   handle->transcriber = NULL;
   handle->lua = lua;
   handle->segment_ref = LUA_NOREF;
   handle->progress_ref = LUA_NOREF;
   handle->abort_ref = LUA_NOREF;
+  handle->language_ref = LUA_NOREF;
+  handle->prompt_ref = LUA_NOREF;
+  handle->model = NULL;
   luaL_getmetatable(lua, VECTIS_SUS_TRANSCRIBER);
   lua_setmetatable(lua, -2);
+  /* Callback dispatch must not outlive the coroutine that created it. */
+  lua_pushthread(lua);
+  lua_setiuservalue(lua, -2, 2);
   return handle;
+}
+
+static void
+vectis_sus_lua_model_destroy_if_closed(vectis_sus_model_lua *handle) {
+  if (handle->closed && handle->transcribers == 0u && handle->sus != NULL) {
+    handle->sus->destroy(handle->sus);
+    handle->sus = NULL;
+  }
 }
 
 static int vectis_sus_lua_model_close(lua_State *lua) {
   vectis_sus_model_lua *handle;
 
   handle = vectis_sus_lua_check_model(lua, 1);
-  if (handle->sus != NULL) {
-    handle->sus->destroy(handle->sus);
-    handle->sus = NULL;
-  }
+  handle->closed = 1;
+  vectis_sus_lua_model_destroy_if_closed(handle);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -613,7 +643,18 @@ static int vectis_sus_lua_transcriber_close(lua_State *lua) {
     handle->transcriber->destroy(handle->transcriber);
     handle->transcriber = NULL;
   }
+  /* Use the calling state for registry cleanup, including during lua_close. */
+  handle->lua = lua;
   vectis_sus_lua_transcriber_unref(handle);
+  if (handle->model != NULL) {
+    --handle->model->transcribers;
+    vectis_sus_lua_model_destroy_if_closed(handle->model);
+    handle->model = NULL;
+  }
+  lua_pushnil(lua);
+  lua_setiuservalue(lua, 1, 1);
+  lua_pushnil(lua);
+  lua_setiuservalue(lua, 1, 2);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -624,7 +665,7 @@ static int vectis_sus_lua_model_info(lua_State *lua) {
   cpkt_sus_result result;
 
   handle = vectis_sus_lua_check_model(lua, 1);
-  if (handle->sus == NULL) {
+  if (handle->closed || handle->sus == NULL) {
     return luaL_error(lua, "sus model is closed");
   }
   memset(&info, 0, sizeof(info));
@@ -641,6 +682,19 @@ static int vectis_sus_lua_model_info(lua_State *lua) {
   return 1;
 }
 
+static const char *vectis_sus_lua_retained_string(lua_State *lua, int index,
+                                                  const char *field, int *ref) {
+  const char *value;
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return NULL;
+  }
+  value = luaL_checkstring(lua, -1);
+  *ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  return value;
+}
+
 static void
 vectis_sus_lua_transcriber_config(lua_State *lua, int index,
                                   cpkt_sus_transcriber_config *config,
@@ -652,11 +706,12 @@ vectis_sus_lua_transcriber_config(lua_State *lua, int index,
   luaL_checktype(lua, index, LUA_TTABLE);
   config->threads = vectis_sus_lua_table_int(lua, index, "threads", 0);
   config->cpu_only = vectis_sus_lua_table_bool(lua, index, "cpu_only", 0);
-  config->language = vectis_sus_lua_table_string(lua, index, "language");
+  config->language = vectis_sus_lua_retained_string(lua, index, "language",
+                                                    &handle->language_ref);
   config->translate = vectis_sus_lua_table_bool(lua, index, "translate", 0);
   config->timestamps = vectis_sus_lua_table_bool(lua, index, "timestamps", 0);
-  config->initial_prompt =
-      vectis_sus_lua_table_string(lua, index, "initial_prompt");
+  config->initial_prompt = vectis_sus_lua_retained_string(
+      lua, index, "initial_prompt", &handle->prompt_ref);
   handle->segment_ref =
       vectis_sus_lua_table_function_ref(lua, index, "segment");
   if (handle->segment_ref == LUA_NOREF) {
@@ -695,10 +750,16 @@ static int vectis_sus_lua_model_create_transcriber(lua_State *lua) {
   cpkt_sus_result result;
 
   model = vectis_sus_lua_check_model(lua, 1);
-  if (model->sus == NULL) {
+  if (model->closed || model->sus == NULL) {
     return luaL_error(lua, "sus model is closed");
   }
+  /* Keep an omitted options argument distinct from the new userdata. */
+  lua_settop(lua, 2);
   handle = vectis_sus_lua_new_transcriber(lua);
+  lua_pushvalue(lua, 1);
+  lua_setiuservalue(lua, -2, 1);
+  handle->model = model;
+  ++model->transcribers;
   vectis_sus_lua_transcriber_config(lua, 2, &config, handle);
   result =
       model->sus->create_transcriber(model->sus, &handle->transcriber, &config);
@@ -715,7 +776,7 @@ static int vectis_sus_lua_model_reset_spacing(lua_State *lua) {
   cpkt_sus_result result;
 
   handle = vectis_sus_lua_check_model(lua, 1);
-  if (handle->sus == NULL) {
+  if (handle->closed || handle->sus == NULL) {
     return luaL_error(lua, "sus model is closed");
   }
   result = handle->sus->reset_transcript_spacing(handle->sus);
@@ -917,24 +978,63 @@ static int vectis_sus_lua_facade_version(lua_State *lua) {
   return 1;
 }
 
-static int vectis_sus_lua_set_log_sink(lua_State *lua) {
-  if (vectis_sus_lua_log.lua != NULL && vectis_sus_lua_log.ref != LUA_NOREF) {
-    luaL_unref(vectis_sus_lua_log.lua, LUA_REGISTRYINDEX,
-               vectis_sus_lua_log.ref);
+static void vectis_sus_lua_log_clear(vectis_sus_log_lua *sink) {
+  if (sink == NULL) {
+    return;
   }
-  vectis_sus_lua_log.lua = NULL;
-  vectis_sus_lua_log.ref = LUA_NOREF;
+  if (vectis_sus_lua_log == sink) {
+    cpkt_sus_log_set(NULL, NULL);
+    vectis_sus_lua_log = NULL;
+  }
+  luaL_unref(sink->lua, LUA_REGISTRYINDEX, sink->ref);
+  sink->ref = LUA_NOREF;
+}
+
+static int vectis_sus_lua_log_gc(lua_State *lua) {
+  vectis_sus_log_lua *sink = (vectis_sus_log_lua *)lua_touserdata(lua, 1);
+  vectis_sus_lua_log_clear(sink);
+  return 0;
+}
+
+static int vectis_sus_lua_set_log_sink(lua_State *lua) {
+  vectis_sus_log_lua *sink;
+  int ref;
+
   if (lua_isnoneornil(lua, 1) ||
       (lua_type(lua, 1) == LUA_TBOOLEAN && !lua_toboolean(lua, 1))) {
+    vectis_sus_lua_log_clear(vectis_sus_lua_log);
     cpkt_sus_log_set(NULL, NULL);
     lua_pushboolean(lua, 1);
     return 1;
   }
   luaL_checktype(lua, 1, LUA_TFUNCTION);
+  /* Registry-owned guard unregisters the global native sink at lua_close.
+   * Use the main thread, whose lifetime is the whole Lua state, even when
+   * registration happens from a short-lived coroutine. */
+  lua_rawgetp(lua, LUA_REGISTRYINDEX, &vectis_sus_lua_log_key);
+  sink = (vectis_sus_log_lua *)lua_touserdata(lua, -1);
+  if (sink == NULL) {
+    lua_pop(lua, 1);
+    sink = (vectis_sus_log_lua *)lua_newuserdatauv(lua, sizeof(*sink), 0);
+    sink->ref = LUA_NOREF;
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
+    sink->lua = lua_tothread(lua, -1);
+    lua_pop(lua, 1);
+    if (luaL_newmetatable(lua, "sus.log_guard")) {
+      lua_pushcfunction(lua, vectis_sus_lua_log_gc);
+      lua_setfield(lua, -2, "__gc");
+    }
+    lua_setmetatable(lua, -2);
+    lua_pushvalue(lua, -1);
+    lua_rawsetp(lua, LUA_REGISTRYINDEX, &vectis_sus_lua_log_key);
+  }
+  lua_pop(lua, 1);
   lua_pushvalue(lua, 1);
-  vectis_sus_lua_log.ref = luaL_ref(lua, LUA_REGISTRYINDEX);
-  vectis_sus_lua_log.lua = lua;
-  cpkt_sus_log_set(vectis_sus_lua_log_sink, &vectis_sus_lua_log);
+  ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  vectis_sus_lua_log_clear(vectis_sus_lua_log);
+  sink->ref = ref;
+  vectis_sus_lua_log = sink;
+  cpkt_sus_log_set(vectis_sus_lua_log_sink, sink);
   lua_pushboolean(lua, 1);
   return 1;
 }

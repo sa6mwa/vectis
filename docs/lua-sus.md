@@ -195,6 +195,9 @@ backend log sink. Passing a function receives Lua-owned event tables:
 Passing `nil` or `false` clears the sink. The sink is process-wide because the
 underlying cpkt/whisper logging hook is process-wide; install it deliberately
 and clear it when a script no longer wants backend log events.
+The callback is owned by the registering Lua state (not a temporary coroutine)
+and is automatically unregistered when that state closes. A later registration
+replaces the previous process-wide sink.
 
 ## Model Handles
 
@@ -208,7 +211,8 @@ Methods:
   to the loaded model.
 - `model:reset_transcript_spacing()` resets instance-level segmented transcript
   spacing state.
-- `model:close()` releases the loaded model.
+- `model:close()` closes the model to further model operations. Native model
+  destruction is deferred until all existing transcribers close.
 
 `model:create_transcriber(opts)` accepts:
 
@@ -225,6 +229,12 @@ Methods:
 Segment/progress callbacks return `true`, `0`, or `nil` to continue, and
 `false` or a non-zero number to fail with `ERR_CALLBACK`. Abort callbacks
 return `true` or a non-zero number to request `ABORTED`.
+
+Each transcriber retains its parent model and its own references to
+`language` and `initial_prompt`. Dropping the model or options table, changing
+the options table, or closing the model does not invalidate existing
+transcribers. Close transcribers explicitly for prompt resource release;
+garbage collection also releases them.
 
 Transcriber methods:
 
@@ -243,7 +253,8 @@ Transcriber methods:
   transcript session.
 - `transcriber:revised_text()` returns the latest committed segmented
   transcript text.
-- `transcriber:close()` releases the transcriber; the model remains open.
+- `transcriber:close()` releases the transcriber and its model reference;
+  an otherwise open model remains open.
 
 Segmented `opts` accepts:
 
