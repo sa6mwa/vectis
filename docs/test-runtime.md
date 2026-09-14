@@ -90,6 +90,18 @@ Release packaging rejects non-Release builds. Linux development CLI targets are
 not installed; library SDK development installs remain available. Existing
 release privacy checks remain responsible for final archive metadata.
 
+`make package-verify` runs the release privacy verifier over extracted artifacts,
+including recursively nested archives. Every ELF interpreter must be one of the
+normal system loader paths for the supported Linux architectures; arbitrary
+paths under a Bootlin sysroot are forbidden regardless of cache location.
+RPATH/RUNPATH entries must be `$ORIGIN`-relative, and `DT_NEEDED` entries cannot
+contain paths. The shipped Linux CLI must still be fully static. Missing ELF
+inspection tools, unreadable ELF metadata and failed nested extraction fail the
+gate rather than skipping inspection. Real compiled fixtures cover system and
+Bootlin interpreters, both runtime-path tags, absolute dependencies and static
+binaries inside multiply nested release archives. Scanner scratch stays under
+`build/`.
+
 ## Measurement method
 
 Measure execution, excluding the build, in a fresh cgroup for each run:

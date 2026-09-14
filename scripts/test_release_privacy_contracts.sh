@@ -294,4 +294,5 @@ VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist VECTIS_OTOOL="$work/fakebin/otool"
     exit 1
   }
 
+bash "$script_dir/test_release_elf_contracts.sh"
 echo "release privacy contracts ok"

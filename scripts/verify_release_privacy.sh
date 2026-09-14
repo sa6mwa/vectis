@@ -42,12 +42,10 @@ scan_path() {
   if [ -n "$needle" ]; then
     find "$work_root/extract" -type f -print |
     while IFS= read -r file; do
-      if strings -a "$file" | grep -F -n -m 1 "$needle" >/tmp/vectis-privacy-hit.$$ 2>/dev/null; then
-        hit=$(sed -n '1p' /tmp/vectis-privacy-hit.$$)
-        rm -f /tmp/vectis-privacy-hit.$$
+      if strings -a "$file" | grep -F -n -m 1 "$needle" >"$work_root/privacy-hit" 2>/dev/null; then
+        hit=$(sed -n '1p' "$work_root/privacy-hit")
         fail "$label leaked into release artifact" "$file:$hit"
       fi
-      rm -f /tmp/vectis-privacy-hit.$$
     done
   fi
 }
@@ -67,9 +65,9 @@ while read -r _hash artifact_name; do
         (cd "$work_root/extract/$artifact_name" && "${CMAKE:-cmake}" -E tar xf "$artifact")
       fi
       ;;
-    *.tar.gz)
+    *.tar.gz|*.tgz|*.tar.xz)
       mkdir -p "$work_root/extract/$artifact_name"
-      tar -C "$work_root/extract/$artifact_name" -xzf "$artifact"
+      tar -C "$work_root/extract/$artifact_name" -xf "$artifact"
       ;;
     *.zip)
       mkdir -p "$work_root/extract/$artifact_name"
@@ -79,22 +77,35 @@ while read -r _hash artifact_name; do
         (cd "$work_root/extract/$artifact_name" && "${CMAKE:-cmake}" -E tar xf "$artifact")
       fi
       ;;
+    *.gz)
+      mkdir -p "$work_root/extract/$artifact_name"
+      gzip -dc "$artifact" >"$work_root/extract/$artifact_name/payload" || fail "cannot expand compressed artifact" "$artifact"
+      ;;
+    *)
+      mkdir -p "$work_root/extract/$artifact_name"
+      cp "$artifact" "$work_root/extract/$artifact_name/payload"
+      ;;
   esac
 done <"$checksums"
 
-find "$work_root/extract" -type f \( -name '*.tar.gz' -o -name '*.tgz' -o -name '*.zip' -o -name '*.rock' -o -name '*.src.rock' \) |
-while IFS= read -r nested; do
-  nested_dir="$nested.expanded"
-  mkdir -p "$nested_dir"
-  case "$nested" in
-    *.tar.gz|*.tgz) tar -C "$nested_dir" -xzf "$nested" || true ;;
-    *.zip|*.rock|*.src.rock)
-      if command -v unzip >/dev/null 2>&1; then
-        unzip -q "$nested" -d "$nested_dir" || true
-      fi
-      ;;
-  esac
-done
+expand_nested() {
+  local root=$1 depth=$2 nested nested_dir
+  local -a archives
+  mapfile -d '' -t archives < <(find "$root" -type f \( -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar.xz' -o -name '*.zip' -o -name '*.rock' \) -print0)
+  for nested in "${archives[@]}"; do
+    [ "$depth" -lt 16 ] || fail "archive nesting limit exceeded" "$nested"
+    nested_dir="$nested.expanded"
+    mkdir "$nested_dir" || fail "cannot create nested extraction directory" "$nested"
+    case "$nested" in
+      *.tar.gz|*.tgz|*.tar.xz)
+        tar -C "$nested_dir" -xf "$nested" || fail "cannot extract nested archive" "$nested" ;;
+      *)
+        (cd "$nested_dir" && "${CMAKE:-cmake}" -E tar xf "$nested") || fail "cannot extract nested archive" "$nested" ;;
+    esac
+    expand_nested "$nested_dir" "$((depth + 1))"
+  done
+}
+expand_nested "$work_root/extract" 0
 
 scan_path "file://$repo_root" "repository file URL"
 scan_path "file://${HOME:-}" "home file URL"
@@ -290,6 +301,24 @@ verify_elf_runtime_paths() {
     done
     IFS=$old_ifs
   done < <(printf '%s\n' "$dynamic" | grep -E 'RPATH|RUNPATH' || true)
+  while IFS= read -r dependency; do
+    case "$dependency" in
+      */*) fail "non-relocatable ELF dependency path" "$file: $dependency" ;;
+    esac
+  done < <(printf '%s\n' "$dynamic" | sed -n '/(NEEDED)/s/.*\[\(.*\)\].*/\1/p')
+}
+
+verify_elf_interpreter() {
+  local file=$1 headers interpreter
+  headers=$(readelf -l "$file" 2>/dev/null) || fail "cannot inspect ELF program headers" "$file"
+  if ! printf '%s\n' "$headers" | grep -Eq '^[[:space:]]*INTERP[[:space:]]'; then
+    return 0
+  fi
+  interpreter=$(printf '%s\n' "$headers" | sed -n 's/.*\[Requesting program interpreter: \(.*\)\]/\1/p')
+  case "$interpreter" in
+    /lib64/ld-linux-x86-64.so.2|/lib/ld-linux-aarch64.so.1|/lib/ld-linux-armhf.so.3|/lib/ld-musl-x86_64.so.1|/lib/ld-musl-aarch64.so.1|/lib/ld-musl-armhf.so.1) ;;
+    *) fail "non-system ELF interpreter" "$file: $interpreter" ;;
+  esac
 }
 
 is_linux_vectis_binary() {
@@ -312,18 +341,20 @@ verify_linux_vectis_static() {
   fi
 }
 
-if command -v readelf >/dev/null 2>&1; then
-  find "$work_root/extract" -type f -print |
-  while IFS= read -r file; do
-    if readelf -h "$file" >/dev/null 2>&1; then
-      dynamic=$(readelf -d "$file" 2>/dev/null || true)
-      verify_elf_runtime_paths "$file" "$dynamic"
-      if is_linux_vectis_binary "$file"; then
-        verify_linux_vectis_static "$file" "$dynamic"
-      fi
+command -v readelf >/dev/null 2>&1 || fail "ELF inspector unavailable" "readelf" "external-tool-unavailable"
+find "$work_root/extract" -type f -print |
+while IFS= read -r file; do
+  if readelf -h "$file" >/dev/null 2>&1; then
+    dynamic=$(readelf -d "$file" 2>/dev/null) || fail "cannot inspect ELF dynamic metadata" "$file"
+    verify_elf_runtime_paths "$file" "$dynamic"
+    if is_linux_vectis_binary "$file"; then
+      verify_linux_vectis_static "$file" "$dynamic"
     fi
-  done
-fi
+    verify_elf_interpreter "$file"
+  elif [ "$(od -An -tx1 -N4 "$file" | tr -d ' \n')" = 7f454c46 ]; then
+    fail "cannot inspect ELF header" "$file"
+  fi
+done
 
 find "$work_root/extract" -type d -name "vectis-$version-arm64-apple-darwin" -print |
 while IFS= read -r package_root; do
