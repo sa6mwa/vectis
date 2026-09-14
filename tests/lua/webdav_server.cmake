@@ -477,7 +477,7 @@ for _, site in ipairs({"open", "disk"}) do
       else
         assert(webdav.put(request_opts(source, {body = "source"})).ok)
       end
-      for _, destination in ipairs({raw .. "/absent-parent/child", parent .. "/file/child"}) do
+      for _, destination in ipairs({raw .. "/absent-parent/child", parent .. "/file/child", parent .. "/file/child/grandchild"}) do
         local result
         if method == "PUT" then
           result = webdav.put(request_opts(destination, {body = "new"}))
@@ -492,6 +492,14 @@ for _, site in ipairs({"open", "disk"}) do
       assert(webdav.delete(request_opts(source)).ok)
     end
   end
+  local unreachable = parent .. "/file/child/grandchild"
+  assert(webdav.mkcol(request_opts(unreachable)).status == 409)
+  assert(webdav.get(request_opts(unreachable)).status == 404)
+  assert(webdav.propfind(request_opts(unreachable, {depth = 0})).status == 404)
+  if site == "disk" then
+    assert(webdav.delete(request_opts(unreachable)).status == 404)
+  end
+  assert(webdav.get(request_opts(parent .. "/file")).body == "unchanged")
 end
 
 local native_required = webdav.get(request_opts("/native/protected.txt"))

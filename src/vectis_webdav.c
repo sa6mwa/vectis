@@ -1020,7 +1020,8 @@ vectis_webdav_direct_remove(const vectis_webdav_config *config,
 
   parent_fd = vectis_webdav_open_parent_fd(config, normalized, 0, leaf);
   if (parent_fd < 0) {
-    return errno == ENOENT ? VECTIS_WEBDAV_NOT_FOUND : VECTIS_WEBDAV_IO;
+    return errno == ENOENT || errno == ENOTDIR ? VECTIS_WEBDAV_NOT_FOUND
+                                               : VECTIS_WEBDAV_IO;
   }
   ok = vectis_webdav_direct_remove_tree_at(parent_fd, leaf);
   vectis_webdav_fd_close(&parent_fd);
@@ -1473,7 +1474,8 @@ vectis_webdav_status vectis_webdav_lookup(const vectis_webdav_config *config,
       entry->kind = VECTIS_WEBDAV_ENTRY_COLLECTION;
       return VECTIS_WEBDAV_OK;
     }
-    return errno == ENOENT ? VECTIS_WEBDAV_NOT_FOUND : VECTIS_WEBDAV_IO;
+    return errno == ENOENT || errno == ENOTDIR ? VECTIS_WEBDAV_NOT_FOUND
+                                               : VECTIS_WEBDAV_IO;
   }
   if (vectis_webdav_file_regular(disk, &st)) {
     entry->kind = VECTIS_WEBDAV_ENTRY_FILE;
