@@ -468,6 +468,30 @@ for _, site in ipairs({"open", "disk"}) do
   assert(webdav.put(request_opts(parent .. "/file", {body = "unchanged"})).ok)
   assert(webdav.mkcol(request_opts(parent .. "/file/child")).status == 409)
   assert(webdav.get(request_opts(parent .. "/file")).body == "unchanged")
+  for _, method in ipairs({"PUT", "COPY", "MOVE"}) do
+    for _, collection in ipairs({false, true}) do
+      local source = raw .. "/parent-check-source"
+      if collection then
+        assert(webdav.mkcol(request_opts(source)).status == 201)
+        assert(webdav.put(request_opts(source .. "/child", {body = "source"})).ok)
+      else
+        assert(webdav.put(request_opts(source, {body = "source"})).ok)
+      end
+      for _, destination in ipairs({raw .. "/absent-parent/child", parent .. "/file/child"}) do
+        local result
+        if method == "PUT" then
+          result = webdav.put(request_opts(destination, {body = "new"}))
+        else
+          result = webdav[method:lower()](request_opts(source, {destination = base .. destination}))
+        end
+        assert(result.status == 409, method .. ": " .. tostring(result.status))
+        assert(webdav.get(request_opts(source .. (collection and "/child" or ""))).body == "source")
+        assert(webdav.propfind(request_opts(raw .. "/absent-parent", {depth = 0})).status == 404)
+        assert(webdav.get(request_opts(parent .. "/file")).body == "unchanged")
+      end
+      assert(webdav.delete(request_opts(source)).ok)
+    end
+  end
 end
 
 local native_required = webdav.get(request_opts("/native/protected.txt"))

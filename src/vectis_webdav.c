@@ -1195,7 +1195,7 @@ static vectis_webdav_status vectis_webdav_direct_copy_or_move_fs(
     return VECTIS_WEBDAV_IO;
   }
   destination_parent_fd = vectis_webdav_open_parent_fd(
-      config, normalized_destination, 1, destination_leaf);
+      config, normalized_destination, 0, destination_leaf);
   if (destination_parent_fd < 0) {
     vectis_webdav_fd_close(&source_parent_fd);
     return VECTIS_WEBDAV_IO;
@@ -1528,6 +1528,27 @@ vectis_webdav_status vectis_webdav_read(const vectis_webdav_config *config,
   return VECTIS_WEBDAV_OK;
 }
 
+/* Call with the mutation lock held, before staging or creating content. */
+static vectis_webdav_status
+vectis_webdav_check_parent(const vectis_webdav_config *config,
+                           const char *normalized) {
+  char parent[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char *slash;
+  vectis_webdav_entry entry;
+  vectis_webdav_status status;
+
+  strcpy(parent, normalized);
+  slash = strrchr(parent, '/');
+  slash[slash == parent ? 1 : 0] = '\0';
+  status = vectis_webdav_lookup(config, parent, &entry);
+  if (status == VECTIS_WEBDAV_NOT_FOUND ||
+      (status == VECTIS_WEBDAV_OK &&
+       entry.kind != VECTIS_WEBDAV_ENTRY_COLLECTION)) {
+    return VECTIS_WEBDAV_CONFLICT;
+  }
+  return status;
+}
+
 static vectis_webdav_status
 vectis_webdav_store_locked(const vectis_webdav_config *config,
                            const char *normalized, const unsigned char *body,
@@ -1571,7 +1592,7 @@ vectis_webdav_store_locked(const vectis_webdav_config *config,
     int parent_fd;
     int ok;
 
-    parent_fd = vectis_webdav_open_parent_fd(config, normalized, 1, leaf);
+    parent_fd = vectis_webdav_open_parent_fd(config, normalized, 0, leaf);
     if (parent_fd < 0) {
       return VECTIS_WEBDAV_IO;
     }
@@ -1751,6 +1772,8 @@ vectis_webdav_status vectis_internal_webdav_put_conditional(
   }
   status = vectis_webdav_check_conditions(config, normalized, if_match,
                                           if_none_match);
+  if (status == VECTIS_WEBDAV_OK)
+    status = vectis_webdav_check_parent(config, normalized);
   if (status == VECTIS_WEBDAV_OK && created != NULL) {
     status = vectis_webdav_lookup(config, normalized, &entry);
     is_new = status == VECTIS_WEBDAV_NOT_FOUND ||
@@ -2108,9 +2131,6 @@ vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
                                 const char *if_none_match) {
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
   char disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
-  char parent[VECTIS_WEBDAV_PATH_MAX + 1u];
-  char *slash;
-  vectis_webdav_entry parent_entry;
   uint64_t usage;
   uint64_t resources;
   vectis_webdav_status status;
@@ -2135,15 +2155,7 @@ vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_CONFLICT;
   }
-  strcpy(parent, normalized);
-  slash = strrchr(parent, '/');
-  slash[slash == parent ? 1 : 0] = '\0';
-  status = vectis_webdav_lookup(config, parent, &parent_entry);
-  if (status == VECTIS_WEBDAV_NOT_FOUND ||
-      (status == VECTIS_WEBDAV_OK &&
-       parent_entry.kind != VECTIS_WEBDAV_ENTRY_COLLECTION)) {
-    status = VECTIS_WEBDAV_CONFLICT;
-  }
+  status = vectis_webdav_check_parent(config, normalized);
   if (status != VECTIS_WEBDAV_OK) {
     vectis_webdav_unlock(lock_fd);
     return status;
@@ -2221,6 +2233,8 @@ static vectis_webdav_status vectis_webdav_copy_or_move_direct(
   }
   status = vectis_webdav_check_conditions(config, normalized_source, if_match,
                                           if_none_match);
+  if (status == VECTIS_WEBDAV_OK)
+    status = vectis_webdav_check_parent(config, normalized_destination);
   if (status == VECTIS_WEBDAV_OK && preflight != NULL && !preflight(context)) {
     status = VECTIS_WEBDAV_INVALID;
   }
@@ -2403,6 +2417,8 @@ static vectis_webdav_status vectis_webdav_copy_or_move(
   }
   status = vectis_webdav_check_conditions(config, normalized_source, if_match,
                                           if_none_match);
+  if (status == VECTIS_WEBDAV_OK)
+    status = vectis_webdav_check_parent(config, normalized_destination);
   if (status == VECTIS_WEBDAV_OK && preflight != NULL && !preflight(context)) {
     status = VECTIS_WEBDAV_INVALID;
   }

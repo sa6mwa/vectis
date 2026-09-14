@@ -130,6 +130,10 @@ static void test_destination_auth(const vectis_webdav_config *storage) {
   int move;
   vectis_http_method method;
 
+  expect(vectis_webdav_mkcol(storage, "/allowed") == VECTIS_WEBDAV_OK,
+         "create authorized collection");
+  expect(vectis_webdav_mkcol(storage, "/private") == VECTIS_WEBDAV_OK,
+         "create protected collection");
   expect(vectis_webdav_put(storage, "/allowed/source",
                            (const unsigned char *)"new",
                            3u) == VECTIS_WEBDAV_OK,
@@ -331,16 +335,23 @@ static void test_failed_move(const vectis_webdav_config *storage) {
   if (child == 0) {
     if (geteuid() == 0 && setuid(65534) != 0)
       _exit(2);
+    expect(vectis_webdav_mkcol(storage, "/locked") == VECTIS_WEBDAV_OK,
+           "create source parent");
+    expect(vectis_webdav_mkcol(storage, "/locked/source") == VECTIS_WEBDAV_OK,
+           "create source collection");
     for (overwrite = 0; overwrite < 2; ++overwrite) {
       expect(vectis_webdav_put(storage, "/locked/source/file",
                                (const unsigned char *)"precious",
                                8u) == VECTIS_WEBDAV_OK,
              "create move source");
-      if (overwrite)
+      if (overwrite) {
+        expect(vectis_webdav_mkcol(storage, "/destination") == VECTIS_WEBDAV_OK,
+               "create overwrite collection");
         expect(vectis_webdav_put(storage, "/destination/old",
                                  (const unsigned char *)"old",
                                  3u) == VECTIS_WEBDAV_OK,
                "create overwrite destination");
+      }
       (void)snprintf(parent, sizeof(parent), "%s/locked", storage->root_dir);
       expect(chmod(parent, 0500) == 0, "lock source parent");
       expect(vectis_webdav_move(storage, "/locked/source", "/destination",
@@ -1210,6 +1221,8 @@ int main(void) {
          "new tombstone still obeys quota");
   limited_config.site_id = "delete-subtree-quota";
   limited_config.max_resources = 3u;
+  expect(vectis_webdav_mkcol(&limited_config, "/dir") == VECTIS_WEBDAV_OK,
+         "create subtree quota parent");
   expect(vectis_webdav_put(&limited_config, "/dir/a",
                            (const unsigned char *)"a", 1u) == VECTIS_WEBDAV_OK,
          "creates subtree at quota");
