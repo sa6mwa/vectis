@@ -459,6 +459,15 @@ for _, site in ipairs({"open", "disk"}) do
     assert(webdav.propfind(request_opts(path, {depth = 0})).status == 404)
     assert(webdav.mkcol(request_opts(path, {body = "", headers = {["Content-Type"] = content_type}})).status == 201)
   end
+  local parent = raw .. "/missing-mkcol-parent"
+  assert(webdav.mkcol(request_opts(parent .. "/child")).status == 409)
+  assert(webdav.propfind(request_opts(parent, {depth = 0})).status == 404)
+  assert(webdav.propfind(request_opts(parent .. "/child", {depth = 0})).status == 404)
+  assert(webdav.mkcol(request_opts(parent)).status == 201)
+  assert(webdav.mkcol(request_opts(parent .. "/child")).status == 201)
+  assert(webdav.put(request_opts(parent .. "/file", {body = "unchanged"})).ok)
+  assert(webdav.mkcol(request_opts(parent .. "/file/child")).status == 409)
+  assert(webdav.get(request_opts(parent .. "/file")).body == "unchanged")
 end
 
 local native_required = webdav.get(request_opts("/native/protected.txt"))

@@ -583,6 +583,19 @@ static void test_delete_and_shallow_copy(const vectis_webdav_config *config) {
   conditional_writer writers[8];
   pthread_t threads[8];
   int gate[2], i, winners = 0;
+  expect(vectis_webdav_mkcol(config, "/missing-parent/child") ==
+             VECTIS_WEBDAV_CONFLICT,
+         "MKCOL rejects missing parent");
+  expect(vectis_webdav_lookup(config, "/missing-parent", &entry) ==
+             VECTIS_WEBDAV_NOT_FOUND,
+         "MKCOL does not create intermediate collections");
+  expect(vectis_webdav_mkcol(config, "/missing-parent") == VECTIS_WEBDAV_OK,
+         "create parent explicitly");
+  expect(vectis_webdav_mkcol(config, "/missing-parent/child") ==
+             VECTIS_WEBDAV_OK,
+         "MKCOL accepts existing parent");
+  expect(vectis_webdav_delete(config, "/missing-parent") == VECTIS_WEBDAV_OK,
+         "cleanup parent collection");
   expect(vectis_webdav_mkcol_conditional(config, "/conditional-col", "*",
                                          NULL) == VECTIS_WEBDAV_PRECONDITION,
          "MKCOL If-Match requires existing resource");
@@ -607,6 +620,9 @@ static void test_delete_and_shallow_copy(const vectis_webdav_config *config) {
                            (const unsigned char *)"new",
                            3u) == VECTIS_WEBDAV_OK,
          "seed delete");
+  expect(vectis_webdav_mkcol(config, "/conditional.txt/child") ==
+             VECTIS_WEBDAV_CONFLICT,
+         "MKCOL rejects non-collection parent");
   expect(vectis_webdav_delete_conditional(config, "/conditional.txt",
                                           "\"stale\"",
                                           NULL) == VECTIS_WEBDAV_PRECONDITION,

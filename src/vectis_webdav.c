@@ -1036,9 +1036,10 @@ vectis_webdav_direct_mkcol(const vectis_webdav_config *config,
   int exists;
   int ok;
 
-  parent_fd = vectis_webdav_open_parent_fd(config, normalized, 1, leaf);
+  parent_fd = vectis_webdav_open_parent_fd(config, normalized, 0, leaf);
   if (parent_fd < 0) {
-    return VECTIS_WEBDAV_IO;
+    return errno == ENOENT || errno == ENOTDIR ? VECTIS_WEBDAV_CONFLICT
+                                               : VECTIS_WEBDAV_IO;
   }
   exists = fstatat(parent_fd, leaf, &st, AT_SYMLINK_NOFOLLOW) == 0;
   if (exists) {
@@ -2107,10 +2108,11 @@ vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
                                 const char *if_none_match) {
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
   char disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
-  char content_root[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char parent[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char *slash;
+  vectis_webdav_entry parent_entry;
   uint64_t usage;
   uint64_t resources;
-  uint64_t additional_resources;
   vectis_webdav_status status;
   int lock_fd;
 
@@ -2133,8 +2135,20 @@ vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_CONFLICT;
   }
+  strcpy(parent, normalized);
+  slash = strrchr(parent, '/');
+  slash[slash == parent ? 1 : 0] = '\0';
+  status = vectis_webdav_lookup(config, parent, &parent_entry);
+  if (status == VECTIS_WEBDAV_NOT_FOUND ||
+      (status == VECTIS_WEBDAV_OK &&
+       parent_entry.kind != VECTIS_WEBDAV_ENTRY_COLLECTION)) {
+    status = VECTIS_WEBDAV_CONFLICT;
+  }
+  if (status != VECTIS_WEBDAV_OK) {
+    vectis_webdav_unlock(lock_fd);
+    return status;
+  }
   if (!vectis_webdav_disk_path(config, "content", normalized, disk) ||
-      !vectis_webdav_disk_path(config, "content", "/", content_root) ||
       !vectis_webdav_usage(config, &usage, &resources)) {
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_IO;
@@ -2144,14 +2158,7 @@ vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_EXISTS;
   }
-  additional_resources = 0u;
-  if (!vectis_webdav_missing_path_resources(content_root, disk, 1,
-                                            &additional_resources)) {
-    vectis_webdav_unlock(lock_fd);
-    return VECTIS_WEBDAV_IO;
-  }
-  if (!vectis_webdav_resources_within_limit(config, resources,
-                                            additional_resources)) {
+  if (!vectis_webdav_resources_within_limit(config, resources, 1u)) {
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_LIMIT;
   }
@@ -2161,7 +2168,7 @@ vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
       vectis_webdav_unlock(lock_fd);
       return status;
     }
-  } else if (!vectis_webdav_mkdir_p(disk) ||
+  } else if (mkdir(disk, 0700) != 0 ||
              !vectis_webdav_clear_tombstones(config, normalized)) {
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_IO;
