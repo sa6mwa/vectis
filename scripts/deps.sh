@@ -30,7 +30,7 @@ set_linux_gnu_dependency_target() {
   target_id=$1
   case "$target_id" in
     x86_64-linux-gnu)
-      system_sha256="0bbb1cbaf60b0a94fb5a6b3756123088b45e2bef9e38079038f22e3c07febb2e"
+      system_sha256="fb64caa3cad66e01669705412cd88cb4267025ca0a083fa936fe25786011391d"
       lockdc_sha256="b5060d5a82a5aa5e97bdad2376828a559ae40d9da5d93c904eb85b8a1b76d286"
       lonejson_sha256="520e045c7bfe13396b9dd2ef664d2aaf723ff3173ac02e0f0fe08bcf96f14fa2"
       pslog_sha256="7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f"
@@ -41,7 +41,7 @@ set_linux_gnu_dependency_target() {
       target_cmake_system_processor="x86_64"
       ;;
     aarch64-linux-gnu)
-      system_sha256="3fb1fdeb83bfd58da48a3319dfc2c6d35384265b2db2074b63216240bf0fe2ad"
+      system_sha256="111e8f5215728ae8c784c59de35fc33822a7f72bc1c48d807013b678077d6307"
       lockdc_sha256="3bb0df50d2efd07f4bad8e497975913c1e4613fc30757eca66c516c5a6fdf2a3"
       lonejson_sha256="beacf0b574fc90478d37cd624c70edeac868a3d46241becbc82652ad430fd79e"
       pslog_sha256="38bb08ca6646cf186925a724b61fb534fa49ec0d5e77ca95953dd7a5b18f76e1"
@@ -52,7 +52,7 @@ set_linux_gnu_dependency_target() {
       target_cmake_system_processor="aarch64"
       ;;
     armhf-linux-gnu)
-      system_sha256="18738e2d8e9661ebdcc0b54f4f292f0571d04218fceb1f281e051a50928d1694"
+      system_sha256="df5e953677217c87314dd01514227cbdbbd2fb72115083b5747606f37f00d060"
       lockdc_sha256="3f83eff6c90ae8d96fcb084565576f4744cf23dea1b0c78eaed2c1de00c00f96"
       lonejson_sha256="95595747b861440c189fc473cdaefec2529df15bfd6772b627c637c93bacf3a9"
       pslog_sha256="eff69fe9223cd2ad56572ad6acd768b560ac3e863e379c65367ad6338dbfffef"
@@ -107,7 +107,7 @@ case "$preset" in
   deps-x86_64-linux-musl)
     deps_root="$repo_root/.cache/deps/x86_64-linux-musl"
     target_id="x86_64-linux-musl"
-    system_sha256="e867e7d8649bba6d6c4bed254f3a666faa090f8ccb31a3eb10b1323b694f2f21"
+    system_sha256="668977f4a14875d4ee2acec6f3d630ce96b57786d3ab3242c6ee3d10b5e63c87"
     lockdc_sha256="457fe622663f6bd89232217ab0a2ad17bc71eac4237d9fae820cb221bdcc3608"
     lonejson_sha256="f830d9e848663fb780bcabe58fcd0e61c93ff2725484d8133c3ab3318ebd8a59"
     pslog_sha256="d05e59e8d88018a2e78e0941d2db211f3c08e4fd7539065ed2de79ce7e371055"
@@ -131,7 +131,7 @@ case "$preset" in
   deps-aarch64-linux-musl)
     deps_root="$repo_root/.cache/deps/aarch64-linux-musl"
     target_id="aarch64-linux-musl"
-    system_sha256="a915993c294e96c9a84b072bed45384c23f0058c9e18cd5caeba344aaa9b5d39"
+    system_sha256="39883280a4e37a03c7ba952421cfdd926e79b49b635200c1fcb783738200c541"
     lockdc_sha256="eed2a0528aed92c79b2528800261b4764f00ab62fb4e404dfc3fe93f134bc6fc"
     lonejson_sha256="5e57b91810389dc61111ce77ce4c17b6704884be1ee21c69d96e1e594cb9ce8b"
     pslog_sha256="fce3c4f95b317563427437313ef2eb1987dc43973b0b0bf5169763d0a2705f69"
@@ -155,7 +155,7 @@ case "$preset" in
   deps-armhf-linux-musl)
     deps_root="$repo_root/.cache/deps/armhf-linux-musl"
     target_id="armhf-linux-musl"
-    system_sha256="7f5365014ef2222cb95c08525c0b123afb30b4f220f4edcd669f354a9af4ccab"
+    system_sha256="d78e8e3de15d497c9048cfd3e64db815ee7e7d707ec2ba66e094af13f979ebdc"
     lockdc_sha256="35e19b6355412d075d7e346d9ebb1d35085e554869eb3596bdb5cb84bb383528"
     lonejson_sha256="22a8507bd441e12c00e813a16c286478bd8c797a31028e406473e45de6712f5a"
     pslog_sha256="19eeadacfb82b7eba4187b1fc405225bf85a8866ea81939e2eaa841a23d3785c"
@@ -172,7 +172,7 @@ case "$preset" in
   deps-arm64-apple-darwin)
     deps_root="$repo_root/.cache/deps/arm64-apple-darwin"
     target_id="arm64-apple-darwin"
-    system_sha256="8bc25d47d30cb40b24eb5d07c2aad7850150fdea680eccadd1c819ce945901af"
+    system_sha256="f63f0e6e847108b287726dbd8d2566ee9255d2c744d8cfcf3b192a4ca791de77"
     lockdc_sha256="770ea5fc385cc86be9fcc38db94e3df8102c720c7b6c0f7a9542e382ddbaf01b"
     lonejson_sha256="2e5e349995e5bf6d84004ea0b829d51ae2c2ca90229a98104a640f155dd3c7ab"
     pslog_sha256="ff5d2106bcbc5ea5bce8dfdbca54d21650f350e50fd214a4b52ac65b4f834073"
@@ -286,7 +286,7 @@ patch_lockdc_lua_source() {
 
 mkdir -p "$archive_cache_root" "$archive_lock_root" "$deps_root/include" "$deps_root/lib"
 
-system_version="0.9.0"
+system_version="0.10.0"
 system_archive="c.pkt.systems-${system_version}-${target_id}.tar.gz"
 system_url="https://github.com/sa6mwa/c.pkt.systems/releases/download/v${system_version}/${system_archive}"
 system_download="$archive_cache_root/$system_sha256/$system_archive"

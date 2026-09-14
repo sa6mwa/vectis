@@ -55,8 +55,8 @@ Release archives are fetched through the shared verified
 `${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/c.pkt.systems/deps}`
 archive cache. The current expected dependency set is:
 
-- `c.pkt.systems` 0.9.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
-  the C89 Lua runtime facade, libxml2 2.15.3, OPC UA, audio/miniaudio,
+- `c.pkt.systems` 0.10.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
+  the C89 Lua runtime facade, libxml2 2.15.4, OPC UA, audio/miniaudio,
   SUS/whisper, and supporting package metadata.
 - `liblockdc` 0.17.0 for lockd C and Lua surfaces, including Pouch local
   storage and transactional inbox/outbox workflow support.
@@ -75,6 +75,14 @@ archive cache. The current expected dependency set is:
 Vectis validates the dependency manifest during CMake configure. A stale or
 mixed dependency root should fail early instead of producing a subtly mismatched
 SDK.
+
+The c.pkt.systems 0.10.0 shared GNU/Linux dependency set requires **glibc 2.43
+or newer**, up from 2.38 in 0.9.0. This approved deployment minimum applies to
+shared SDK consumers on x86_64, aarch64 and armhf. Upgrade older deployment
+runtimes before adopting those shared dependencies. Public facade ABI majors
+are unchanged. The shipped, fully static Linux CLI does not acquire this
+dynamic-glibc requirement; linking a static SDK archive into an otherwise
+dynamic application does not remove it.
 
 ## C SDK Model
 

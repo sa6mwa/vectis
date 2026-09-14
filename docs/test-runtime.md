@@ -255,3 +255,20 @@ checks (`build/runtime-sweep3-final.log`). Shared SDK verification passed for
 three consumers and 36 installed examples (`build/runtime-sweep3-sdk.log`).
 This sweep changed no executable link policy. Full ASan and service e2e were
 not repeated; the documented SSH sanitizer leak remains unresolved.
+
+### c.pkt.systems 0.10.0 upgrade
+
+The shared-deployment glibc minimum increase from 2.38 to 2.43 was approved
+on 2026-09-14. All seven SDK target pins use the upstream 0.10.0 release
+checksums; other dependency versions and public facade ABI majors are unchanged.
+Consumers of the shared GNU/Linux dependency set must use glibc 2.43 or newer.
+The static Linux CLI remains independent of that dynamic-runtime requirement.
+
+The upgrade passed all 91 debug tests, direct-install and packaged static/shared
+SDK consumer and installed-example checks, lifecycle checks, and the top-level
+package verifier against the generated x86_64 GNU archive. The verifier included
+the ELF interpreter and loader-path guards described above. Evidence is in
+`build/cpkt-010-trial.log`, `build/cpkt-010-install.log`,
+`build/cpkt-010-package-verify.log` and `build/cpkt-010-lifecycle.log`.
+This was native x86_64 GNU verification, not a full cross-target release matrix,
+service e2e, sanitizer or Valgrind rerun. No release was published.
