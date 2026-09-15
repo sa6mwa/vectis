@@ -935,6 +935,20 @@ int main(void) {
   app = vectis_app_new(&app_config, &error);
   expect(app != NULL, "creates app for WebDAV registration");
   if (app != NULL) {
+    mount.storage = config;
+    mount.auth = allow_webdav_auth;
+    expect(app->webdav(app, &mount, &error) == VECTIS_OK &&
+               vectis_route_count(app) == 1u,
+           "registers WebDAV mount at its default root prefix");
+    app->close(app);
+  }
+
+  vectis_app_config_init(&app_config);
+  app_config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  app_config.tls.port = 0u;
+  app = vectis_app_new(&app_config, &error);
+  expect(app != NULL, "creates app for non-root WebDAV registration");
+  if (app != NULL) {
     mount.path_prefix = "/dav";
     mount.storage = config;
     mount.auth = allow_webdav_auth;

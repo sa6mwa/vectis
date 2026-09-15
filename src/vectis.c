@@ -15448,7 +15448,7 @@ vectis_webdav_auth_provider(const vectis_webdav_auth_request *request,
 
 static int vectis_webdav_prefix_valid(const char *prefix) {
   return prefix != NULL && prefix[0] == '/' &&
-         vectis_static_relative_path_safe(prefix + 1u);
+         (prefix[1] == '\0' || vectis_static_relative_path_safe(prefix + 1u));
 }
 
 static int
@@ -16667,23 +16667,6 @@ vectis_status vectis_register_webdav_embedded(
     free(data);
   }
   return status;
-}
-
-vectis_status vectis_register_webdav_site(vectis_app *app,
-                                          const char *path_prefix,
-                                          const vectis_webdav_config *storage,
-                                          vectis_error *error) {
-  vectis_webdav_mount_config config;
-
-  if (storage == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "WebDAV storage config is required");
-    return VECTIS_ERR_INVALID;
-  }
-  vectis_webdav_mount_config_init(&config);
-  config.path_prefix = path_prefix;
-  config.storage = *storage;
-  return vectis_register_webdav(app, &config, error);
 }
 
 vectis_status vectis_register_webdav_embedded_site(

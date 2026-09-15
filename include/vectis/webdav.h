@@ -247,10 +247,6 @@ vectis_webdav_auth_provider(const vectis_webdav_auth_request *request,
 vectis_status vectis_register_webdav(vectis_app *app,
                                      const vectis_webdav_mount_config *config,
                                      vectis_error *error);
-vectis_status vectis_register_webdav_site(vectis_app *app,
-                                          const char *path_prefix,
-                                          const vectis_webdav_config *storage,
-                                          vectis_error *error);
 vectis_status vectis_register_webdav_embedded_site(
     vectis_app *app, const vectis_webdav_embedded_site_config *config,
     vectis_error *error);
