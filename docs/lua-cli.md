@@ -59,18 +59,36 @@ For a packed executable, every normal option—including `--help`, `--version`,
 ./report-tool --help
 ```
 
-Use the explicit `--vectis` namespace to invoke the runner instead of the
-packed application. It is evaluated before Lua starts:
+Use the explicit `--vectis` namespace to invoke a runner action. It is
+available from both the generic runner and a packed application, and is
+evaluated before Lua starts:
 
 ```sh
+vectis --vectis docs
+vectis --vectis --action pack --help
 ./report-tool --vectis unpack --output-dir restored
 ./report-tool --vectis docs
 ./report-tool --vectis -v smith
 ```
 
-`--vectis` is only special as the first packed-program argument. Use `--` when
-an application needs to receive it as its first option or positional argument.
+The invocation forms are deliberately distinct:
+
+| Invocation | Owner |
+| --- | --- |
+| `vectis -a ACTION ...` or `vectis --action ACTION ...` | Generic Vectis runner |
+| `vectis --vectis [VERBOSITY] ACTION ...` | Generic Vectis runner |
+| `vectis [VECTIS OPTIONS] SCRIPT [APPLICATION ARGUMENT ...]` | Vectis owns only options before `SCRIPT`; the script owns the rest |
+| `PACKED_APP [APPLICATION ARGUMENT ...]` | Packed Lua application |
+| `PACKED_APP --vectis [VERBOSITY] ACTION ...` | Packed executable's Vectis runner |
+| `PACKED_APP --vectis -a ACTION ...` or `PACKED_APP --vectis --action ACTION ...` | Packed executable's Vectis runner |
+
+For a packed app, `--vectis` is reserved only when it is the first argument.
+Use `--` with `vectis.cli` when the application needs a literal `--vectis` as
+its first option or positional argument; the parser consumes the delimiter.
 
 ```sh
 ./report-tool -- --vectis
 ```
+
+Without `vectis.cli`, the Lua script receives the conventional `--` delimiter
+as well as the following literal argument.

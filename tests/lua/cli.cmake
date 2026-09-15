@@ -74,6 +74,16 @@ if(NOT source_result EQUAL 0 OR
 endif()
 
 execute_process(
+  COMMAND "${VECTIS_BIN}" "${script}" --config source deploy -- --vectis
+  RESULT_VARIABLE source_literal_result
+  OUTPUT_VARIABLE source_literal_stdout
+  ERROR_VARIABLE source_literal_stderr)
+if(NOT source_literal_result EQUAL 0 OR
+   NOT source_literal_stdout MATCHES "arguments=--vectis")
+  message(FATAL_ERROR "source script --vectis was intercepted: ${source_literal_stdout}${source_literal_stderr}")
+endif()
+
+execute_process(
   COMMAND "${VECTIS_BIN}" "${script}" --help
   RESULT_VARIABLE source_help_result
   OUTPUT_VARIABLE source_help_stdout
@@ -82,6 +92,46 @@ if(NOT source_help_result EQUAL 0 OR
    NOT source_help_stdout MATCHES "Commands:" OR
    NOT source_help_stdout MATCHES "deploy")
   message(FATAL_ERROR "source CLI help failed: ${source_help_stdout}${source_help_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" --vectis
+  RESULT_VARIABLE runtime_missing_action_result
+  OUTPUT_VARIABLE runtime_missing_action_stdout
+  ERROR_VARIABLE runtime_missing_action_stderr)
+if(NOT runtime_missing_action_result EQUAL 64 OR
+   NOT runtime_missing_action_stderr MATCHES "--vectis requires a Vectis action")
+  message(FATAL_ERROR "generic Vectis namespace accepted no action: ${runtime_missing_action_stdout}${runtime_missing_action_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" --vectis --help
+  RESULT_VARIABLE runtime_help_result
+  OUTPUT_VARIABLE runtime_help_stdout
+  ERROR_VARIABLE runtime_help_stderr)
+if(NOT runtime_help_result EQUAL 0 OR
+   NOT runtime_help_stdout MATCHES "Vectis runs Lua applications")
+  message(FATAL_ERROR "generic Vectis namespace help failed: ${runtime_help_stdout}${runtime_help_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" --vectis -a docs --help
+  RESULT_VARIABLE runtime_short_action_result
+  OUTPUT_VARIABLE runtime_short_action_stdout
+  ERROR_VARIABLE runtime_short_action_stderr)
+if(NOT runtime_short_action_result EQUAL 0 OR
+   NOT runtime_short_action_stdout MATCHES "Print every documentation file")
+  message(FATAL_ERROR "generic Vectis namespace -a dispatch failed: ${runtime_short_action_stdout}${runtime_short_action_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" --vectis --action docs --help
+  RESULT_VARIABLE runtime_long_action_result
+  OUTPUT_VARIABLE runtime_long_action_stdout
+  ERROR_VARIABLE runtime_long_action_stderr)
+if(NOT runtime_long_action_result EQUAL 0 OR
+   NOT runtime_long_action_stdout MATCHES "Print every documentation file")
+  message(FATAL_ERROR "generic Vectis namespace --action dispatch failed: ${runtime_long_action_stdout}${runtime_long_action_stderr}")
 endif()
 
 execute_process(
@@ -117,6 +167,26 @@ if(NOT packed_help_result EQUAL 0 OR
 endif()
 
 execute_process(
+  COMMAND "${packed}" --vectis
+  RESULT_VARIABLE packed_missing_action_result
+  OUTPUT_VARIABLE packed_missing_action_stdout
+  ERROR_VARIABLE packed_missing_action_stderr)
+if(NOT packed_missing_action_result EQUAL 64 OR
+   NOT packed_missing_action_stderr MATCHES "--vectis requires a Vectis action")
+  message(FATAL_ERROR "packed Vectis namespace accepted no action: ${packed_missing_action_stdout}${packed_missing_action_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${packed}" --vectis --help
+  RESULT_VARIABLE packed_runtime_help_result
+  OUTPUT_VARIABLE packed_runtime_help_stdout
+  ERROR_VARIABLE packed_runtime_help_stderr)
+if(NOT packed_runtime_help_result EQUAL 0 OR
+   NOT packed_runtime_help_stdout MATCHES "Vectis runs Lua applications")
+  message(FATAL_ERROR "packed Vectis namespace help failed: ${packed_runtime_help_stdout}${packed_runtime_help_stderr}")
+endif()
+
+execute_process(
   COMMAND "${packed}" -a credentials --help
   RESULT_VARIABLE packed_action_result
   OUTPUT_VARIABLE packed_action_stdout
@@ -146,6 +216,26 @@ execute_process(
 if(NOT runtime_version_result EQUAL 0 OR
    NOT runtime_version_stdout MATCHES "^vectis ")
   message(FATAL_ERROR "packed Vectis version failed: ${runtime_version_stdout}${runtime_version_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${packed}" --vectis -a docs --help
+  RESULT_VARIABLE packed_short_action_result
+  OUTPUT_VARIABLE packed_short_action_stdout
+  ERROR_VARIABLE packed_short_action_stderr)
+if(NOT packed_short_action_result EQUAL 0 OR
+   NOT packed_short_action_stdout MATCHES "Print every documentation file")
+  message(FATAL_ERROR "packed Vectis namespace -a dispatch failed: ${packed_short_action_stdout}${packed_short_action_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${packed}" --vectis --action docs --help
+  RESULT_VARIABLE packed_long_action_result
+  OUTPUT_VARIABLE packed_long_action_stdout
+  ERROR_VARIABLE packed_long_action_stderr)
+if(NOT packed_long_action_result EQUAL 0 OR
+   NOT packed_long_action_stdout MATCHES "Print every documentation file")
+  message(FATAL_ERROR "packed Vectis namespace --action dispatch failed: ${packed_long_action_stdout}${packed_long_action_stderr}")
 endif()
 
 file(REMOVE_RECURSE "${restored}")
