@@ -92,8 +92,13 @@ vectis_status vectis_smith_test_pump(vectis_smith *smith, long timeout_ms,
   if (test_emit_text) {
     memset(&event, 0, sizeof(event));
     event.type = CAI_AGENT_EVENT_TEXT_DELTA;
-    event.data = "streamed output\n\n";
+    /* A live model delta is not necessarily newline-terminated. */
+    event.data = "streamed output";
     event.data_length = strlen(event.data);
+    assert(test_event_callback(test_event_context, &event, NULL) == CAI_OK);
+    event.type = CAI_AGENT_EVENT_RESPONSE_COMPLETED;
+    event.data = NULL;
+    event.data_length = 0u;
     assert(test_event_callback(test_event_context, &event, NULL) == CAI_OK);
     test_emit_text = 0;
   }
@@ -153,6 +158,36 @@ static void test_render_multiple_responses(void) {
   assert(close(pipe_fds[0]) == 0);
   assert(strstr(output, "first response") != NULL);
   assert(strstr(output, "second response") != NULL);
+  vectis_smith_cli_render_cleanup(&render);
+}
+
+static void test_plain_delta_reaches_renderer_before_boundary(void) {
+  vectis_smith_cli_render render;
+  char output[128];
+  size_t length;
+  int attempt;
+
+  memset(&render, 0, sizeof(render));
+  render.interactive = 1;
+  render.notify_fd = -1;
+  assert(pthread_mutex_init(&render.mutex, NULL) == 0);
+  assert(pthread_cond_init(&render.changed, NULL) == 0);
+  assert(vectis_smith_cli_render_append(&render, "streamed output",
+                                        strlen("streamed output")) == 0);
+  for (attempt = 0; attempt < 100; ++attempt) {
+    (void)pthread_mutex_lock(&render.mutex);
+    length = vectis_smith_cli_ring_read(&render.rendered, output,
+                                        sizeof(output) - 1u);
+    (void)pthread_cond_broadcast(&render.changed);
+    (void)pthread_mutex_unlock(&render.mutex);
+    if (length != 0u) {
+      output[length] = '\0';
+      break;
+    }
+    usleep(10000u);
+  }
+  assert(length != 0u);
+  assert(strstr(output, "streamed") != NULL);
   vectis_smith_cli_render_cleanup(&render);
 }
 
@@ -305,6 +340,11 @@ static void test_interactive_queue_and_promote(void) {
     }
   }
   assert(strcmp(log, "N:first\nS:later\n") == 0);
+  /* The completed prefix is visible during the active response, and the
+   * response-complete event flushes its final unterminated word. Softline
+   * redraw control bytes may separate the two terminal fragments. */
+  assert(strstr(transcript, "streamed") != NULL);
+  assert(strstr(transcript, "output") != NULL);
   usleep(100000u);
   assert(write(master, ":quit\r", 6u) == 6);
   assert(waitpid(child, &status, 0) == child);
@@ -494,6 +534,7 @@ static void test_interactive_response_boundaries(void) {
     pthread_mutex_unlock(&render.mutex);
     output[length] = '\0';
     assert(strstr(output, answers[i]) != NULL);
+    assert(strstr(output, "  ") != NULL);
     assert(strchr(output, '\n') != NULL);
   }
   alarm(0u);
@@ -546,6 +587,7 @@ int main(void) {
   test_large_exec_burst();
   test_ui_rearms_pending_output();
   test_render_multiple_responses();
+  test_plain_delta_reaches_renderer_before_boundary();
   test_agent_control_bridge_is_fifo();
   test_softline_queued_turns_profile();
   test_cli_diagnostic_endpoint_redaction();

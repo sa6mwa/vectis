@@ -275,6 +275,7 @@ static void *vectis_smith_cli_render_thread(void *userdata) {
   render = (vectis_smith_cli_render *)userdata;
   renderer = NULL;
   mdf_options_init(&options);
+  options.margin_left = 2;
   memset(&source, 0, sizeof(source));
   memset(&sink, 0, sizeof(sink));
   source.userdata = render;
@@ -1150,7 +1151,7 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
     if (rc != 0) {
       break;
     }
-    input = sl_next_prompt(editor, "smith> ", &source);
+    input = sl_next_prompt(editor, "> ", &source);
     if (input == NULL) {
       if (sl_last_readline_status(editor) == SL_READLINE_EOF ||
           sl_last_readline_status(editor) == SL_READLINE_INTERRUPTED) {
