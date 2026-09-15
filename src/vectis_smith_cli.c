@@ -519,6 +519,9 @@ static int vectis_smith_cli_agent_event(void *userdata,
                                      event->data_length) != 0) {
     return CAI_ERR_NOMEM;
   }
+  if (event->type == CAI_AGENT_EVENT_RESPONSE_COMPLETED) {
+    vectis_smith_cli_render_boundary(agent->render);
+  }
   if (event->type == CAI_AGENT_EVENT_RUN_STATE_CHANGED) {
     vectis_smith_cli_agent_publish(agent, event->state, NULL);
   }

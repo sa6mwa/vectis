@@ -480,8 +480,10 @@ static void test_interactive_response_boundaries(void) {
     event.data = answers[i];
     event.data_length = strlen(answers[i]);
     assert(vectis_smith_cli_agent_event(&agent, &event, NULL) == CAI_OK);
-    event.type = CAI_AGENT_EVENT_RUN_STATE_CHANGED;
-    event.state = CAI_AGENT_COMPLETED;
+    /* A steering delivery can end one response while the agent keeps its
+     * overall turn active. This response boundary must flush libmdf now,
+     * rather than waiting for a terminal run-state transition. */
+    event.type = CAI_AGENT_EVENT_RESPONSE_COMPLETED;
     assert(vectis_smith_cli_agent_event(&agent, &event, NULL) == CAI_OK);
     pthread_mutex_lock(&render.mutex);
     while (render.document_closed)
