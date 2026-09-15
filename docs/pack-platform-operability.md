@@ -6,6 +6,10 @@ optional embedded assets, the shared JSON manifest, and a fixed `VECTIS_PACK`
 footer. The packed executable therefore has the same architecture and linked
 runtime as its input executable.
 
+Packing requires a Lua entry script (`-s FILE` or `--script FILE`) and an
+explicit output filename (`-o FILE` or `--output FILE`); it has no default
+output filename.
+
 Packing is self-contained: it does not cross-compile, relink, use an SDK, or
 invoke CMake. There is no target-selection option. To make an artifact for a
 different Linux architecture, run `vectis -a pack` using a Vectis binary for

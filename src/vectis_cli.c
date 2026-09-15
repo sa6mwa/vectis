@@ -813,8 +813,8 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
     fputs(
         "Usage:\n"
         "  vectis --action pack\n"
-        "      --script FILE\n"
-        "      --output FILE\n"
+        "      [-s|--script] FILE\n"
+        "      [-o|--output] FILE\n"
         "      [--lockd-bundle FILE]\n"
         "      [--asset SOURCE=/LOGICAL_PATH]\n"
         "      [--asset-dir /LOGICAL_ROOT:SOURCE_DIR]\n"
@@ -823,8 +823,8 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
         "      [--extract-mode MODE]\n"
         "      [--follow-symlinks]\n\n"
         "Required:\n"
-        "  --script FILE              Lua application to embed.\n"
-        "  --output FILE              Packed executable to create.\n\n"
+        "  -s, --script FILE          Lua application to embed.\n"
+        "  -o, --output FILE          Packed executable to create.\n\n"
         "Optional payloads:\n"
         "  --lockd-bundle FILE        Lockd client bundle to embed.\n"
         "  --asset SOURCE=/PATH       Add one file at an absolute logical "
@@ -4317,9 +4317,12 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   memset(&content_types, 0, sizeof(content_types));
   memset(&dir_stack, 0, sizeof(dir_stack));
   for (i = index; i < argc; ++i) {
-    if (strcmp(argv[i], "--script") == 0 && i + 1 < argc) {
+    if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "-s") == 0) &&
+        i + 1 < argc) {
       script_path = argv[++i];
-    } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
+    } else if ((strcmp(argv[i], "--output") == 0 ||
+                strcmp(argv[i], "-o") == 0) &&
+               i + 1 < argc) {
       output_path = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
@@ -4348,7 +4351,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     }
   }
   for (i = index; i < argc; ++i) {
-    if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
+    if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "-s") == 0 ||
+         strcmp(argv[i], "--output") == 0 || strcmp(argv[i], "-o") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
          strcmp(argv[i], "--extract-mode") == 0 ||
          strcmp(argv[i], "--content-type-map") == 0) &&

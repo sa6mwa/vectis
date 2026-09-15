@@ -247,7 +247,8 @@ applications. See [Lua command-line applications](docs/lua-cli.md).
 
 `vectis -a pack` can append a Lua script, optional site/template assets, and
 optionally a lockd client bundle to the Linux executable with hashes and trailer
-metadata. Packed Lua can use `vectis.embedded.has_assets()`, `stat()`,
+metadata. Its required inputs are `-s`/`--script` and `-o`/`--output`. Packed
+Lua can use `vectis.embedded.has_assets()`, `stat()`,
 `list()`, `read()`, `chunks()`, and `extract()` to serve read-only assets or
 initialize, verify, or repair an extracted WebDAV docroot.
 

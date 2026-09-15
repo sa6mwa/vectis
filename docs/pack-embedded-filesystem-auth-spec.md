@@ -13,8 +13,8 @@ payload is self-describing and hash-verified when read or unpacked.
 
 ```sh
 vectis -a pack \
-  --script app.lua \
-  --output my-service \
+  -s app.lua \
+  -o my-service \
   --asset-dir site:/srv/my-service/site \
   --asset-dir templates:/srv/my-service/templates \
   --asset /srv/my-service/favicon.ico=/favicon.ico \
@@ -24,6 +24,9 @@ vectis -a pack \
 The executable contains the runner bytes, script, optional Lockd bundle, asset
 payload, manifest, and a fixed footer. It never records host source paths,
 build paths, home paths, or dependency-cache paths in the manifest.
+
+`-s` and `--script` are equivalent, as are `-o` and `--output`. Both inputs are
+required; Vectis deliberately does not infer a packed executable filename.
 
 Packing is supported on Linux targets. Vectis rejects it on Darwin before an
 artifact is written because changing a Mach-O executable invalidates its code

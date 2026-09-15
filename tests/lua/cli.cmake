@@ -136,7 +136,18 @@ if(NOT runtime_long_action_result EQUAL 0 OR
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${packed}"
+  COMMAND "${VECTIS_BIN}" -a pack --help
+  RESULT_VARIABLE pack_help_result
+  OUTPUT_VARIABLE pack_help_stdout
+  ERROR_VARIABLE pack_help_stderr)
+if(NOT pack_help_result EQUAL 0 OR
+   NOT pack_help_stdout MATCHES "-s, --script FILE" OR
+   NOT pack_help_stdout MATCHES "-o, --output FILE")
+  message(FATAL_ERROR "pack short-option help is incomplete: ${pack_help_stdout}${pack_help_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a pack -s "${script}" -o "${packed}"
   RESULT_VARIABLE pack_result
   OUTPUT_VARIABLE pack_stdout
   ERROR_VARIABLE pack_stderr)
