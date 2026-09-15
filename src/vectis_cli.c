@@ -23419,6 +23419,8 @@ vectis_lua_load_embedded_payload(const char *self_path,
   return vectis_lua_load_embedded_from_footer(self_path, payload);
 }
 
+static int vectis_cli_packed_command(int argc, char **argv, int index);
+
 static int vectis_lua_run_embedded(int argc, char **argv) {
   vectis_pack_embedded_payload payload;
   char self_path[4096];
@@ -23438,6 +23440,11 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
     vectis_pack_embedded_payload_cleanup(&payload);
     return rc;
   }
+  if (argc > 1 && strcmp(argv[1], "--vectis") == 0) {
+    rc = vectis_cli_packed_command(argc, argv, 2);
+    vectis_pack_embedded_payload_cleanup(&payload);
+    return rc;
+  }
   rc = vectis_lua_run_buffer(
       argv[0], payload.script, payload.script_size,
       payload.bundle_size > 0u ? payload.bundle : NULL, payload.bundle_size,
@@ -23449,7 +23456,7 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
   return rc;
 }
 
-static int vectis_cli_runtime_command(int argc, char **argv, int index) {
+static int vectis_cli_packed_command(int argc, char **argv, int index) {
   int verbosity;
 
   verbosity = 0;
@@ -23477,7 +23484,9 @@ static int vectis_cli_runtime_command(int argc, char **argv, int index) {
     return 0;
   }
   if (strcmp(argv[index], "-a") == 0 || strcmp(argv[index], "--action") == 0) {
-    return vectis_action_command(argc, argv, index + 1, verbosity);
+    fputs("vectis: packed --vectis actions are direct; omit -a/--action\n",
+          stderr);
+    return 64;
   }
   return vectis_action_command(argc, argv, index, verbosity);
 }
@@ -23488,6 +23497,12 @@ static int vectis_cli_host_command(int argc, char **argv) {
 
   verbosity = vectis_cli_leading_verbosity(argc, argv, &action_index);
 
+  if (action_index < argc && strcmp(argv[action_index], "--vectis") == 0) {
+    fputs("vectis: --vectis is available only from a packed application; use "
+          "-a/--action\n",
+          stderr);
+    return 64;
+  }
   if (action_index < argc && (strcmp(argv[action_index], "-h") == 0 ||
                               strcmp(argv[action_index], "--help") == 0)) {
     vectis_cli_usage(stdout);
@@ -23526,9 +23541,6 @@ static int vectis_cli_host_command(int argc, char **argv) {
 int vectis_cli_main(int argc, char **argv) {
   int rc;
 
-  if (argc > 1 && strcmp(argv[1], "--vectis") == 0) {
-    return vectis_cli_runtime_command(argc, argv, 2);
-  }
   rc = vectis_lua_run_embedded(argc, argv);
   if (rc >= 0) {
     return rc;
