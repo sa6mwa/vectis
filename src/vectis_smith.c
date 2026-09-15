@@ -766,17 +766,27 @@ static int vectis_smith_store_append_event(void *context, const char *scope,
 static int vectis_smith_attachment_event_sequence(const char *name,
                                                   unsigned long long *out) {
   const char *prefix;
-  char *end;
+  const char *cursor;
   unsigned long long value;
+  unsigned long long digit;
 
   prefix = "event-";
   if (name == NULL || strncmp(name, prefix, strlen(prefix)) != 0 ||
       name[strlen(prefix)] == '\0') {
     return 0;
   }
-  value = strtoull(name + strlen(prefix), &end, 10);
-  if (*end != '\0') {
-    return 0;
+  value = 0u;
+  cursor = name + strlen(prefix);
+  while (*cursor != '\0') {
+    if (*cursor < '0' || *cursor > '9') {
+      return 0;
+    }
+    digit = (unsigned long long)(*cursor - '0');
+    if (value > (((unsigned long long)-1 - digit) / 10u)) {
+      return 0;
+    }
+    value = value * 10u + digit;
+    ++cursor;
   }
   *out = value;
   return 1;
