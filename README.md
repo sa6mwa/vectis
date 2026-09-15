@@ -242,8 +242,9 @@ native helper modules load without manual setup.
 Packed applications own their command-line interface. Every ordinary argument
 is passed to the embedded Lua script; use `./packed-app --vectis unpack` (or
 another Vectis action) to invoke runner management instead. The `vectis.cli`
-module provides commands, generated help, and short/GNU-style options for Lua
-applications. See [Lua command-line applications](docs/lua-cli.md).
+module provides commands, generated help, short/GNU-style options, and explicit
+command-line/environment/default precedence for Lua applications. See [Lua
+command-line applications](docs/lua-cli.md).
 
 `vectis -a pack` can append a Lua script, optional site/template assets, and
 optionally a lockd client bundle to the Linux executable with hashes and trailer

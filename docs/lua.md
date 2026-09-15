@@ -88,7 +88,8 @@ modules or C SDK workflows:
 - `vectis.cai`: CAI service configuration, owned/borrowed client and agent
   helpers, and structured CAI error decoration, documented in
   [Lua CAI](lua-cai.md).
-- `vectis.cli`: declarative application commands and GNU-style option parsing,
+- `vectis.cli`: declarative application commands, GNU-style option parsing,
+  and explicit flag/environment/default precedence,
   documented in [Lua command-line applications](lua-cli.md).
 - `vectis.cai_worker`: managed CAI worker mailbox envelope helpers, documented
   in [Lua CAI](lua-cai.md).

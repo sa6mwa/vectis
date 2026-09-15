@@ -41,6 +41,11 @@ local function valid_short(value)
       value:match("^[%a%d]$") ~= nil
 end
 
+local function valid_environment_name(value)
+  return type(value) == "string" and value ~= "" and
+      value:find("[=%z]") == nil
+end
+
 local function option_key(spec)
   return spec.key or spec.long:gsub("-", "_")
 end
@@ -104,6 +109,9 @@ local function add_option(owner, spec, flag)
   end
   if spec.short ~= nil and not valid_short(spec.short) then
     fail("option short name must be one alphanumeric character")
+  end
+  if spec.env ~= nil and not valid_environment_name(spec.env) then
+    fail("option '" .. spec.long .. "' has an invalid environment name")
   end
   if spec.long == "help" or spec.long == "version" or
       spec.short == "h" then
@@ -193,7 +201,7 @@ local function find_option(cli, command, long_name, short_name)
   return long_name and cli._long[long_name] or cli._short[short_name]
 end
 
-local function apply_option(result, spec, raw)
+local function apply_option(result, spec, raw, explicit)
   local value
   local reason
   if spec.flag then
@@ -201,6 +209,7 @@ local function apply_option(result, spec, raw)
       return nil, "option --" .. spec.long .. " does not take a value"
     end
     store_value(result, spec, true)
+    explicit[spec.key] = true
     return true
   end
   if raw == nil or raw == "" then
@@ -211,6 +220,54 @@ local function apply_option(result, spec, raw)
     return nil, "option --" .. spec.long .. " " .. reason
   end
   store_value(result, spec, value)
+  explicit[spec.key] = true
+  return true
+end
+
+local function environment_flag_value(spec, raw)
+  local value = raw:lower()
+  if value == "1" or value == "true" or value == "yes" or value == "on" then
+    return true
+  end
+  if value == "0" or value == "false" or value == "no" or value == "off" then
+    return false
+  end
+  return nil, "environment " .. spec.env .. " for --" .. spec.long ..
+      " must be true, false, 1, 0, yes, no, on, or off"
+end
+
+local function apply_environment(result, options, explicit)
+  local raw
+  local value
+  local reason
+  for _, spec in ipairs(options) do
+    if spec.env ~= nil and not explicit[spec.key] then
+      raw = os.getenv(spec.env)
+      if raw ~= nil then
+        if spec.flag then
+          value, reason = environment_flag_value(spec, raw)
+        elseif raw == "" then
+          value = nil
+          reason = "environment " .. spec.env .. " for --" .. spec.long ..
+              " requires " .. spec.value
+        else
+          value, reason = type_value(spec, raw)
+          if value == nil then
+            reason = "environment " .. spec.env .. " for --" .. spec.long ..
+                " " .. reason
+          end
+        end
+        if value == nil then
+          return nil, reason
+        end
+        if spec.repeatable then
+          result.options[spec.key] = {value}
+        else
+          result.options[spec.key] = value
+        end
+      end
+    end
+  end
   return true
 end
 
@@ -311,6 +368,7 @@ function Cli:parse(argv)
   local short
   local offset
   local reason
+  local explicit
 
   if argv == nil then
     argv = _G.arg or {}
@@ -325,6 +383,7 @@ function Cli:parse(argv)
     options = {},
     arguments = {},
   }
+  explicit = {}
   set_defaults(result, self._options)
   index = 1
   while index <= #argv do
@@ -355,7 +414,7 @@ function Cli:parse(argv)
         inline = argv[index]
       end
       local ok
-      ok, reason = apply_option(result, spec, inline)
+      ok, reason = apply_option(result, spec, inline, explicit)
       if not ok then
         return nil, reason
       end
@@ -370,7 +429,7 @@ function Cli:parse(argv)
         end
         if spec.flag then
           local ok
-          ok, reason = apply_option(result, spec, nil)
+          ok, reason = apply_option(result, spec, nil, explicit)
           if not ok then
             return nil, reason
           end
@@ -382,7 +441,7 @@ function Cli:parse(argv)
             inline = argv[index]
           end
           local ok
-          ok, reason = apply_option(result, spec, inline)
+          ok, reason = apply_option(result, spec, inline, explicit)
           if not ok then
             return nil, reason
           end
@@ -412,6 +471,16 @@ function Cli:parse(argv)
     set_defaults(result, command._options)
   end
   local ok
+  ok, reason = apply_environment(result, self._options, explicit)
+  if not ok then
+    return nil, reason
+  end
+  if command then
+    ok, reason = apply_environment(result, command._options, explicit)
+    if not ok then
+      return nil, reason
+    end
+  end
   ok, reason = check_required(self._options, result)
   if not ok then
     return nil, reason
@@ -435,6 +504,10 @@ local function append_option_lines(lines, options)
     if spec.default ~= nil and not spec.flag and not spec.repeatable then
       description = description .. (description ~= "" and " " or "") ..
           "(default: " .. tostring(spec.default) .. ")"
+    end
+    if spec.env ~= nil then
+      description = description .. (description ~= "" and " " or "") ..
+          "(environment: " .. spec.env .. ")"
     end
     lines[#lines + 1] = string.format("  %-" .. width .. "s  %s",
                                       option_label(spec), description)

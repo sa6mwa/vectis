@@ -9,13 +9,27 @@ local cli = require("vectis.cli").new({
   default_command = "deploy",
 })
 
-cli:flag({long = "verbose", short = "v", description = "Show detail"})
+cli:flag({
+  long = "verbose",
+  short = "v",
+  env = "VECTIS_CLI_VERBOSE",
+  description = "Show detail",
+})
 cli:option({
   long = "config",
   short = "c",
+  env = "VECTIS_CLI_CONFIG",
   value = "FILE",
   required = true,
   description = "Configuration file",
+})
+cli:option({
+  long = "log-level",
+  short = "l",
+  env = "LOG_LEVEL",
+  value = "LEVEL",
+  choices = {"trace", "debug", "info", "warn", "error"},
+  description = "Application log level",
 })
 
 local deploy = cli:command("deploy", {
@@ -24,8 +38,10 @@ local deploy = cli:command("deploy", {
     io.write("command=" .. parsed.command .. "\n")
     io.write("config=" .. parsed.options.config .. "\n")
     io.write("verbose=" .. tostring(parsed.options.verbose) .. "\n")
+    io.write("log_level=" .. tostring(parsed.options.log_level) .. "\n")
     io.write("count=" .. tostring(parsed.options.count) .. "\n")
     io.write("dry_run=" .. tostring(parsed.options.dry_run) .. "\n")
+    io.write("tags=" .. table.concat(parsed.options.tag or {}, ",") .. "\n")
     io.write("arguments=" .. table.concat(parsed.arguments, ",") .. "\n")
   end,
 })
@@ -33,44 +49,139 @@ deploy:flag({long = "dry-run", description = "Validate only"})
 deploy:option({
   long = "count",
   short = "n",
+  env = "VECTIS_CLI_COUNT",
   value = "COUNT",
   type = "integer",
   default = 1,
   description = "Number of deployments",
 })
+deploy:option({
+  long = "tag",
+  env = "VECTIS_CLI_TAG",
+  value = "TAG",
+  repeatable = true,
+  description = "Deployment tag",
+})
 
 do
   local parsed = assert(cli:parse({
-    "-vv", "--config=unit", "deploy", "--count", "2", "--dry-run",
+    "-vv", "--config=unit", "-ltrace", "deploy", "--count", "2",
+    "--tag", "one", "--tag=two", "--dry-run",
     "--", "--literal",
   }))
   assert(parsed.command == "deploy")
   assert(parsed.options.verbose == true)
   assert(parsed.options.config == "unit")
+  assert(parsed.options.log_level == "trace")
   assert(parsed.options.count == 2)
   assert(parsed.options.dry_run == true)
+  assert(table.concat(parsed.options.tag, ",") == "one,two")
   assert(parsed.arguments[1] == "--literal")
-  local missing, missing_err = cli:parse({"deploy"})
+  local missing_cli = require("vectis.cli").new()
+  missing_cli:option({long = "required", value = "VALUE", required = true})
+  local missing, missing_err = missing_cli:parse({})
   assert(missing == nil)
-  assert(missing_err:match("--config is required"))
+  assert(missing_err:match("--required is required"))
 end
 
 cli:main(arg)
 ]=])
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -v "${script}" --config source deploy -n3 --dry-run alpha
+  COMMAND "${CMAKE_COMMAND}" -E env
+          "VECTIS_CLI_CONFIG=environment"
+          "VECTIS_CLI_VERBOSE=0"
+          "LOG_LEVEL=warn"
+          "VECTIS_CLI_COUNT=4"
+          "VECTIS_CLI_TAG=baseline"
+          "${VECTIS_BIN}" -v "${script}" -v --config source -l trace deploy
+          -n3 --tag alpha --tag beta --dry-run alpha
   RESULT_VARIABLE source_result
   OUTPUT_VARIABLE source_stdout
   ERROR_VARIABLE source_stderr)
 if(NOT source_result EQUAL 0 OR
    NOT source_stdout MATCHES "command=deploy" OR
    NOT source_stdout MATCHES "config=source" OR
-   NOT source_stdout MATCHES "verbose=false" OR
+   NOT source_stdout MATCHES "verbose=true" OR
+   NOT source_stdout MATCHES "log_level=trace" OR
    NOT source_stdout MATCHES "count=3" OR
    NOT source_stdout MATCHES "dry_run=true" OR
+   NOT source_stdout MATCHES "tags=alpha,beta" OR
    NOT source_stdout MATCHES "arguments=alpha")
   message(FATAL_ERROR "source CLI dispatch failed: ${source_stdout}${source_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+          "VECTIS_CLI_CONFIG=environment"
+          "VECTIS_CLI_VERBOSE=0"
+          "LOG_LEVEL=warn"
+          "VECTIS_CLI_COUNT=4"
+          "VECTIS_CLI_TAG=baseline"
+          "${VECTIS_BIN}" "${script}" deploy environment
+  RESULT_VARIABLE environment_result
+  OUTPUT_VARIABLE environment_stdout
+  ERROR_VARIABLE environment_stderr)
+if(NOT environment_result EQUAL 0 OR
+   NOT environment_stdout MATCHES "config=environment" OR
+   NOT environment_stdout MATCHES "verbose=false" OR
+   NOT environment_stdout MATCHES "log_level=warn" OR
+   NOT environment_stdout MATCHES "count=4" OR
+   NOT environment_stdout MATCHES "tags=baseline" OR
+   NOT environment_stdout MATCHES "arguments=environment")
+  message(FATAL_ERROR "environment CLI fallback failed: ${environment_stdout}${environment_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+          "VECTIS_CLI_CONFIG=environment"
+          "VECTIS_CLI_VERBOSE=invalid"
+          "${VECTIS_BIN}" "${script}" deploy
+  RESULT_VARIABLE invalid_flag_result
+  OUTPUT_VARIABLE invalid_flag_stdout
+  ERROR_VARIABLE invalid_flag_stderr)
+if(NOT invalid_flag_result EQUAL 64 OR
+   NOT invalid_flag_stderr MATCHES "environment VECTIS_CLI_VERBOSE for --verbose must be true, false, 1, 0, yes, no, on, or off")
+  message(FATAL_ERROR "invalid environment flag was accepted: ${invalid_flag_stdout}${invalid_flag_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+          "VECTIS_CLI_CONFIG=environment"
+          "LOG_LEVEL=invalid"
+          "${VECTIS_BIN}" "${script}" deploy
+  RESULT_VARIABLE invalid_choice_result
+  OUTPUT_VARIABLE invalid_choice_stdout
+  ERROR_VARIABLE invalid_choice_stderr)
+if(NOT invalid_choice_result EQUAL 64 OR
+   NOT invalid_choice_stderr MATCHES "environment LOG_LEVEL for --log-level must be one of trace, debug, info, warn, error")
+  message(FATAL_ERROR "invalid environment choice was accepted: ${invalid_choice_stdout}${invalid_choice_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+          "VECTIS_CLI_CONFIG=environment"
+          "VECTIS_CLI_COUNT=invalid"
+          "${VECTIS_BIN}" "${script}" deploy
+  RESULT_VARIABLE invalid_type_result
+  OUTPUT_VARIABLE invalid_type_stdout
+  ERROR_VARIABLE invalid_type_stderr)
+if(NOT invalid_type_result EQUAL 64 OR
+   NOT invalid_type_stderr MATCHES "environment VECTIS_CLI_COUNT for --count requires an integer")
+  message(FATAL_ERROR "invalid environment type was accepted: ${invalid_type_stdout}${invalid_type_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+          "LOG_LEVEL=invalid"
+          "${VECTIS_BIN}" "${script}" --help
+  RESULT_VARIABLE environment_help_result
+  OUTPUT_VARIABLE environment_help_stdout
+  ERROR_VARIABLE environment_help_stderr)
+if(NOT environment_help_result EQUAL 0 OR
+   NOT environment_help_stdout MATCHES "environment: LOG_LEVEL" OR
+   NOT environment_help_stdout MATCHES "environment: VECTIS_CLI_CONFIG")
+  message(FATAL_ERROR "CLI environment help is incomplete: ${environment_help_stdout}${environment_help_stderr}")
 endif()
 
 execute_process(

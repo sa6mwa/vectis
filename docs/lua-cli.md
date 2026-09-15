@@ -12,7 +12,8 @@ local cli = require("vectis.cli").new({
 })
 
 cli:option({
-  long = "config", short = "c", value = "FILE", required = true,
+  long = "config", short = "c", value = "FILE", env = "REPORT_CONFIG",
+  required = true,
   description = "Configuration file",
 })
 
@@ -33,6 +34,29 @@ required values, repeatable values, choices, and `--` to end option parsing.
 Short options accept `-v`, flag groups such as `-vv`, and attached values such
 as `-cFILE`. Long options accept both `--config FILE` and `--config=FILE`.
 Long-option abbreviations are intentionally unsupported.
+
+An option or flag can declare an explicit environment binding with `env`. Its
+value is resolved in this order: an explicit command-line option, the declared
+environment variable, then the declaration's default. Environment values use
+the option's normal type and choice validation. The parser never guesses an
+environment-variable name, so applications can use any explicit name such as
+`REPORT_CONFIG` or `LOG_LEVEL`.
+
+```lua
+cli:option({
+  long = "log-level", short = "l", value = "LEVEL", env = "LOG_LEVEL",
+  default = "info", description = "Application log level",
+})
+cli:flag({long = "debug", env = "REPORT_DEBUG"})
+```
+
+For flags, environment values must be `true`, `false`, `1`, `0`, `yes`, `no`,
+`on`, or `off` (case-insensitive). An invalid or empty configured value is a
+usage error. A repeatable option receives one environment-derived value; any
+explicit command-line occurrence replaces that fallback before later command
+line values are appended. Generated help identifies each environment binding.
+`vectis.cli` only resolves application options: it never configures libpslog or
+any other subsystem implicitly.
 
 `cli:parse(argv)` returns either a structured result or `nil, message`; it is
 appropriate when the application owns error presentation. `cli:main(arg)` is
