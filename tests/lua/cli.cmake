@@ -279,6 +279,27 @@ if(NOT packed_result EQUAL 0 OR
 endif()
 
 execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+          "VECTIS_CLI_CONFIG=packed-environment"
+          "VECTIS_CLI_VERBOSE=yes"
+          "LOG_LEVEL=debug"
+          "VECTIS_CLI_COUNT=5"
+          "VECTIS_CLI_TAG=packed-baseline"
+          "${packed}" deploy packed-environment
+  RESULT_VARIABLE packed_environment_result
+  OUTPUT_VARIABLE packed_environment_stdout
+  ERROR_VARIABLE packed_environment_stderr)
+if(NOT packed_environment_result EQUAL 0 OR
+   NOT packed_environment_stdout MATCHES "config=packed-environment" OR
+   NOT packed_environment_stdout MATCHES "verbose=true" OR
+   NOT packed_environment_stdout MATCHES "log_level=debug" OR
+   NOT packed_environment_stdout MATCHES "count=5" OR
+   NOT packed_environment_stdout MATCHES "tags=packed-baseline" OR
+   NOT packed_environment_stdout MATCHES "arguments=packed-environment")
+  message(FATAL_ERROR "packed CLI environment fallback failed: ${packed_environment_stdout}${packed_environment_stderr}")
+endif()
+
+execute_process(
   COMMAND "${packed}" --help
   RESULT_VARIABLE packed_help_result
   OUTPUT_VARIABLE packed_help_stdout
