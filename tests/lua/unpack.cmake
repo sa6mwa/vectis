@@ -51,7 +51,7 @@ foreach(zero_kind empty_file directories)
   if(NOT zero_result EQUAL 0)
     message(FATAL_ERROR "zero-payload ${zero_kind} execution failed: ${zero_error}")
   endif()
-  execute_process(COMMAND "${zero_root}/packed" -a unpack --output-dir "${zero_root}/restored"
+  execute_process(COMMAND "${zero_root}/packed" --vectis unpack --output-dir "${zero_root}/restored"
                   RESULT_VARIABLE zero_result ERROR_VARIABLE zero_error)
   if(NOT zero_result EQUAL 0 OR NOT EXISTS "${zero_root}/restored/assets/${zero_entry}")
     message(FATAL_ERROR "zero-payload ${zero_kind} unpack failed: ${zero_error}")
@@ -66,7 +66,7 @@ foreach(zero_kind empty_file directories)
   endif()
 endforeach()
 
-execute_process(COMMAND "${packed}" -a docs
+execute_process(COMMAND "${packed}" --vectis docs
                 RESULT_VARIABLE packed_docs_result
                 OUTPUT_VARIABLE packed_docs_stdout
                 ERROR_VARIABLE packed_docs_stderr)
@@ -75,7 +75,7 @@ if(NOT packed_docs_result EQUAL 0 OR
   message(FATAL_ERROR "packed vectis did not expose embedded docs: ${packed_docs_stdout}${packed_docs_stderr}")
 endif()
 
-execute_process(COMMAND "${packed}" -a source --module lockdc
+execute_process(COMMAND "${packed}" --vectis source --module lockdc
                 RESULT_VARIABLE packed_source_result
                 OUTPUT_VARIABLE packed_source_stdout
                 ERROR_VARIABLE packed_source_stderr)
@@ -84,7 +84,7 @@ if(NOT packed_source_result EQUAL 0 OR
   message(FATAL_ERROR "packed vectis did not expose embedded source: ${packed_source_stdout}${packed_source_stderr}")
 endif()
 
-execute_process(COMMAND "${packed}" -a unpack --output-dir "${restored}"
+execute_process(COMMAND "${packed}" --vectis unpack --output-dir "${restored}"
                 RESULT_VARIABLE unpack_result
                 OUTPUT_VARIABLE unpack_stdout
                 ERROR_VARIABLE unpack_stderr)
@@ -115,7 +115,7 @@ if(NOT restored_result EQUAL 0 OR NOT restored_stdout MATCHES "restored app")
 endif()
 
 file(MAKE_DIRECTORY "${restored_default}")
-execute_process(COMMAND "${packed}" -a unpack
+execute_process(COMMAND "${packed}" --vectis unpack
                 WORKING_DIRECTORY "${restored_default}"
                 RESULT_VARIABLE default_unpack_result
                 OUTPUT_VARIABLE default_unpack_stdout
@@ -128,7 +128,7 @@ endif()
 
 file(MAKE_DIRECTORY "${restored_self}")
 file(COPY_FILE "${packed}" "${restored_self}/vectis")
-execute_process(COMMAND "${restored_self}/vectis" -a unpack
+execute_process(COMMAND "${restored_self}/vectis" --vectis unpack
                 WORKING_DIRECTORY "${restored_self}"
                 RESULT_VARIABLE self_unpack_result
                 OUTPUT_VARIABLE self_unpack_stdout
@@ -137,7 +137,7 @@ if(self_unpack_result EQUAL 0 OR
    NOT self_unpack_stderr MATCHES "output already exists.*use --force")
   message(FATAL_ERROR "self-overwriting unpack was not refused")
 endif()
-execute_process(COMMAND "${restored_self}/vectis" -a unpack --force
+execute_process(COMMAND "${restored_self}/vectis" --vectis unpack --force
                 WORKING_DIRECTORY "${restored_self}"
                 RESULT_VARIABLE force_unpack_result
                 OUTPUT_VARIABLE force_unpack_stdout
@@ -156,7 +156,7 @@ if(NOT forced_runner_result EQUAL 0 OR
   message(FATAL_ERROR "forced unpack did not replace the packed runner")
 endif()
 
-execute_process(COMMAND "${packed}" -a unpack --output-dir "${restored}"
+execute_process(COMMAND "${packed}" --vectis unpack --output-dir "${restored}"
                 RESULT_VARIABLE repeat_unpack_result
                 OUTPUT_VARIABLE repeat_unpack_stdout
                 ERROR_VARIABLE repeat_unpack_stderr)

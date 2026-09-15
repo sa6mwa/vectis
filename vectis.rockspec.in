@@ -26,6 +26,7 @@ build = {
     ["vectis"] = "lua/vectis.lua",
     ["vectis.auth"] = "lua/vectis/auth.lua",
     ["vectis.cai"] = "lua/vectis/cai.lua",
+    ["vectis.cli"] = "lua/vectis/cli.lua",
     ["vectis.dsv"] = "lua/vectis/dsv.lua",
     ["vectis.http"] = "lua/vectis/http.lua",
     ["vectis.kore"] = "lua/vectis/kore.lua",

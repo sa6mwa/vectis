@@ -38,11 +38,11 @@ native code.
 
 # Restoring a packed executable
 
-On platforms where packed executables are supported, running `-a unpack` on a
+On platforms where packed executables are supported, running `--vectis unpack` on a
 packed Vectis executable reconstructs a runnable, generic release layout:
 
 ```sh
-./packed-vectis -a unpack --output-dir restored
+./packed-vectis --vectis unpack --output-dir restored
 ./restored/vectis ./restored/app.lua
 ```
 
@@ -58,7 +58,7 @@ directory. Use `-f` or `--force` only when intentionally replacing the regular
 output files and refreshing packed assets:
 
 ```sh
-./vectis -a unpack --force
+./vectis --vectis unpack --force
 ```
 
 Force still rejects symlinks and non-regular file outputs. It does not restore

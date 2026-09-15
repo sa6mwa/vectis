@@ -88,6 +88,8 @@ modules or C SDK workflows:
 - `vectis.cai`: CAI service configuration, owned/borrowed client and agent
   helpers, and structured CAI error decoration, documented in
   [Lua CAI](lua-cai.md).
+- `vectis.cli`: declarative application commands and GNU-style option parsing,
+  documented in [Lua command-line applications](lua-cli.md).
 - `vectis.cai_worker`: managed CAI worker mailbox envelope helpers, documented
   in [Lua CAI](lua-cai.md).
 - `vectis.smith`: non-TUI CAI Smith runtime helpers for submit, steering,
@@ -136,7 +138,7 @@ modules or C SDK workflows:
   [Lua XML](lua-xml.md).
 
 Workflow tables including `vectis.auth`, `vectis.audio_worker`,
-`vectis.cert`, `vectis.cai_worker`, `vectis.curl_worker`, `vectis.embedded`,
+`vectis.cert`, `vectis.cai_worker`, `vectis.cli`, `vectis.curl_worker`, `vectis.embedded`,
 `vectis.kore`, `vectis.app`, `vectis.smith`, `vectis.ssh`, and
 `vectis.sus_worker` are preloaded modules inside the embedded
 binary. `vectis.auth` re-exports the C-owned `vectis.auth.core` facade and adds Lua DX helpers. `require("vectis").auth` and

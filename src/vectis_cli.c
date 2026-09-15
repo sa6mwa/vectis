@@ -50,6 +50,7 @@
 
 #include "vectis_auth_lua_init.h"
 #include "vectis_cai_lua_init.h"
+#include "vectis_cli_lua_init.h"
 #include "vectis_curl_lua_init.h"
 #include "vectis_dsv_lua_init.h"
 #include "vectis_http_lua_init.h"
@@ -713,12 +714,19 @@ static void vectis_cli_usage(FILE *stream) {
   fputs("Vectis runs Lua applications and manages packed applications, "
         "embedded source, and authentication state.\n\n"
         "Usage:\n"
-        "  vectis [OPTIONS] SCRIPT [ARGUMENT ...]\n"
+        "  vectis [VECTIS OPTIONS] SCRIPT [ARGUMENT ...]\n"
         "  vectis --action ACTION [OPTIONS]\n\n"
         "Application options:\n"
         "  -x                         Trace Lua line execution to stderr.\n"
         "  -h, --help                 Show this help and exit.\n"
         "  --version                  Print the Vectis version and exit.\n\n"
+        "Packed applications:\n"
+        "  A packed application receives every ordinary argument, including "
+        "-h, --help, --version, and -a.\n"
+        "  PACKED_APP --vectis ACTION [OPTIONS]\n"
+        "                             Run a Vectis management action.\n"
+        "  PACKED_APP --vectis --help Show this Vectis help.\n"
+        "  PACKED_APP -- --vectis     Pass --vectis to the application.\n\n"
         "Actions:\n"
         "  docs                       Print the embedded documentation.\n"
         "  source                     List or export embedded Lua modules.\n"
@@ -734,7 +742,8 @@ static void vectis_cli_usage(FILE *stream) {
         "Examples:\n"
         "  vectis app.lua\n"
         "  vectis --action source vectis.auth\n"
-        "  vectis --action pack --help\n",
+        "  vectis --action pack --help\n"
+        "  ./my-packed-app --vectis unpack --output-dir restored\n",
         stream);
 }
 
@@ -4131,12 +4140,6 @@ static int vectis_cli_leading_verbosity(int argc, char **argv,
     *next_index = index;
   }
   return verbosity;
-}
-
-static int vectis_cli_preempts_embedded_app(const char *action) {
-  return action != NULL &&
-         (strcmp(action, "docs") == 0 || strcmp(action, "source") == 0 ||
-          strcmp(action, "unpack") == 0 || strcmp(action, "smith") == 0);
 }
 
 static void vectis_pack_make_footer(
@@ -21248,6 +21251,7 @@ static int luaopen_vectis(lua_State *lua) {
   vectis_lua_set_required_module(lua, "audio_worker", "vectis.audio_worker");
   vectis_lua_set_required_module(lua, "sus_worker", "vectis.sus_worker");
   vectis_lua_set_required_module(lua, "cert", "vectis.cert");
+  vectis_lua_set_required_module(lua, "cli", "vectis.cli");
   vectis_lua_set_required_module(lua, "ssh", "vectis.ssh");
   vectis_lua_set_required_module(lua, "kore", "vectis.kore");
   vectis_lua_push_libs_table(lua);
@@ -23032,6 +23036,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
     return status;
   }
   status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.cli", vectis_cli_lua_init, sizeof(vectis_cli_lua_init),
+      "vectis.cli");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.smith", vectis_smith_lua_init,
       sizeof(vectis_smith_lua_init), "vectis.smith");
   if (status != CPKT_LUA_RUNTIME_OK) {
@@ -23439,9 +23449,41 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
   return rc;
 }
 
-int vectis_cli_main(int argc, char **argv) {
+static int vectis_cli_runtime_command(int argc, char **argv, int index) {
+  int verbosity;
+
+  verbosity = 0;
+  while (index < argc) {
+    if (strcmp(argv[index], "--verbose") == 0 ||
+        strcmp(argv[index], "-v") == 0) {
+      ++verbosity;
+    } else if (strcmp(argv[index], "-vv") == 0) {
+      verbosity += 2;
+    } else {
+      break;
+    }
+    ++index;
+  }
+  if (index >= argc) {
+    fputs("vectis: --vectis requires a Vectis action\n", stderr);
+    return 64;
+  }
+  if (strcmp(argv[index], "-h") == 0 || strcmp(argv[index], "--help") == 0) {
+    vectis_cli_usage(stdout);
+    return 0;
+  }
+  if (strcmp(argv[index], "--version") == 0) {
+    puts("vectis " VECTIS_VERSION);
+    return 0;
+  }
+  if (strcmp(argv[index], "-a") == 0 || strcmp(argv[index], "--action") == 0) {
+    return vectis_action_command(argc, argv, index + 1, verbosity);
+  }
+  return vectis_action_command(argc, argv, index, verbosity);
+}
+
+static int vectis_cli_host_command(int argc, char **argv) {
   int action_index;
-  int rc;
   int verbosity;
 
   verbosity = vectis_cli_leading_verbosity(argc, argv, &action_index);
@@ -23464,32 +23506,32 @@ int vectis_cli_main(int argc, char **argv) {
   }
   if (action_index + 1 < argc &&
       (strcmp(argv[action_index], "-a") == 0 ||
-       strcmp(argv[action_index], "--action") == 0) &&
-      vectis_cli_preempts_embedded_app(argv[action_index + 1])) {
-    return vectis_action_command(argc, argv, action_index + 1, verbosity);
-  }
-
-  rc = vectis_lua_run_embedded(argc, argv);
-  if (rc >= 0) {
-    return rc;
-  }
-
-  if (action_index + 1 < argc &&
-      (strcmp(argv[action_index], "-a") == 0 ||
        strcmp(argv[action_index], "--action") == 0)) {
     return vectis_action_command(argc, argv, action_index + 1, verbosity);
   }
-  if (argc > 1 && strcmp(argv[1], "-x") == 0) {
-    if (argc > 2) {
-      return vectis_lua_run_script(argc, argv, 2, 1);
+  if (action_index < argc && strcmp(argv[action_index], "-x") == 0) {
+    if (action_index + 1 < argc) {
+      return vectis_lua_run_script(argc, argv, action_index + 1, 1);
     }
     vectis_cli_usage(stderr);
     return 64;
   }
-
-  if (argc > 1) {
-    return vectis_lua_run_script(argc, argv, 1, 0);
+  if (action_index < argc) {
+    return vectis_lua_run_script(argc, argv, action_index, 0);
   }
   vectis_cli_usage(stderr);
   return 64;
+}
+
+int vectis_cli_main(int argc, char **argv) {
+  int rc;
+
+  if (argc > 1 && strcmp(argv[1], "--vectis") == 0) {
+    return vectis_cli_runtime_command(argc, argv, 2);
+  }
+  rc = vectis_lua_run_embedded(argc, argv);
+  if (rc >= 0) {
+    return rc;
+  }
+  return vectis_cli_host_command(argc, argv);
 }

@@ -439,6 +439,14 @@ if(TARGET vectis_bin)
     set_tests_properties(vectis_cli_unpack PROPERTIES
       LABELS "cli;smoke;local"
       TIMEOUT 30)
+    add_test(NAME vectis_lua_cli
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/cli.cmake")
+    set_tests_properties(vectis_lua_cli PROPERTIES
+      LABELS "cli;lua;smoke;local"
+      TIMEOUT 30)
     add_test(NAME vectis_lua_pack
              COMMAND "${CMAKE_COMMAND}"
                      "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

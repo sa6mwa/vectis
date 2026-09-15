@@ -126,7 +126,7 @@ if(NOT run_result EQUAL 0)
   message(FATAL_ERROR "packed vectis failed: ${run_stdout}${run_stderr}")
 endif()
 
-execute_process(COMMAND "${output}" --action credentials --help
+execute_process(COMMAND "${output}" --vectis credentials --help
                 RESULT_VARIABLE packed_help_result
                 OUTPUT_VARIABLE packed_help_stdout
                 ERROR_VARIABLE packed_help_stderr)

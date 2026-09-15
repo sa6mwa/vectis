@@ -838,6 +838,7 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/curl/init.lua|curl/init.lua|curl|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/auth.lua|vectis/auth.lua|vectis.auth|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/cai.lua|vectis/cai.lua|vectis.cai|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/cli.lua|vectis/cli.lua|vectis.cli|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/smith.lua|vectis/smith.lua|vectis.smith|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/dsv.lua|vectis/dsv.lua|vectis.dsv|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/http.lua|vectis/http.lua|vectis.http|vectis"
@@ -913,6 +914,11 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/vectis/cai.lua"
     "vectis_cai_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_cai_lua_init.h"
+  )
+  vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/vectis/cli.lua"
+    "vectis_cli_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_cli_lua_init.h"
   )
   vectis_generate_lua_init_header(
     "${CMAKE_SOURCE_DIR}/lua/vectis/smith.lua"

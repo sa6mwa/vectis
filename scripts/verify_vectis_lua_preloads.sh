@@ -57,6 +57,7 @@ local modules = {
   "zlib",
   "vectis.status",
   "vectis.log",
+  "vectis.cli",
   "vectis.http",
   "vectis.rest",
   "vectis.terminal",
@@ -108,6 +109,7 @@ assert(loaded["vectis"].rest == loaded["vectis.rest"])
 assert(loaded["vectis"].terminal == loaded["vectis.terminal"])
 assert(loaded["vectis"].status == loaded["vectis.status"])
 assert(loaded["vectis"].log == loaded["vectis.log"])
+assert(loaded["vectis"].cli == loaded["vectis.cli"])
 assert(loaded["vectis"].webdav == loaded["vectis.webdav"])
 assert(loaded["vectis"].mqtt == loaded["vectis.mqtt"])
 assert(loaded["vectis"].smtp == loaded["vectis.smtp"])
@@ -158,6 +160,7 @@ assert(type(loaded["vectis.sus_worker"].decode_reply) == "function")
 assert(type(loaded["vectis.ssh"].scp_upload_file) == "function")
 assert(type(loaded["vectis.rest"].route) == "function")
 assert(type(loaded["vectis.log"].new) == "function")
+assert(type(loaded["vectis.cli"].new) == "function")
 assert(type(loaded["vectis.terminal"].markdown) == "function")
 assert(type(loaded["vectis.smtp"].send) == "function")
 assert(type(loaded["curl"].perform) == "function")
