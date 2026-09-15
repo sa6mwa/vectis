@@ -31,6 +31,176 @@ static int test_emit_text;
 static int test_emit_failure;
 static int test_log_fd = -1;
 
+#define TEST_VT_ROWS 8
+#define TEST_VT_COLS 80
+
+typedef struct test_vt {
+  char cells[TEST_VT_ROWS][TEST_VT_COLS + 1];
+  int row;
+  int column;
+  int scroll_top;
+  int scroll_bottom;
+} test_vt;
+
+static void test_vt_clear(test_vt *vt) {
+  int row;
+
+  for (row = 0; row < TEST_VT_ROWS; ++row) {
+    memset(vt->cells[row], ' ', TEST_VT_COLS);
+    vt->cells[row][TEST_VT_COLS] = '\0';
+  }
+  vt->row = 0;
+  vt->column = 0;
+  vt->scroll_top = 0;
+  vt->scroll_bottom = TEST_VT_ROWS - 1;
+}
+
+static void test_vt_scroll(test_vt *vt) {
+  int row;
+
+  for (row = vt->scroll_top + 1; row <= vt->scroll_bottom; ++row) {
+    memcpy(vt->cells[row - 1], vt->cells[row], TEST_VT_COLS + 1u);
+  }
+  memset(vt->cells[vt->scroll_bottom], ' ', TEST_VT_COLS);
+  vt->cells[vt->scroll_bottom][TEST_VT_COLS] = '\0';
+  vt->row = vt->scroll_bottom;
+}
+
+static void test_vt_lf(test_vt *vt) {
+  if (vt->row == vt->scroll_bottom) {
+    test_vt_scroll(vt);
+  } else {
+    ++vt->row;
+  }
+}
+
+static void test_vt_put(test_vt *vt, char character) {
+  if (vt->column == TEST_VT_COLS) {
+    vt->column = 0;
+    test_vt_lf(vt);
+  }
+  vt->cells[vt->row][vt->column++] = character;
+}
+
+static size_t test_vt_number(const char *data, size_t length, size_t index,
+                             int *out) {
+  int value;
+
+  value = 0;
+  while (index < length && data[index] >= '0' && data[index] <= '9') {
+    value = value * 10 + (data[index] - '0');
+    ++index;
+  }
+  *out = value;
+  return index;
+}
+
+static size_t test_vt_csi(test_vt *vt, const char *data, size_t length,
+                          size_t index) {
+  int first;
+  int second;
+  int has_first;
+  char command;
+
+  first = 0;
+  second = 0;
+  has_first = 0;
+  if (index < length && data[index] == '?') {
+    while (index < length && (data[index] < '@' || data[index] > '~'))
+      ++index;
+    return index < length ? index + 1u : index;
+  }
+  if (index < length && data[index] >= '0' && data[index] <= '9') {
+    has_first = 1;
+    index = test_vt_number(data, length, index, &first);
+  }
+  if (index < length && data[index] == ';') {
+    ++index;
+    index = test_vt_number(data, length, index, &second);
+  }
+  if (index == length)
+    return index;
+  command = data[index++];
+  switch (command) {
+  case 'A':
+    vt->row -= has_first && first > 0 ? first : 1;
+    break;
+  case 'B':
+    vt->row += has_first && first > 0 ? first : 1;
+    break;
+  case 'C':
+    vt->column += has_first && first > 0 ? first : 1;
+    break;
+  case 'D':
+    vt->column -= has_first && first > 0 ? first : 1;
+    break;
+  case 'H':
+  case 'f':
+    vt->row = has_first && first > 0 ? first - 1 : 0;
+    vt->column = second > 0 ? second - 1 : 0;
+    break;
+  case 'J':
+    if (first == 2)
+      test_vt_clear(vt);
+    break;
+  case 'K':
+    memset(vt->cells[vt->row] + vt->column, ' ',
+           (size_t)(TEST_VT_COLS - vt->column));
+    break;
+  case 'r':
+    if (!has_first) {
+      vt->scroll_top = 0;
+      vt->scroll_bottom = TEST_VT_ROWS - 1;
+    } else {
+      vt->scroll_top = first > 0 ? first - 1 : 0;
+      vt->scroll_bottom = second > 0 ? second - 1 : TEST_VT_ROWS - 1;
+    }
+    break;
+  default:
+    break;
+  }
+  if (vt->row < 0)
+    vt->row = 0;
+  if (vt->row >= TEST_VT_ROWS)
+    vt->row = TEST_VT_ROWS - 1;
+  if (vt->column < 0)
+    vt->column = 0;
+  if (vt->column >= TEST_VT_COLS)
+    vt->column = TEST_VT_COLS - 1;
+  return index;
+}
+
+static void test_vt_apply(test_vt *vt, const char *data, size_t length) {
+  size_t index;
+
+  for (index = 0u; index < length;) {
+    if (data[index] == '\033' && index + 1u < length &&
+        data[index + 1u] == '[') {
+      index = test_vt_csi(vt, data, length, index + 2u);
+    } else if (data[index] == '\r') {
+      vt->column = 0;
+      ++index;
+    } else if (data[index] == '\n') {
+      test_vt_lf(vt);
+      ++index;
+    } else {
+      if ((unsigned char)data[index] >= 32u)
+        test_vt_put(vt, data[index]);
+      ++index;
+    }
+  }
+}
+
+static int test_vt_contains(const test_vt *vt, const char *needle) {
+  int row;
+
+  for (row = 0; row < TEST_VT_ROWS; ++row) {
+    if (strstr(vt->cells[row], needle) != NULL)
+      return 1;
+  }
+  return 0;
+}
+
 static void test_log(const char *prefix, const char *text) {
   char line[256];
   int length;
@@ -354,6 +524,109 @@ static void test_interactive_queue_and_promote(void) {
   assert(close(log_fds[0]) == 0);
 }
 
+static void test_interactive_live_output_stays_visible(void) {
+  char transcript[8192];
+  cai_terminal_tool_config terminal;
+  vectis_smith_cli_render render;
+  vectis_smith_config config;
+  int log_fds[2];
+  int master;
+  int status;
+  int flags;
+  int probe_replied;
+  int visible;
+  int i;
+  pid_t child;
+  ssize_t length;
+  size_t transcript_length;
+  struct winsize size;
+  test_vt terminal_screen;
+
+  memset(&size, 0, sizeof(size));
+  size.ws_row = TEST_VT_ROWS;
+  size.ws_col = TEST_VT_COLS;
+  assert(pipe(log_fds) == 0);
+  child = forkpty(&master, NULL, NULL, &size);
+  assert(child >= 0);
+  if (child == 0) {
+    assert(close(log_fds[0]) == 0);
+    test_log_fd = log_fds[1];
+    memset(&render, 0, sizeof(render));
+    render.notify_fd = -1;
+    assert(pthread_mutex_init(&render.mutex, NULL) == 0);
+    assert(pthread_cond_init(&render.changed, NULL) == 0);
+    vectis_smith_config_init(&config);
+    memset(&terminal, 0, sizeof(terminal));
+    config.runtime.terminal_tool_config = &terminal;
+    assert(vectis_smith_cli_interactive(&config, &render) == 0);
+    vectis_smith_cli_render_cleanup(&render);
+    assert(close(log_fds[1]) == 0);
+    _exit(0);
+  }
+  assert(close(log_fds[1]) == 0);
+  flags = fcntl(master, F_GETFL, 0);
+  assert(flags >= 0 && fcntl(master, F_SETFL, flags | O_NONBLOCK) == 0);
+  transcript_length = 0u;
+  probe_replied = 0;
+  visible = 0;
+  test_vt_clear(&terminal_screen);
+  for (i = 0; i < 100; ++i) {
+    struct pollfd ready;
+
+    ready.fd = master;
+    ready.events = POLLIN;
+    ready.revents = 0;
+    assert(poll(&ready, 1u, 20) >= 0);
+    if ((ready.revents & POLLIN) == 0)
+      continue;
+    length = read(master, transcript + transcript_length,
+                  sizeof(transcript) - transcript_length);
+    if (length > 0) {
+      test_vt_apply(&terminal_screen, transcript + transcript_length,
+                    (size_t)length);
+      transcript_length += (size_t)length;
+    }
+    if (test_vt_contains(&terminal_screen, "> "))
+      break;
+  }
+  assert(test_vt_contains(&terminal_screen, "> "));
+  assert(write(master, "first\r", 6u) == 6);
+  for (i = 0; i < 200; ++i) {
+    struct pollfd ready;
+
+    ready.fd = master;
+    ready.events = POLLIN;
+    ready.revents = 0;
+    assert(poll(&ready, 1u, 20) >= 0);
+    if ((ready.revents & POLLIN) == 0)
+      continue;
+    length = read(master, transcript + transcript_length,
+                  sizeof(transcript) - transcript_length);
+    if (length <= 0)
+      continue;
+    test_vt_apply(&terminal_screen, transcript + transcript_length,
+                  (size_t)length);
+    transcript_length += (size_t)length;
+    if (!probe_replied && transcript_length >= 4u &&
+        memmem(transcript, transcript_length, "\033[6n", 4u) != NULL) {
+      assert(write(master, "\033[8;1R", 6u) == 6);
+      probe_replied = 1;
+    }
+    if (test_vt_contains(&terminal_screen, "streamed") &&
+        test_vt_contains(&terminal_screen, "output")) {
+      visible = 1;
+      break;
+    }
+  }
+  assert(probe_replied);
+  assert(visible);
+  assert(write(master, ":quit\r", 6u) == 6);
+  assert(waitpid(child, &status, 0) == child);
+  assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+  assert(close(master) == 0);
+  assert(close(log_fds[0]) == 0);
+}
+
 static void test_large_exec_burst(void) {
   vectis_smith_cli_render render;
   char *burst;
@@ -593,5 +866,6 @@ int main(void) {
   test_cli_diagnostic_endpoint_redaction();
   test_cli_verbosity_arguments();
   test_interactive_queue_and_promote();
+  test_interactive_live_output_stays_visible();
   return 0;
 }

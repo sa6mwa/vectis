@@ -379,6 +379,31 @@ static int vectis_smith_cli_render_append(vectis_smith_cli_render *render,
   return 0;
 }
 
+static int vectis_smith_cli_render_prompt(vectis_smith_cli_render *render,
+                                          const char *prompt) {
+  char *markdown;
+  size_t length;
+  int rc;
+
+  if (prompt == NULL) {
+    return -1;
+  }
+  length = strlen(prompt);
+  if (length > (size_t)-1 - 6u) {
+    return -1;
+  }
+  markdown = malloc(length + 6u);
+  if (markdown == NULL) {
+    return -1;
+  }
+  memcpy(markdown, "\n> ", 3u);
+  memcpy(markdown + 3u, prompt, length);
+  memcpy(markdown + 3u + length, "\n\n", 3u);
+  rc = vectis_smith_cli_render_append(render, markdown, length + 5u);
+  free(markdown);
+  return rc;
+}
+
 static void vectis_smith_cli_render_boundary(vectis_smith_cli_render *render) {
   (void)pthread_mutex_lock(&render->mutex);
   if (render->document_open) {
@@ -1122,6 +1147,7 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
   config.prompt_theme = SL_PROMPT_THEME_DEFAULT;
   config.statusline = 1;
   config.status_spinner = 1;
+  config.live_scroll_region = 1;
   editor = sl_create_with_config(&config);
   if (editor == NULL) {
     fputs("vectis: failed to create Smith editor\n", stderr);
@@ -1169,7 +1195,10 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
               (source == SL_PROMPT_SOURCE_DIRECT && busy))
                  ? VECTIS_SMITH_CLI_CONTROL_STEERING
                  : VECTIS_SMITH_CLI_CONTROL_NORMAL;
-      if (vectis_smith_cli_agent_submit(&agent, kind, input) != 0) {
+      if (vectis_smith_cli_render_prompt(render, input) != 0) {
+        fputs("vectis: failed to render Smith prompt\n", stderr);
+        rc = 1;
+      } else if (vectis_smith_cli_agent_submit(&agent, kind, input) != 0) {
         fputs("vectis: Smith input queue is unavailable\n", stderr);
         rc = 1;
       } else if (vectis_smith_cli_ui_apply(editor, &ui) != SL_OK) {
