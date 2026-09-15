@@ -58,6 +58,7 @@ directory. Use `-f` or `--force` only when intentionally replacing the regular
 output files and refreshing packed assets:
 
 ```sh
+# Only when ./vectis is itself still a packed executable.
 ./vectis --vectis unpack --force
 ```
 
