@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <lc/lc.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -120,6 +121,8 @@ typedef struct runtime_managed_service_probe {
   int stop_signal_disabled;
   unsigned short start_http_port;
   long start_http_status;
+  int start_http_post;
+  long start_http_post_status;
   unsigned short stop_http_port;
   int stop_http_ok;
 } runtime_managed_service_probe;
@@ -507,6 +510,7 @@ static vectis_status runtime_managed_service_start(void *context,
                                                    vectis_error *error) {
   runtime_managed_service_probe *probe;
   vectis_http_client_config http;
+  vectis_http_request request;
   vectis_http_response response;
   vectis_error http_error;
   vectis_status status;
@@ -528,6 +532,26 @@ static vectis_status runtime_managed_service_start(void *context,
       vectis_error_clear(&http_error);
       status = vectis_http_get(&http, url, &response, &http_error);
       probe->start_http_status =
+          status == VECTIS_OK ? response.status_code : -1L;
+      vectis_error_clear(&http_error);
+      vectis_http_response_cleanup(&response);
+    }
+    if (probe->start_http_post) {
+      memset(&response, 0, sizeof(response));
+      vectis_http_client_config_init(&http);
+      http.timeout_ms = 1000L;
+      http.connect_timeout_ms = 200L;
+      written = snprintf(url, sizeof(url), "http://127.0.0.1:%u/managed-upload",
+                         (unsigned)probe->start_http_port);
+      assert(written > 0 && (size_t)written < sizeof(url));
+      vectis_http_request_init(&request);
+      request.method = VECTIS_HTTP_POST;
+      request.url = url;
+      request.body = "abc";
+      request.body_size = 3u;
+      vectis_error_clear(&http_error);
+      status = vectis_http_execute(&http, &request, &response, &http_error);
+      probe->start_http_post_status =
           status == VECTIS_OK ? response.status_code : -1L;
       vectis_error_clear(&http_error);
       vectis_http_response_cleanup(&response);
@@ -4144,6 +4168,7 @@ static void assert_kore_smoke(void) {
   vectis_http_response param_response;
   vectis_http_response oversized_response;
   vectis_http_response upload_response;
+  vectis_http_response overlap_upload_response;
   vectis_http_response spooled_upload_response;
   vectis_http_response default_spooled_upload_response;
   vectis_http_response stream_response;
@@ -4179,15 +4204,18 @@ static void assert_kore_smoke(void) {
   vectis_http_response native_webdav_get_response;
   source_json_doc json_source_doc;
   stream_probe_context stream_context;
+  stream_probe_context overlap_stream_context;
   runtime_failing_after_chunk_source failing_stream_source;
   runtime_dsv_summary dsv_summary;
   vectis_route_config route;
   vectis_route_config limited_route;
   vectis_route_config upload_route;
+  vectis_route_config overlap_upload_route;
   vectis_route_config spooled_upload_route;
   vectis_route_config default_spooled_upload_route;
   vectis_route_config file_route;
   vectis_upload_route_config stream_route;
+  vectis_upload_route_config overlap_stream_route;
   vectis_upload_reader_route_config stream_reader_route;
   vectis_upload_file_route_config stream_file_route;
   vectis_websocket_route_config websocket_route;
@@ -4216,6 +4244,7 @@ static void assert_kore_smoke(void) {
   vectis_auth_provider native_auth_provider;
   vectis_webdav_auth_provider_config native_webdav_auth;
   vectis_webdav_mount_config native_webdav_mount;
+  vectis_body_policy policy;
   vectis_bytes body;
   vectis_xml_config xml_config;
   vectis_dsv_config dsv_config;
@@ -4337,8 +4366,11 @@ static void assert_kore_smoke(void) {
   const char *browser_cookie_end;
   int attempt;
   int i;
+  int overlap_live_upload;
   int reserved_fd;
   int second_reserved_fd;
+  int high_fds[1100];
+  size_t high_fd_count;
   int written;
   vectis_totp auth_totp;
   spooled_upload_expectation body_spool_expectation;
@@ -4352,6 +4384,7 @@ static void assert_kore_smoke(void) {
   memset(&param_response, 0, sizeof(param_response));
   memset(&oversized_response, 0, sizeof(oversized_response));
   memset(&upload_response, 0, sizeof(upload_response));
+  memset(&overlap_upload_response, 0, sizeof(overlap_upload_response));
   memset(&spooled_upload_response, 0, sizeof(spooled_upload_response));
   memset(&default_spooled_upload_response, 0,
          sizeof(default_spooled_upload_response));
@@ -4394,6 +4427,7 @@ static void assert_kore_smoke(void) {
   memset(&native_webdav_response, 0, sizeof(native_webdav_response));
   memset(&native_webdav_get_response, 0, sizeof(native_webdav_get_response));
   memset(&stream_context, 0, sizeof(stream_context));
+  memset(&overlap_stream_context, 0, sizeof(overlap_stream_context));
   memset(&failing_stream_source, 0, sizeof(failing_stream_source));
   memset(&dsv_summary, 0, sizeof(dsv_summary));
   memset(&json_source_request, 0, sizeof(json_source_request));
@@ -4408,6 +4442,7 @@ static void assert_kore_smoke(void) {
   reserved_fd = reserve_loopback_port(&port);
   assert(reserved_fd >= 0);
   second_reserved_fd = -1;
+  high_fd_count = 0u;
   vectis_app_config_init(&config);
   assert(mkdtemp(browser_session_pouch_dir) != NULL);
   written =
@@ -4554,6 +4589,27 @@ static void assert_kore_smoke(void) {
   upload_route.body.disk_spool_disabled = 1;
   status = vectis_register_route(app, &upload_route, &error);
   assert(status == VECTIS_OK);
+  overlap_upload_route = vectis_upload_route_max(
+      VECTIS_HTTP_POST, "^/upload-overlap$", 4u, upload_handler, NULL);
+  overlap_upload_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  overlap_upload_route.body.memory_buffer_limit_bytes = 4u;
+  overlap_upload_route.body.disk_spool_disabled = 1;
+  status = vectis_register_route(app, &overlap_upload_route, &error);
+  assert(status == VECTIS_OK);
+  overlap_stream_route = vectis_stream_upload_route(
+      VECTIS_HTTP_POST, "/upload-overlap", stream_probe_open,
+      stream_probe_write, stream_probe_finish, stream_probe_close,
+      &overlap_stream_context);
+  overlap_stream_route.body.max_bytes = 1u;
+  status = app->upload_stream(app, &overlap_stream_route, &error);
+  assert(status == VECTIS_OK);
+  overlap_live_upload = 1;
+  status = vectis_internal_route_body_policy(
+      app, VECTIS_HTTP_POST, "/upload-overlap", &policy,
+      &overlap_live_upload, &error);
+  assert(status == VECTIS_OK);
+  assert(policy.max_bytes == 4u);
+  assert(overlap_live_upload == 0);
   spooled_upload_route =
       vectis_upload_route_max(VECTIS_HTTP_POST, "/upload-spooled", 4096u,
                               spooled_upload_handler, &body_spool_expectation);
@@ -4775,10 +4831,20 @@ static void assert_kore_smoke(void) {
   native_webdav_mount.auth_userdata = &native_webdav_auth;
   status = app->webdav(app, &native_webdav_mount, &error);
   assert(status == VECTIS_OK);
+  for (i = 0; i < (int)(sizeof(high_fds) / sizeof(high_fds[0])); ++i) {
+    high_fds[high_fd_count] = open("/dev/null", O_RDONLY);
+    assert(high_fds[high_fd_count] >= 0);
+    high_fd_count++;
+  }
+  assert(high_fds[high_fd_count - 1u] >= FD_SETSIZE);
   close(reserved_fd);
   reserved_fd = -1;
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
+  while (high_fd_count > 0u) {
+    high_fd_count--;
+    assert(close(high_fds[high_fd_count]) == 0);
+  }
   second_reserved_fd = reserve_loopback_port(&second_port);
   assert(second_reserved_fd >= 0);
 
@@ -5780,6 +5846,21 @@ static void assert_kore_smoke(void) {
   assert(upload_response.body_size == 8u);
   assert(memcmp(upload_response.body, "buffered", 8u) == 0);
   vectis_http_response_cleanup(&upload_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/upload-overlap");
+  request.body = "xxx";
+  request.body_size = 3u;
+  status =
+      vectis_http_execute(&http, &request, &overlap_upload_response, &error);
+  assert(status == VECTIS_OK);
+  assert(overlap_upload_response.status_code == 200L);
+  assert(overlap_upload_response.body_size == 8u);
+  assert(memcmp(overlap_upload_response.body, "buffered", 8u) == 0);
+  assert(overlap_stream_context.open_count == 0u);
+  vectis_http_response_cleanup(&overlap_upload_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
@@ -7024,9 +7105,11 @@ static void assert_supervised_routes_wait_for_full_app_readiness(void) {
   vectis_error error;
   vectis_status status;
   vectis_route_config route;
+  vectis_upload_route_config upload_route;
   vectis_managed_service_config service_config;
   vectis_managed_service *service;
   runtime_managed_service_probe probe;
+  stream_probe_context stream_context;
   vectis_http_client_config http;
   vectis_http_response response;
   unsigned short port;
@@ -7045,9 +7128,17 @@ static void assert_supervised_routes_wait_for_full_app_readiness(void) {
   route = vectis_route(VECTIS_HTTP_GET, "/managed", sample_handler, NULL);
   status = app->route(app, &route, &error);
   assert(status == VECTIS_OK);
+  memset(&stream_context, 0, sizeof(stream_context));
+  upload_route = vectis_stream_upload_route(
+      VECTIS_HTTP_POST, "/managed-upload", stream_probe_open,
+      stream_probe_write, stream_probe_finish, stream_probe_close,
+      &stream_context);
+  status = app->upload_stream(app, &upload_route, &error);
+  assert(status == VECTIS_OK);
 
   memset(&probe, 0, sizeof(probe));
   probe.start_http_port = port;
+  probe.start_http_post = 1;
   probe.stop_signal_disabled = 1;
   vectis_managed_service_config_init(&service_config);
   service_config.name = "runtime-readiness-gated-managed-service";
@@ -7064,6 +7155,9 @@ static void assert_supervised_routes_wait_for_full_app_readiness(void) {
   assert(status == VECTIS_OK);
   assert(probe.started == 1);
   assert(probe.start_http_status == 503L);
+  assert(probe.start_http_post_status == 503L);
+  assert(stream_context.open_count == 0u);
+  assert(stream_context.write_count == 0u);
 
   memset(&response, 0, sizeof(response));
   vectis_http_client_config_init(&http);
@@ -8790,7 +8884,7 @@ int main(int argc, char **argv) {
   assert(vectis_internal_max_request_body_bytes(app) ==
          VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
   status = vectis_internal_route_body_policy(
-      app, VECTIS_HTTP_POST, "/upload-default", &policy, &error);
+      app, VECTIS_HTTP_POST, "/upload-default", &policy, NULL, &error);
   assert(status == VECTIS_OK);
   assert(policy.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
   assert(policy.memory_buffer_limit_bytes ==

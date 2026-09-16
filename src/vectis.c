@@ -12592,13 +12592,12 @@ static void vectis_app_record_lifecycle_sequence(vectis_app_impl *impl,
 static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                                        int control_fd, vectis_error *error) {
-  fd_set readfds;
-  struct timeval timeout;
+  struct pollfd control_poll;
   vectis_runtime_control_type frame_type;
   vectis_mutable_bytes payload;
   vectis_status status;
   long remaining_ms;
-  int select_rc;
+  int poll_rc;
   int wait_status;
   int err;
   int probe;
@@ -12646,12 +12645,11 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
       return VECTIS_ERR_STATE;
     }
 
-    FD_ZERO(&readfds);
-    FD_SET(control_fd, &readfds);
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 100000;
-    select_rc = select(control_fd + 1, &readfds, NULL, NULL, &timeout);
-    if (select_rc > 0 && FD_ISSET(control_fd, &readfds)) {
+    memset(&control_poll, 0, sizeof(control_poll));
+    control_poll.fd = control_fd;
+    control_poll.events = POLLIN;
+    poll_rc = poll(&control_poll, 1u, 100);
+    if (poll_rc > 0 && control_poll.revents != 0) {
       memset(&payload, 0, sizeof(payload));
       status = vectis_internal_runtime_control_read(control_fd, &frame_type,
                                                     &payload, error);
@@ -12707,7 +12705,7 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                        "unexpected control frame");
       return VECTIS_ERR_STATE;
     }
-    if (select_rc < 0 && errno != EINTR) {
+    if (poll_rc < 0 && errno != EINTR) {
       err = errno != 0 ? errno : EINVAL;
       vectis_set_errorf(error, VECTIS_ERR_STATE,
                         "failed to wait for supervised Kore readiness: %s",
@@ -12728,13 +12726,12 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
   struct sigaction old_int;
   struct sigaction old_term;
   struct sigaction old_quit;
-  fd_set readfds;
-  struct timeval timeout;
+  struct pollfd service_poll;
   int have_int;
   int have_term;
   int have_quit;
   int service_fd;
-  int select_rc;
+  int poll_rc;
   int err;
 
   vectis_wait_signal = 0;
@@ -12787,12 +12784,11 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
       (void)pthread_mutex_unlock(&impl->mutex);
     }
     if (service_fd >= 0) {
-      FD_ZERO(&readfds);
-      FD_SET(service_fd, &readfds);
-      timeout.tv_sec = 0;
-      timeout.tv_usec = 100000;
-      select_rc = select(service_fd + 1, &readfds, NULL, NULL, &timeout);
-      if (select_rc > 0 && FD_ISSET(service_fd, &readfds)) {
+      memset(&service_poll, 0, sizeof(service_poll));
+      service_poll.fd = service_fd;
+      service_poll.events = POLLIN;
+      poll_rc = poll(&service_poll, 1u, 100);
+      if (poll_rc > 0 && service_poll.revents != 0) {
         if (vectis_app_read_service_control(impl, error) != VECTIS_OK) {
           (void)sigaction(SIGINT, &old_int, NULL);
           (void)sigaction(SIGTERM, &old_term, NULL);
@@ -12801,7 +12797,7 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
         }
         continue;
       }
-      if (select_rc < 0 && errno != EINTR) {
+      if (poll_rc < 0 && errno != EINTR) {
         err = errno != 0 ? errno : EINVAL;
         (void)sigaction(SIGINT, &old_int, NULL);
         (void)sigaction(SIGTERM, &old_term, NULL);
@@ -12851,9 +12847,8 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
   int err;
   int status;
   int service_fd;
-  int select_rc;
-  fd_set readfds;
-  struct timeval timeout;
+  int poll_rc;
+  struct pollfd service_poll;
   pid_t waited;
 
   if (impl == NULL || child_pid <= 0) {
@@ -12943,12 +12938,11 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
     service_fd = impl->service_control_read_fd;
     (void)pthread_mutex_unlock(&impl->mutex);
     if (service_fd >= 0) {
-      FD_ZERO(&readfds);
-      FD_SET(service_fd, &readfds);
-      timeout.tv_sec = 0;
-      timeout.tv_usec = 100000;
-      select_rc = select(service_fd + 1, &readfds, NULL, NULL, &timeout);
-      if (select_rc > 0 && FD_ISSET(service_fd, &readfds)) {
+      memset(&service_poll, 0, sizeof(service_poll));
+      service_poll.fd = service_fd;
+      service_poll.events = POLLIN;
+      poll_rc = poll(&service_poll, 1u, 100);
+      if (poll_rc > 0 && service_poll.revents != 0) {
         if (vectis_app_read_service_control(impl, error) != VECTIS_OK) {
           (void)sigaction(SIGINT, &old_int, NULL);
           (void)sigaction(SIGTERM, &old_term, NULL);
@@ -12957,7 +12951,7 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
         }
         continue;
       }
-      if (select_rc < 0 && errno != EINTR) {
+      if (poll_rc < 0 && errno != EINTR) {
         err = errno != 0 ? errno : EINVAL;
         (void)sigaction(SIGINT, &old_int, NULL);
         (void)sigaction(SIGTERM, &old_term, NULL);
@@ -26535,6 +26529,7 @@ vectis_status vectis_internal_route_body_policy(vectis_app *app,
                                                 vectis_http_method method,
                                                 const char *path,
                                                 vectis_body_policy *policy,
+                                                int *is_live_upload,
                                                 vectis_error *error) {
   vectis_app_impl *impl;
   vectis_request scratch;
@@ -26549,6 +26544,9 @@ vectis_status vectis_internal_route_body_policy(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "body policy output is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (is_live_upload != NULL) {
+    *is_live_upload = 0;
   }
   impl = (vectis_app_impl *)app->impl;
   vectis_internal_request_init(&scratch);
@@ -26578,6 +26576,10 @@ vectis_status vectis_internal_route_body_policy(vectis_app *app,
     }
     if (vectis_route_path_matches(&impl->routes[i], path, &scratch, error)) {
       *policy = impl->routes[i].body;
+      if (is_live_upload != NULL) {
+        *is_live_upload =
+            impl->routes[i].kind == VECTIS_ROUTE_ENTRY_UPLOAD_STREAM;
+      }
       status = VECTIS_OK;
       break;
     }

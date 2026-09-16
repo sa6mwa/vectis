@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -1318,8 +1319,7 @@ static void vectis_kore_request_controlled_shutdown(void) {
 static void vectis_kore_control_timer(void *arg, u_int64_t now) {
   vectis_runtime_control_type type;
   vectis_mutable_bytes payload;
-  struct timeval timeout;
-  fd_set readfds;
+  struct pollfd control_poll;
   int fd;
   int selected;
 
@@ -1330,11 +1330,10 @@ static void vectis_kore_control_timer(void *arg, u_int64_t now) {
     return;
   }
 
-  FD_ZERO(&readfds);
-  FD_SET(fd, &readfds);
-  timeout.tv_sec = 0;
-  timeout.tv_usec = 0;
-  selected = select(fd + 1, &readfds, NULL, NULL, &timeout);
+  memset(&control_poll, 0, sizeof(control_poll));
+  control_poll.fd = fd;
+  control_poll.events = POLLIN;
+  selected = poll(&control_poll, 1u, 0);
   if (selected == 0 || (selected < 0 && errno == EINTR)) {
     return;
   }
@@ -2299,6 +2298,7 @@ typedef struct vectis_kore_body_state {
   char *path;
   int error_status;
   int initialized;
+  int live_upload;
   int streaming;
   int spooled;
 } vectis_kore_body_state;
@@ -2347,6 +2347,7 @@ static void vectis_kore_body_state_cleanup(vectis_kore_body_state *state) {
   state->total_size = 0u;
   state->error_status = 0;
   state->initialized = 0;
+  state->live_upload = 0;
   state->streaming = 0;
   state->spooled = 0;
 }
@@ -2543,10 +2544,15 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
     vectis_kore_reject_body_chunk(req, state, 503, NULL);
     return KORE_RESULT_OK;
   }
+  if (!vectis_kore_app_ready()) {
+    vectis_kore_reject_body_chunk(req, state, 503, "vectis app is starting\n");
+    return KORE_RESULT_OK;
+  }
   method = vectis_kore_method(req->method);
   if (!state->initialized) {
     status = vectis_internal_route_body_policy(app, method, req->path,
-                                               &state->policy, &error);
+                                               &state->policy,
+                                               &state->live_upload, &error);
     if (status != VECTIS_OK) {
       vectis_kore_reject_body_chunk(req, state, 404, NULL);
       return KORE_RESULT_OK;
@@ -2565,7 +2571,7 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
     }
     state->initialized = 1;
   }
-  if (state->policy.mode == VECTIS_BODY_STREAMING_UPLOAD) {
+  if (state->live_upload) {
     if (!state->streaming) {
       status = vectis_kore_open_upload_stream(req, state, app, method, &error);
       if (status != VECTIS_OK && status != VECTIS_ERR_STATE) {
@@ -3132,10 +3138,12 @@ int vectis_kore_route(struct http_request *req) {
   vectis_http_method method;
   vectis_status status;
   int error_status;
+  int body_is_live_upload;
   int route_matched;
 
   vectis_error_clear(&error);
   error_status = 0;
+  body_is_live_upload = 0;
   route_matched = 0;
   body_state = (vectis_kore_body_state *)req->hdlr_extra;
   request = vectis_internal_request_new(&error);
@@ -3235,12 +3243,13 @@ int vectis_kore_route(struct http_request *req) {
   }
   if (status == VECTIS_OK) {
     status = vectis_internal_route_body_policy(app, method, req->path,
-                                               &body_policy, &error);
+                                               &body_policy,
+                                               &body_is_live_upload, &error);
     if (status == VECTIS_OK) {
       route_matched = 1;
     }
   }
-  if (status == VECTIS_OK && body_policy.mode == VECTIS_BODY_STREAMING_UPLOAD &&
+  if (status == VECTIS_OK && body_is_live_upload &&
       req->http_body_length == 0u) {
     vectis_upload_stream_runtime stream;
 

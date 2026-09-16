@@ -1633,7 +1633,7 @@ static void assert_json_route_surface(void) {
   status = app->webdav(app, &webdav_mount, &error);
   assert(status == VECTIS_OK);
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_GET, "/assets/",
-                                             &policy, &error);
+                                             &policy, NULL, &error);
   assert(status == VECTIS_OK && policy.mode == VECTIS_BODY_NONE);
 
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/abc",
@@ -1958,11 +1958,11 @@ static void assert_json_route_surface(void) {
   assert(status == VECTIS_OK);
   assert(app->route_count(app) == 10u);
   status = vectis_internal_route_body_policy(
-      app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
+      app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, NULL, &error);
   assert(status == VECTIS_OK);
   assert(policy.mode == VECTIS_BODY_JSON);
   status = vectis_internal_route_body_policy(
-      app, VECTIS_HTTP_DELETE, "/api/v1/typed/abc", &policy, &error);
+      app, VECTIS_HTTP_DELETE, "/api/v1/typed/abc", &policy, NULL, &error);
   assert(status == VECTIS_ERR_STATE);
 
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u,
