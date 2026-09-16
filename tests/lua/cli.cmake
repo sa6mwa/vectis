@@ -45,7 +45,7 @@ local deploy = cli:command("deploy", {
     io.write("arguments=" .. table.concat(parsed.arguments, ",") .. "\n")
   end,
 })
-deploy:flag({long = "dry-run", description = "Validate only"})
+deploy:flag({long = "dry-run", short = "d", description = "Validate only"})
 deploy:option({
   long = "count",
   short = "n",
@@ -60,6 +60,7 @@ deploy:option({
   env = "VECTIS_CLI_TAG",
   value = "TAG",
   repeatable = true,
+  default = {"fallback"},
   description = "Deployment tag",
 })
 
@@ -77,11 +78,33 @@ do
   assert(parsed.options.dry_run == true)
   assert(table.concat(parsed.options.tag, ",") == "one,two")
   assert(parsed.arguments[1] == "--literal")
+
+  local default_long = assert(cli:parse({
+    "-v", "--config", "unit", "-linfo", "-n1", "--tag", "unit",
+    "--dry-run",
+  }))
+  assert(default_long.command == "deploy")
+  assert(default_long.options.dry_run == true)
+  local default_short = assert(cli:parse({
+    "-v", "--config", "unit", "-linfo", "-n2", "--tag", "unit",
+  }))
+  assert(default_short.command == "deploy")
+  assert(default_short.options.count == 2)
+
   local missing_cli = require("vectis.cli").new()
   missing_cli:option({long = "required", value = "VALUE", required = true})
   local missing, missing_err = missing_cli:parse({})
   assert(missing == nil)
   assert(missing_err:match("--required is required"))
+  missing_cli:option({
+    long = "required-repeatable",
+    value = "VALUE",
+    required = true,
+    repeatable = true,
+  })
+  missing, missing_err = missing_cli:parse({"--required", "value"})
+  assert(missing == nil)
+  assert(missing_err:match("--required%-repeatable is required"))
 end
 
 cli:main(arg)

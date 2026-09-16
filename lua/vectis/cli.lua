@@ -219,6 +219,9 @@ local function apply_option(result, spec, raw, explicit)
   if value == nil then
     return nil, "option --" .. spec.long .. " " .. reason
   end
+  if spec.repeatable and not explicit[spec.key] then
+    result.options[spec.key] = {}
+  end
   store_value(result, spec, value)
   explicit[spec.key] = true
   return true
@@ -273,7 +276,8 @@ end
 
 local function check_required(options, result)
   for _, spec in ipairs(options) do
-    if spec.required and result.options[spec.key] == nil then
+    if spec.required and (result.options[spec.key] == nil or
+        (spec.repeatable and #result.options[spec.key] == 0)) then
       return nil, "option --" .. spec.long .. " is required"
     end
   end
@@ -405,6 +409,14 @@ function Cli:parse(argv)
       if name == nil then
         name = value:sub(3)
       end
+      if command == nil then
+        local default = resolve_default_command(self)
+        if default and default._long[name] then
+          command = default
+          result.command = command.name
+          set_defaults(result, command._options)
+        end
+      end
       spec = find_option(self, command, name, nil)
       if spec == nil then
         return nil, "unknown option --" .. name
@@ -423,6 +435,14 @@ function Cli:parse(argv)
       offset = 1
       while offset <= #short do
         name = short:sub(offset, offset)
+        if command == nil then
+          local default = resolve_default_command(self)
+          if default and default._short[name] then
+            command = default
+            result.command = command.name
+            set_defaults(result, command._options)
+          end
+        end
         spec = find_option(self, command, nil, name)
         if spec == nil then
           return nil, "unknown option -" .. name
