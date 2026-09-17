@@ -1,5 +1,7 @@
 # vectis
 
+![Vectis logomark](docs/vectis-logo.svg)
+
 Vectis is a C SDK and Lua-capable runtime for building small operational
 services without assembling a separate web, state, protocol, certificate, and
 automation stack by hand.
