@@ -968,6 +968,22 @@ assert(type(server.json) == "function")
 assert(type(server.text) == "function")
 assert(type(server.redirect) == "function")
 assert(type(server.auth_json) == "function")
+local route_owner_weak = setmetatable({}, {__mode = "v"})
+do
+  local owner_thread = coroutine.create(function()
+    route_owner_weak.thread = coroutine.running()
+    assert(server:route({
+      path = "/lua-smoke-coroutine-route",
+      handler = function()
+        return {status = 204}
+      end,
+    }) == true)
+  end)
+  assert(coroutine.resume(owner_thread))
+  owner_thread = nil
+  collectgarbage("collect")
+  assert(route_owner_weak.thread ~= nil)
+end
 do
   local requests = assert(vectis.mailbox.new({ capacity = 4 }))
   local audio_events = assert(vectis.mailbox.new({ capacity = 4 }))
@@ -1139,6 +1155,9 @@ assert(type(consumer_service_error) == "table")
 assert(consumer_service_error.status == vectis.ERR_INVALID)
 assert(consumer_service_error.message:match("receiver_kind"))
 server:close()
+collectgarbage("collect")
+collectgarbage("collect")
+assert(route_owner_weak.thread == nil)
 assert(_G.__vectis_smoke_lifecycle_opcua_server:close() == true)
 _G.__vectis_smoke_lifecycle_opcua_server = nil
 

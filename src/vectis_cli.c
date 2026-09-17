@@ -7154,6 +7154,26 @@ vectis_lua_app_callback_route_free(vectis_lua_app_callback_route *route) {
   free(route);
 }
 
+/* The app userdata owns registration threads through its uservalue table. This
+ * makes the edge visible to Lua's cycle collector while route callbacks retain
+ * raw lua_State pointers. */
+static void vectis_lua_app_retain_callback_owner(
+    lua_State *lua, int app_index, void *route) {
+  app_index = lua_absindex(lua, app_index);
+  lua_getiuservalue(lua, app_index, 1);
+  lua_pushlightuserdata(lua, route);
+  lua_pushthread(lua);
+  lua_rawset(lua, -3);
+  lua_pop(lua, 1);
+}
+
+static void vectis_lua_app_release_callback_owners(lua_State *lua,
+                                                    int app_index) {
+  app_index = lua_absindex(lua, app_index);
+  lua_newtable(lua);
+  lua_setiuservalue(lua, app_index, 1);
+}
+
 static void vectis_lua_app_callback_route_free_all(vectis_lua_app *server) {
   vectis_lua_app_callback_route *route;
   vectis_lua_app_callback_route *next;
@@ -8181,6 +8201,7 @@ static int vectis_lua_app_close(lua_State *lua) {
   server->started = 0;
   vectis_lua_app_json_route_free_all(server);
   vectis_lua_app_callback_route_free_all(server);
+  vectis_lua_app_release_callback_owners(lua, 1);
   vectis_lua_app_dsv_route_free_all(server);
   vectis_lua_app_upload_route_free_all(server);
   vectis_lua_app_websocket_route_free_all(server);
@@ -11162,6 +11183,7 @@ static int vectis_lua_app_route(lua_State *lua) {
   }
   route_data->next = server->callback_routes;
   server->callback_routes = route_data;
+  vectis_lua_app_retain_callback_owner(lua, 1, route_data);
   openapi_result = vectis_lua_app_attach_openapi(lua, server, 2, methods, path);
   if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
     return openapi_result;
@@ -12619,7 +12641,8 @@ static int vectis_lua_app_new(lua_State *lua) {
   }
   lua_pop(lua, 1);
   vectis_lua_parse_lockd_config(lua, 1, &config.lockd, &lockd_endpoints);
-  server = (vectis_lua_app *)lua_newuserdata(lua, sizeof(*server));
+  server =
+      (vectis_lua_app *)lua_newuserdatauv(lua, sizeof(*server), 1);
   server->app = NULL;
   server->started = 0;
   server->json_routes = NULL;
@@ -12637,6 +12660,8 @@ static int vectis_lua_app_new(lua_State *lua) {
   server->audio_worker_services = NULL;
   server->sus_worker_services = NULL;
   server->openapi_schema_refs = NULL;
+  lua_newtable(lua);
+  lua_setiuservalue(lua, -2, 1);
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
   free(tls_domains);

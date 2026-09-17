@@ -1,4 +1,6 @@
 #include <assert.h>
+#include <lualib.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 static size_t allocations;
@@ -44,6 +46,35 @@ static int read_array(lua_State *lua) {
   return 1;
 }
 
+static int new_callback_encoder(lua_State *lua) {
+  vectis_audio_encoder_lua *handle;
+
+  luaL_checktype(lua, 1, LUA_TFUNCTION);
+  handle = vectis_audio_lua_new_encoder(lua, NULL, 1u);
+  lua_pushvalue(lua, 1);
+  handle->write_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  return 1;
+}
+
+static int invoke_encoder_callback(lua_State *lua) {
+  vectis_audio_encoder_lua *handle;
+
+  handle = vectis_audio_lua_check_encoder(lua, 1);
+  lua_pushinteger(lua,
+                  (lua_Integer)vectis_audio_lua_write_cb(handle, "x", 1u));
+  return 1;
+}
+
+static void run_lua(lua_State *lua, const char *script) {
+  int result;
+
+  result = luaL_dostring(lua, script);
+  if (result != LUA_OK) {
+    fprintf(stderr, "%s\n", lua_tostring(lua, -1));
+  }
+  assert(result == LUA_OK);
+}
+
 int main(void) {
   lua_State *lua = luaL_newstate();
   cpkt_audio_capture capture;
@@ -51,8 +82,13 @@ int main(void) {
   lua_Integer capacity;
   int i;
   assert(lua != NULL);
+  luaL_openlibs(lua);
   assert(luaopen_audio(lua) == 1);
   lua_pop(lua, 1);
+  lua_pushcfunction(lua, new_callback_encoder);
+  lua_setglobal(lua, "new_callback_encoder");
+  lua_pushcfunction(lua, invoke_encoder_callback);
+  lua_setglobal(lua, "invoke_encoder_callback");
   memset(&capture, 0, sizeof(capture));
   capture.read_f32_mono_16k = capture_read;
   handle = vectis_audio_lua_new_capture(lua, &capture);
@@ -88,6 +124,18 @@ int main(void) {
     lua_pop(lua, 1);
     assert(allocations == 0u);
   }
+  run_lua(lua,
+          "weak = setmetatable({}, {__mode='v'})\n"
+          "local co = coroutine.create(function()\n"
+          "  weak.thread = coroutine.running()\n"
+          "  encoder = new_callback_encoder(function(bytes) return #bytes end)\n"
+          "end)\n"
+          "assert(coroutine.resume(co)); co = nil; collectgarbage('collect')\n"
+          "assert(weak.thread ~= nil)\n"
+          "assert(invoke_encoder_callback(encoder) == 1)\n"
+          "assert(encoder:close()); encoder = nil\n"
+          "collectgarbage('collect'); collectgarbage('collect')\n"
+          "assert(weak.thread == nil)\n");
   lua_close(lua);
   return 0;
 }
