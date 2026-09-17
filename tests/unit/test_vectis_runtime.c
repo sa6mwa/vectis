@@ -4304,6 +4304,7 @@ static void assert_kore_smoke(void) {
   vectis_http_response stream_file_response;
   vectis_http_response xml_route_response;
   vectis_http_response dsv_route_response;
+  vectis_http_response dsv_invalid_response;
   vectis_http_response static_file_head_response;
   vectis_http_response static_module_response;
   vectis_http_response embedded_response;
@@ -4334,6 +4335,7 @@ static void assert_kore_smoke(void) {
   stream_probe_context overlap_stream_context;
   runtime_failing_after_chunk_source failing_stream_source;
   runtime_dsv_summary dsv_summary;
+  runtime_dsv_summary dsv_invalid_summary;
   vectis_route_config route;
   vectis_route_config limited_route;
   vectis_route_config upload_route;
@@ -4348,6 +4350,7 @@ static void assert_kore_smoke(void) {
   vectis_websocket_route_config websocket_route;
   vectis_xml_route_config xml_route;
   vectis_dsv_route_config dsv_route;
+  vectis_dsv_route_config dsv_invalid_route;
   vectis_static_file_config static_file_mount;
   vectis_static_file_config static_module_mount;
   vectis_static_embedded_config embedded_mount;
@@ -4465,6 +4468,7 @@ static void assert_kore_smoke(void) {
   char *stream_body;
   char size_text[64];
   char dsv_text[128];
+  char dsv_invalid_body[4096];
   char auth_client_id[128];
   char auth_client_secret[128];
   char auth_clear[320];
@@ -4485,6 +4489,7 @@ static void assert_kore_smoke(void) {
   size_t stream_body_size;
   size_t xml_body_size;
   size_t dsv_rows;
+  size_t dsv_invalid_body_size;
   long long dsv_total;
   size_t dsv_active;
   size_t browser_cookie_size;
@@ -4521,6 +4526,7 @@ static void assert_kore_smoke(void) {
   memset(&stream_file_response, 0, sizeof(stream_file_response));
   memset(&xml_route_response, 0, sizeof(xml_route_response));
   memset(&dsv_route_response, 0, sizeof(dsv_route_response));
+  memset(&dsv_invalid_response, 0, sizeof(dsv_invalid_response));
   memset(&static_file_head_response, 0, sizeof(static_file_head_response));
   memset(&static_module_response, 0, sizeof(static_module_response));
   memset(&embedded_response, 0, sizeof(embedded_response));
@@ -4557,6 +4563,7 @@ static void assert_kore_smoke(void) {
   memset(&overlap_stream_context, 0, sizeof(overlap_stream_context));
   memset(&failing_stream_source, 0, sizeof(failing_stream_source));
   memset(&dsv_summary, 0, sizeof(dsv_summary));
+  memset(&dsv_invalid_summary, 0, sizeof(dsv_invalid_summary));
   memset(&json_source_request, 0, sizeof(json_source_request));
   memset(&no_body_request, 0, sizeof(no_body_request));
   memset(&json_source_doc, 0, sizeof(json_source_doc));
@@ -4785,6 +4792,15 @@ static void assert_kore_smoke(void) {
   dsv_route.body.memory_buffer_limit_bytes = 8u;
   dsv_route.buffer_bytes = 4096u;
   status = app->dsv_route(app, &dsv_route, &error);
+  assert(status == VECTIS_OK);
+  dsv_invalid_route =
+      vectis_dsv_route(VECTIS_HTTP_POST, "/dsv-invalid-upload",
+                       &runtime_dsv_row_map, sizeof(runtime_dsv_row),
+                       &dsv_config, dsv_route_handler, &dsv_invalid_summary);
+  dsv_invalid_route.body.max_bytes = 2097152u;
+  dsv_invalid_route.body.memory_buffer_limit_bytes = 8u;
+  dsv_invalid_route.buffer_bytes = 64u;
+  status = app->dsv_route(app, &dsv_invalid_route, &error);
   assert(status == VECTIS_OK);
   stream_file_route =
       vectis_upload_file_route(VECTIS_HTTP_POST, "/stream-file",
@@ -6137,6 +6153,32 @@ static void assert_kore_smoke(void) {
     assert(dsv_route_response.body_size == strlen(dsv_text));
     assert(memcmp(dsv_route_response.body, dsv_text, strlen(dsv_text)) == 0);
     vectis_http_response_cleanup(&dsv_route_response);
+
+    dsv_invalid_body_size =
+        (size_t)snprintf(dsv_invalid_body, sizeof(dsv_invalid_body),
+                         "id,count,active\ninvalid,not-an-integer,true\n");
+    assert(dsv_invalid_body_size < sizeof(dsv_invalid_body));
+    for (i = 0; i < 100; ++i) {
+      written = snprintf(dsv_invalid_body + dsv_invalid_body_size,
+                         sizeof(dsv_invalid_body) - dsv_invalid_body_size,
+                         "trailing-%d,1,true\n", i);
+      assert(written > 0);
+      assert((size_t)written <
+             sizeof(dsv_invalid_body) - dsv_invalid_body_size);
+      dsv_invalid_body_size += (size_t)written;
+    }
+    vectis_http_request_init(&request);
+    request.method = VECTIS_HTTP_POST;
+    request.url =
+        format_loopback_http_url(url, sizeof(url), port, "/dsv-invalid-upload");
+    request.body = dsv_invalid_body;
+    request.body_size = dsv_invalid_body_size;
+    request.content_type = "text/csv";
+    status =
+        vectis_http_execute(&http, &request, &dsv_invalid_response, &error);
+    assert(status == VECTIS_OK);
+    assert(dsv_invalid_response.status_code == 400L);
+    vectis_http_response_cleanup(&dsv_invalid_response);
   }
 
   (void)snprintf(size_text, sizeof(size_text), "%lu",

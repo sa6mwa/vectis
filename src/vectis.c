@@ -20097,6 +20097,8 @@ static vectis_status vectis_upload_reader_write(vectis_app *app,
   vectis_upload_reader_state *reader_state;
   vectis_upload_reader_chunk *chunk;
   const unsigned char *bytes;
+  vectis_error handler_error;
+  vectis_status handler_status;
   size_t offset;
   size_t ncopy;
   size_t room;
@@ -20121,7 +20123,15 @@ static vectis_status vectis_upload_reader_write(vectis_app *app,
     }
     if (reader_state->failed || reader_state->closed ||
         reader_state->handler_done) {
+      handler_status = reader_state->status;
+      handler_error = reader_state->error;
       (void)pthread_mutex_unlock(&reader_state->mutex);
+      if (handler_status != VECTIS_OK) {
+        if (error != NULL) {
+          *error = handler_error;
+        }
+        return handler_status;
+      }
       vectis_set_error(error, VECTIS_ERR_STATE,
                        "upload reader handler stopped before consuming body");
       return VECTIS_ERR_STATE;
@@ -33003,20 +33013,15 @@ static void vectis_xml_trim_span(const char **data, size_t *size) {
   *size = (size_t)(end - start);
 }
 
-static int vectis_xml_span_has_nonspace(const char *data, size_t size) {
-  size_t i;
-
-  for (i = 0u; i < size; ++i) {
-    if (!isspace((unsigned char)data[i])) {
-      return 1;
-    }
-  }
-  return 0;
-}
-
 static int vectis_xml_text_exceeds_limit(size_t accumulated, size_t size,
                                          size_t limit) {
   return limit > 0u && (accumulated > limit || size > limit - accumulated);
+}
+
+static vectis_status vectis_xml_reject_entity_reference(vectis_error *error) {
+  vectis_set_error(error, VECTIS_ERR_INVALID,
+                   "XML entity references are not supported");
+  return VECTIS_ERR_INVALID;
 }
 
 static int vectis_xml_field_is_direct_text_stream(const lonejson_field *field) {
@@ -33454,6 +33459,9 @@ static vectis_status vectis_xml_skip_element(xmlTextReaderPtr reader,
       return VECTIS_ERR_INVALID;
     }
     type = xmlTextReaderNodeType(reader);
+    if (type == XML_READER_TYPE_ENTITY_REFERENCE) {
+      return vectis_xml_reject_entity_reference(error);
+    }
     if (type == XML_READER_TYPE_ELEMENT &&
         (xmlTextReaderDepth(reader) < 0 ||
          (size_t)xmlTextReaderDepth(reader) >= max_depth)) {
@@ -33561,6 +33569,10 @@ static vectis_status vectis_xml_stream_scalar_content(
         xmlTextReaderDepth(reader) == start_depth) {
       break;
     }
+    if (type == XML_READER_TYPE_ENTITY_REFERENCE) {
+      status = vectis_xml_reject_entity_reference(error);
+      break;
+    }
     if (type == XML_READER_TYPE_ELEMENT) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "XML scalar field contains nested elements");
@@ -33642,6 +33654,10 @@ static vectis_status vectis_xml_stream_array_scalar_content(
     type = xmlTextReaderNodeType(reader);
     if (type == XML_READER_TYPE_END_ELEMENT &&
         xmlTextReaderDepth(reader) == start_depth) {
+      break;
+    }
+    if (type == XML_READER_TYPE_ENTITY_REFERENCE) {
+      status = vectis_xml_reject_entity_reference(error);
       break;
     }
     if (type == XML_READER_TYPE_ELEMENT) {
@@ -33901,6 +33917,10 @@ vectis_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
           xmlTextReaderDepth(reader) == start_depth) {
         break;
       }
+      if (type == XML_READER_TYPE_ENTITY_REFERENCE) {
+        status = vectis_xml_reject_entity_reference(error);
+        goto cleanup;
+      }
       if (type == XML_READER_TYPE_ELEMENT) {
         name = vectis_xml_reader_local_name(reader);
         field = vectis_xml_find_field(map, name);
@@ -33933,9 +33953,7 @@ vectis_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
                  type == XML_READER_TYPE_SIGNIFICANT_WHITESPACE ||
                  type == XML_READER_TYPE_WHITESPACE) {
         value = xmlTextReaderConstValue(reader);
-        if (value != NULL &&
-            vectis_xml_span_has_nonspace((const char *)value,
-                                         strlen((const char *)value))) {
+        if (value != NULL) {
           status = vectis_xml_stream_text_field(
               states, &open_index, map, config, out, (const char *)value,
               strlen((const char *)value), error);
@@ -33988,6 +34006,7 @@ static vectis_status vectis_xml_stream_document(xmlTextReaderPtr reader,
                                                 lonejson *runtime, void *out,
                                                 vectis_error *error) {
   const char *name;
+  int type;
   int rc;
 
   for (;;) {
@@ -33997,7 +34016,11 @@ static vectis_status vectis_xml_stream_document(xmlTextReaderPtr reader,
                        "XML document has no root element");
       return VECTIS_ERR_INVALID;
     }
-    if (xmlTextReaderNodeType(reader) == XML_READER_TYPE_ELEMENT) {
+    type = xmlTextReaderNodeType(reader);
+    if (type == XML_READER_TYPE_ENTITY_REFERENCE) {
+      return vectis_xml_reject_entity_reference(error);
+    }
+    if (type == XML_READER_TYPE_ELEMENT) {
       break;
     }
   }

@@ -3092,6 +3092,24 @@ static void assert_xml_surface(void) {
   assert(status == VECTIS_OK);
   assert(strcmp(parsed_attr_doc.text, "helloworld") == 0);
 
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\">a<![CDATA[ ]]>b</item>",
+      strlen("<item id=\"split\">a<![CDATA[ ]]>b</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "a b") == 0);
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\"><![CDATA[ \t ]]></item>",
+      strlen("<item id=\"split\"><![CDATA[ \t ]]></item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, " \t ") == 0);
+
   config.trim_text = 1;
   xml_source = vectis_source_from_memory(
       "<item id=\"split\"> hello <![CDATA[world]]> </item>",
@@ -3112,6 +3130,71 @@ static void assert_xml_surface(void) {
   assert(strstr(error.message, "duplicate") != NULL);
   vectis_error_clear(&error);
 
+  config.trim_text = 0;
+  xml_source = vectis_source_from_memory(
+      "<!DOCTYPE item [<!ENTITY x \"MISSING\">]>"
+      "<item id=\"entity\">a&x;b</item>",
+      strlen("<!DOCTYPE item [<!ENTITY x \"MISSING\">]>"
+             "<item id=\"entity\">a&x;b</item>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "entity") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source = vectis_source_from_memory(
+      "<!DOCTYPE item [<!ENTITY x \"MISSING\">]>"
+      "<item id=\"entity\"><unknown>&x;</unknown>text</item>",
+      strlen("<!DOCTYPE item [<!ENTITY x \"MISSING\">]>"
+             "<item id=\"entity\"><unknown>&x;</unknown>text</item>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "entity") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source =
+      vectis_source_from_memory("<item id=\"entity\">a&amp;b</item>",
+                                strlen("<item id=\"entity\">a&amp;b</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "a&b") == 0);
+
+  config = vectis_xml_default();
+  config.root_element = "invoice";
+  xml_source = vectis_source_from_memory(
+      "<!DOCTYPE invoice [<!ENTITY x \"MISSING\">]>"
+      "<invoice><id>entity</id><amount currency=\"SEK\">1&x;</amount>"
+      "<active>true</active></invoice>",
+      strlen("<!DOCTYPE invoice [<!ENTITY x \"MISSING\">]>"
+             "<invoice><id>entity</id><amount currency=\"SEK\">1&x;</amount>"
+             "<active>true</active></invoice>"));
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "entity") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source = vectis_source_from_memory(
+      "<!DOCTYPE invoice [<!ENTITY x \"MISSING\">]>"
+      "<invoice><id>entity</id><amount currency=\"SEK\">1</amount>"
+      "<tag>a&x;b</tag><active>true</active></invoice>",
+      strlen("<!DOCTYPE invoice [<!ENTITY x \"MISSING\">]>"
+             "<invoice><id>entity</id><amount currency=\"SEK\">1</amount>"
+             "<tag>a&x;b</tag><active>true</active></invoice>"));
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "entity") != NULL);
+  vectis_error_clear(&error);
+
+  config = vectis_xml_default();
+  config.root_element = "item";
+  config.attribute_prefix = "@";
   memset(&attr_doc, 0, sizeof(attr_doc));
   strcpy(attr_doc.attr_id, "a\tb\nc\rd");
   strcpy(attr_doc.text, "p\rq");
