@@ -53,6 +53,7 @@ typedef struct vectis_opcua_lua_value {
 
 typedef struct vectis_opcua_lua_monitor_callback {
   lua_State *owner;
+  int owner_ref;
   struct vectis_opcua_lua_client *client;
   int callback_ref;
   cpkt_opcua_subscription_id subscription_id;
@@ -62,6 +63,7 @@ typedef struct vectis_opcua_lua_monitor_callback {
 
 typedef struct vectis_opcua_lua_async_callback {
   lua_State *owner;
+  int owner_ref;
   struct vectis_opcua_lua_client *client;
   int callback_ref;
   cpkt_opcua_request_id request_id;
@@ -85,6 +87,7 @@ typedef struct vectis_opcua_lua_async_callback {
 typedef struct vectis_opcua_lua_client {
   cpkt_opcua_client *client;
   lua_State *owner;
+  int owner_ref;
   int callback_error_ref;
   vectis_opcua_lua_monitor_callback *monitors;
   vectis_opcua_lua_async_callback *async_callbacks;
@@ -97,6 +100,7 @@ typedef struct vectis_opcua_lua_method_output_slot {
 
 typedef struct vectis_opcua_lua_method_callback {
   lua_State *owner;
+  int owner_ref;
   int callback_ref;
   size_t output_count;
   vectis_opcua_lua_method_output_slot *outputs;
@@ -106,6 +110,7 @@ typedef struct vectis_opcua_lua_method_callback {
 typedef struct vectis_opcua_lua_server {
   cpkt_opcua_server *server;
   lua_State *owner;
+  int owner_ref;
   int access_control_ref;
   vectis_opcua_lua_method_callback *methods;
 } vectis_opcua_lua_server;
@@ -145,6 +150,21 @@ static void vectis_opcua_lua_value_field(lua_State *lua, int index,
                                          cpkt_opcua_value *value_out);
 static size_t vectis_opcua_lua_array_len(lua_State *lua, int index,
                                          const char *context);
+
+/* Native OPC UA objects and callbacks retain raw lua_State pointers. Keep the
+ * corresponding thread alive until every native reference has been released. */
+static int vectis_opcua_lua_owner_ref(lua_State *lua) {
+  lua_pushthread(lua);
+  return luaL_ref(lua, LUA_REGISTRYINDEX);
+}
+
+static void vectis_opcua_lua_owner_unref(lua_State **owner, int *owner_ref) {
+  if (*owner != NULL && *owner_ref != LUA_NOREF) {
+    luaL_unref(*owner, LUA_REGISTRYINDEX, *owner_ref);
+  }
+  *owner = NULL;
+  *owner_ref = LUA_NOREF;
+}
 
 static void vectis_opcua_lua_set_field_string(lua_State *lua, const char *field,
                                               const char *value) {
@@ -2096,7 +2116,9 @@ static void vectis_opcua_lua_method_callback_free(
   }
   if (callback->owner != NULL && callback->callback_ref != LUA_NOREF) {
     luaL_unref(callback->owner, LUA_REGISTRYINDEX, callback->callback_ref);
+    callback->callback_ref = LUA_NOREF;
   }
+  vectis_opcua_lua_owner_unref(&callback->owner, &callback->owner_ref);
   for (i = 0u; i < callback->output_count; ++i) {
     free(callback->outputs[i].storage);
   }
@@ -2129,12 +2151,14 @@ vectis_opcua_lua_method_callback_new(lua_State *lua, int callback_index,
     return NULL;
   }
   callback->owner = lua;
+  callback->owner_ref = vectis_opcua_lua_owner_ref(lua);
   callback->callback_ref = LUA_NOREF;
   callback->output_count = output_count;
   if (output_count > 0u) {
     callback->outputs = (vectis_opcua_lua_method_output_slot *)calloc(
         output_count, sizeof(*callback->outputs));
     if (callback->outputs == NULL) {
+      vectis_opcua_lua_owner_unref(&callback->owner, &callback->owner_ref);
       free(callback);
       (void)luaL_error(lua, "opcua method output allocation failed");
       return NULL;
@@ -2321,6 +2345,7 @@ static void vectis_opcua_lua_monitor_callback_free(
     luaL_unref(callback->owner, LUA_REGISTRYINDEX, callback->callback_ref);
     callback->callback_ref = LUA_NOREF;
   }
+  vectis_opcua_lua_owner_unref(&callback->owner, &callback->owner_ref);
   free(callback);
 }
 
@@ -2349,6 +2374,7 @@ static vectis_opcua_lua_monitor_callback *vectis_opcua_lua_monitor_callback_new(
     return NULL;
   }
   callback->owner = lua;
+  callback->owner_ref = vectis_opcua_lua_owner_ref(lua);
   callback->client = client;
   callback->callback_ref = LUA_NOREF;
   callback->subscription_id = subscription_id;
@@ -2430,6 +2456,7 @@ static void vectis_opcua_lua_async_callback_free(
                callback->browse_entries_ref);
     callback->browse_entries_ref = LUA_NOREF;
   }
+  vectis_opcua_lua_owner_unref(&callback->owner, &callback->owner_ref);
   free(callback->string_buffer);
   free(callback->node_id_buffer);
   free(callback->outputs);
@@ -2468,6 +2495,7 @@ static vectis_opcua_lua_async_callback *vectis_opcua_lua_async_callback_new(
     return NULL;
   }
   callback->owner = lua;
+  callback->owner_ref = vectis_opcua_lua_owner_ref(lua);
   callback->client = client;
   callback->callback_ref = LUA_NOREF;
   callback->browse_entries_ref = LUA_NOREF;
@@ -2963,16 +2991,19 @@ static int vectis_opcua_lua_client_close(lua_State *lua) {
   vectis_opcua_lua_client *client;
 
   client = vectis_opcua_lua_check_client(lua, 1);
+  if (client->client != NULL) {
+    cpkt_opcua_client_free(client->client);
+    client->client = NULL;
+  }
+  /* Native teardown may dispatch pending callbacks, which still use these
+   * records and their response buffers. Release them only after it returns. */
   vectis_opcua_lua_client_free_async_callbacks(client);
   vectis_opcua_lua_client_free_monitor_callbacks(client);
   if (client->owner != NULL && client->callback_error_ref != LUA_NOREF) {
     luaL_unref(client->owner, LUA_REGISTRYINDEX, client->callback_error_ref);
     client->callback_error_ref = LUA_NOREF;
   }
-  if (client->client != NULL) {
-    cpkt_opcua_client_free(client->client);
-    client->client = NULL;
-  }
+  vectis_opcua_lua_owner_unref(&client->owner, &client->owner_ref);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -2985,6 +3016,7 @@ static int vectis_opcua_lua_client_new(lua_State *lua) {
       lua, sizeof(vectis_opcua_lua_client), 0);
   client->client = NULL;
   client->owner = lua;
+  client->owner_ref = vectis_opcua_lua_owner_ref(lua);
   client->callback_error_ref = LUA_NOREF;
   client->monitors = NULL;
   client->async_callbacks = NULL;
@@ -2993,6 +3025,7 @@ static int vectis_opcua_lua_client_new(lua_State *lua) {
   result = cpkt_opcua_client_new(&client->client);
   if (result != CPKT_OPCUA_OK) {
     client->client = NULL;
+    vectis_opcua_lua_owner_unref(&client->owner, &client->owner_ref);
     lua_pop(lua, 1);
     return vectis_opcua_lua_push_error(lua, result, 0u, "opcua client new");
   }
@@ -4665,6 +4698,7 @@ static int vectis_opcua_lua_server_close(lua_State *lua) {
   }
   vectis_opcua_lua_server_unref_access_control(server);
   vectis_opcua_lua_server_free_method_callbacks(server);
+  vectis_opcua_lua_owner_unref(&server->owner, &server->owner_ref);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -4677,11 +4711,14 @@ static int vectis_opcua_lua_server_new(lua_State *lua) {
   const char *json;
   const char *path;
   size_t json_size;
+  int argument_count;
 
+  argument_count = lua_gettop(lua);
   server = (vectis_opcua_lua_server *)lua_newuserdatauv(
       lua, sizeof(vectis_opcua_lua_server), 0);
   server->server = NULL;
   server->owner = lua;
+  server->owner_ref = vectis_opcua_lua_owner_ref(lua);
   server->access_control_ref = LUA_NOREF;
   server->methods = NULL;
   luaL_getmetatable(lua, VECTIS_OPCUA_SERVER);
@@ -4710,7 +4747,7 @@ static int vectis_opcua_lua_server_new(lua_State *lua) {
         result = cpkt_opcua_server_new(&server->server, port);
       }
     }
-  } else if (lua_isnoneornil(lua, 1)) {
+  } else if (argument_count == 0 || lua_isnil(lua, 1)) {
     result = cpkt_opcua_server_new(&server->server, 0u);
   } else {
     port = vectis_opcua_lua_check_ushort(lua, 1, "port");
@@ -4718,6 +4755,7 @@ static int vectis_opcua_lua_server_new(lua_State *lua) {
   }
   if (result != CPKT_OPCUA_OK) {
     server->server = NULL;
+    vectis_opcua_lua_owner_unref(&server->owner, &server->owner_ref);
     lua_pop(lua, 1);
     return vectis_opcua_lua_push_error(lua, result, status, "opcua server new");
   }
