@@ -38508,7 +38508,11 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     (void)curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, connect_timeout_ms);
   }
   if (!client->follow_redirects_disabled) {
-    (void)curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    /* A custom verb is needed for methods such as PATCH, but must not force
+     * a bodyless PATCH/PUT across a 303. Let libcurl obey 301/302/303 method
+     * changes while retaining the original method and replayable body for
+     * 307/308. */
+    (void)curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE);
   }
   if (request->proxy_url != NULL && request->proxy_url[0] != '\0') {
     (void)curl_easy_setopt(curl, CURLOPT_PROXY, request->proxy_url);

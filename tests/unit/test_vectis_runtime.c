@@ -2576,6 +2576,43 @@ static vectis_status upload_redirect_handler(vectis_app *app,
   return status;
 }
 
+static vectis_status upload_see_other_redirect_handler(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *userdata, vectis_error *error) {
+  vectis_mutable_bytes body;
+  vectis_status status;
+  size_t i;
+  (void)app;
+  (void)userdata;
+  memset(&body, 0, sizeof(body));
+  assert(vectis_request_body_read_all(request, &body, error) == VECTIS_OK);
+  assert(body.size == 20000u);
+  for (i = 0u; i < body.size; ++i) {
+    assert(((unsigned char *)body.data)[i] == (unsigned char)(i % 251u));
+  }
+  vectis_mutable_bytes_cleanup(&body);
+  assert(vectis_response_header(response, "location", "/see-other", error) ==
+         VECTIS_OK);
+  status = vectis_response_status(response, 303, error);
+  return status;
+}
+
+static vectis_status upload_see_other_result_handler(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *userdata, vectis_error *error) {
+  vectis_mutable_bytes body;
+  vectis_status status;
+  (void)app;
+  (void)userdata;
+  memset(&body, 0, sizeof(body));
+  assert(vectis_request_method(request) == VECTIS_HTTP_GET);
+  assert(vectis_request_body_read_all(request, &body, error) == VECTIS_OK);
+  assert(body.size == 0u);
+  vectis_mutable_bytes_cleanup(&body);
+  status = vectis_response_text(response, 200, "text/plain", "GET", error);
+  return status;
+}
+
 static vectis_status empty_post_handler(vectis_app *app,
                                         vectis_request *request,
                                         vectis_response *response,
@@ -2728,6 +2765,14 @@ static void assert_upload_redirect_replay(void) {
     route.body = vectis_body_buffered_max(sizeof(payload));
     assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   }
+  route = vectis_route_methods(VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_PATCH,
+                               "/303", upload_see_other_redirect_handler,
+                               NULL);
+  route.body = vectis_body_buffered_max(sizeof(payload));
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/see-other",
+                       upload_see_other_result_handler, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   route =
       vectis_route(VECTIS_HTTP_POST, "/empty-post", empty_post_handler, NULL);
   route.body = vectis_body_buffered_max(1024u);
@@ -2807,6 +2852,26 @@ static void assert_upload_redirect_replay(void) {
         assert(memcmp(response.body, payload, sizeof(payload)) == 0);
         assert(strcmp(vectis_http_response_header(&response, "x-upload-method"),
                       method == 0 ? "PUT" : "PATCH") == 0);
+        vectis_http_response_cleanup(&response);
+
+        vectis_http_request_init(&request);
+        request.method = method == 0 ? VECTIS_HTTP_PUT : VECTIS_HTTP_PATCH;
+        request.url = format_loopback_http_url(url, sizeof(url), port, "/303");
+        request.headers = headers;
+        request.header_count = 1u;
+        request.content_type = "application/octet-stream";
+        if (from_file) {
+          request.body_path = filename;
+        } else {
+          request.body = payload;
+          request.body_size = sizeof(payload);
+        }
+        memset(&response, 0, sizeof(response));
+        assert(vectis_http_client_execute(client, &request, &response,
+                                          &error) == VECTIS_OK);
+        assert(response.status_code == 200L);
+        assert(response.body_size == strlen("GET"));
+        assert(memcmp(response.body, "GET", response.body_size) == 0);
         vectis_http_response_cleanup(&response);
       }
     }
