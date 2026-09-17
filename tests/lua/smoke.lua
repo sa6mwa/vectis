@@ -969,6 +969,7 @@ assert(type(server.text) == "function")
 assert(type(server.redirect) == "function")
 assert(type(server.auth_json) == "function")
 local route_owner_weak = setmetatable({}, {__mode = "v"})
+local websocket_owner_weak = setmetatable({}, {__mode = "v"})
 do
   local owner_thread = coroutine.create(function()
     route_owner_weak.thread = coroutine.running()
@@ -983,6 +984,19 @@ do
   owner_thread = nil
   collectgarbage("collect")
   assert(route_owner_weak.thread ~= nil)
+end
+do
+  local owner_thread = coroutine.create(function()
+    websocket_owner_weak.thread = coroutine.running()
+    assert(server:websocket({
+      path = "/lua-smoke-coroutine-websocket",
+      message = function() end,
+    }) == true)
+  end)
+  assert(coroutine.resume(owner_thread))
+  owner_thread = nil
+  collectgarbage("collect")
+  assert(websocket_owner_weak.thread ~= nil)
 end
 do
   local requests = assert(vectis.mailbox.new({ capacity = 4 }))
@@ -1158,6 +1172,7 @@ server:close()
 collectgarbage("collect")
 collectgarbage("collect")
 assert(route_owner_weak.thread == nil)
+assert(websocket_owner_weak.thread == nil)
 assert(_G.__vectis_smoke_lifecycle_opcua_server:close() == true)
 _G.__vectis_smoke_lifecycle_opcua_server = nil
 

@@ -8201,7 +8201,6 @@ static int vectis_lua_app_close(lua_State *lua) {
   server->started = 0;
   vectis_lua_app_json_route_free_all(server);
   vectis_lua_app_callback_route_free_all(server);
-  vectis_lua_app_release_callback_owners(lua, 1);
   vectis_lua_app_dsv_route_free_all(server);
   vectis_lua_app_upload_route_free_all(server);
   vectis_lua_app_websocket_route_free_all(server);
@@ -8209,6 +8208,7 @@ static int vectis_lua_app_close(lua_State *lua) {
   vectis_lua_app_auth_json_route_free_all(server);
   vectis_lua_app_openapi_schema_refs_free_all(server);
   vectis_lua_app_native_auth_free_all(server);
+  vectis_lua_app_release_callback_owners(lua, 1);
   return 0;
 }
 
@@ -11064,6 +11064,7 @@ static int vectis_lua_app_websocket(lua_State *lua) {
   }
   route_data->next = server->websocket_routes;
   server->websocket_routes = route_data;
+  vectis_lua_app_retain_callback_owner(lua, 1, route_data);
   lua_pushboolean(lua, 1);
   return 1;
 }
