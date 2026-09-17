@@ -30341,11 +30341,26 @@ static vectis_status vectis_dsv_push_current_field(vectis_dsv_parser *parser,
   return status;
 }
 
+static vectis_status vectis_dsv_append_current_byte(vectis_dsv_parser *parser,
+                                                    char byte,
+                                                    vectis_error *error) {
+  if (parser->config.max_field_bytes > 0u &&
+      parser->field.size >= parser->config.max_field_bytes) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV field exceeds max_field_bytes");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_string_builder_append_n(&parser->field, &byte, 1u, error) !=
+      VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
                                             int *has_record,
                                             vectis_error *error) {
   int c = 0;
-  char ch;
   int in_quotes;
   int after_quote;
   int at_field_start;
@@ -30368,12 +30383,17 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
       return status;
     }
     if (c == EOF) {
+      if (after_quote) {
+        in_quotes = 0;
+        after_quote = 0;
+      }
       if (in_quotes) {
         vectis_set_error(error, VECTIS_ERR_INVALID,
                          "unterminated quoted DSV field");
         return VECTIS_ERR_INVALID;
       }
-      if (parser->field.size > 0u || parser->fields.count > 0u) {
+      if (parser->field.size > 0u || parser->fields.count > 0u ||
+          !at_field_start) {
         if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
@@ -30390,9 +30410,10 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
     if (after_quote) {
       if (c == parser->config.quote &&
           parser->config.escape == parser->config.quote) {
-        if (vectis_string_builder_append_n(&parser->field, "\"", 1u, error) !=
-            VECTIS_OK) {
-          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        status = vectis_dsv_append_current_byte(
+            parser, (char)parser->config.quote, error);
+        if (status != VECTIS_OK) {
+          return status;
         }
         after_quote = 0;
         in_quotes = 1;
@@ -30401,21 +30422,41 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
       }
       in_quotes = 0;
       after_quote = 0;
+      if (c != parser->config.delimiter && c != '\r' && c != '\n') {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "unexpected character after closing DSV quote");
+        return VECTIS_ERR_INVALID;
+      }
     }
     if (in_quotes) {
-      if (c == parser->config.quote) {
-        after_quote = 1;
-      } else {
-        ch = (char)c;
-        if (parser->config.max_field_bytes > 0u &&
-            parser->field.size + 1u > parser->config.max_field_bytes) {
+      if (parser->config.escape != parser->config.quote &&
+          c == parser->config.escape) {
+        status = vectis_dsv_parser_next_char(parser, &c, error);
+        if (status != VECTIS_OK) {
+          return status;
+        }
+        if (c == EOF) {
           vectis_set_error(error, VECTIS_ERR_INVALID,
-                           "DSV field exceeds max_field_bytes");
+                           "unterminated escaped DSV field");
           return VECTIS_ERR_INVALID;
         }
-        if (vectis_string_builder_append_n(&parser->field, &ch, 1u, error) !=
-            VECTIS_OK) {
-          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        if (c != parser->config.quote && c != parser->config.escape) {
+          status = vectis_dsv_append_current_byte(
+              parser, (char)parser->config.escape, error);
+          if (status != VECTIS_OK) {
+            return status;
+          }
+        }
+        status = vectis_dsv_append_current_byte(parser, (char)c, error);
+        if (status != VECTIS_OK) {
+          return status;
+        }
+      } else if (c == parser->config.quote) {
+        after_quote = 1;
+      } else {
+        status = vectis_dsv_append_current_byte(parser, (char)c, error);
+        if (status != VECTIS_OK) {
+          return status;
         }
       }
       continue;
@@ -30446,16 +30487,9 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
       *has_record = 1;
       return VECTIS_OK;
     }
-    if (parser->config.max_field_bytes > 0u &&
-        parser->field.size + 1u > parser->config.max_field_bytes) {
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "DSV field exceeds max_field_bytes");
-      return VECTIS_ERR_INVALID;
-    }
-    ch = (char)c;
-    if (vectis_string_builder_append_n(&parser->field, &ch, 1u, error) !=
-        VECTIS_OK) {
-      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    status = vectis_dsv_append_current_byte(parser, (char)c, error);
+    if (status != VECTIS_OK) {
+      return status;
     }
     at_field_start = 0;
   }
@@ -30589,7 +30623,8 @@ vectis_dsv_effective_config(const vectis_dsv_config *config,
 
   vectis_dsv_config_init(&defaults);
   *out = config != NULL ? *config : defaults;
-  if (out->delimiter == 0 || out->delimiter == '\r' || out->delimiter == '\n') {
+  if (out->delimiter <= 0 || out->delimiter > UCHAR_MAX ||
+      out->delimiter == '\r' || out->delimiter == '\n') {
     vectis_set_error(error, VECTIS_ERR_INVALID, "DSV delimiter is invalid");
     return VECTIS_ERR_INVALID;
   }
@@ -30598,6 +30633,14 @@ vectis_dsv_effective_config(const vectis_dsv_config *config,
   }
   if (out->escape == 0) {
     out->escape = out->quote;
+  }
+  if (out->quote < 0 || out->quote > UCHAR_MAX || out->quote == '\r' ||
+      out->quote == '\n' || out->escape < 0 || out->escape > UCHAR_MAX ||
+      out->escape == '\r' || out->escape == '\n' ||
+      out->delimiter == out->quote || out->delimiter == out->escape) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV delimiter, quote, and escape are incompatible");
+    return VECTIS_ERR_INVALID;
   }
   if (out->max_field_bytes == 0u) {
     out->max_field_bytes = defaults.max_field_bytes;
@@ -30833,6 +30876,10 @@ vectis_dsv_set_lonejson_scalar_field(const lonejson_field *field, void *value,
   if (field->flags & LONEJSON_FIELD_HAS_PRESENCE) {
     *(int *)((unsigned char *)value + field->presence_offset) = 1;
   }
+  if (field->kind == LONEJSON_FIELD_KIND_STRING) {
+    return vectis_dsv_set_lonejson_string_field(field, value, text, text_size,
+                                                error);
+  }
   if (text_size >= sizeof(buffer)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "DSV lonejson scalar field is too large");
@@ -30842,9 +30889,6 @@ vectis_dsv_set_lonejson_scalar_field(const lonejson_field *field, void *value,
   buffer[text_size] = '\0';
   errno = 0;
   switch (field->kind) {
-  case LONEJSON_FIELD_KIND_STRING:
-    return vectis_dsv_set_lonejson_string_field(field, value, text, text_size,
-                                                error);
   case LONEJSON_FIELD_KIND_I64:
     if (!vectis_parse_lonejson_i64_text(buffer, &i64_value)) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -32411,7 +32455,7 @@ vectis_dsv_write_delimited_field(lc_sink *sink, const char *value, size_t size,
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   for (i = 0u; i < size; ++i) {
-    if (value[i] == quote &&
+    if ((value[i] == quote || (escape != quote && value[i] == escape)) &&
         vectis_dsv_sink_write(sink, &escape, 1u, error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
