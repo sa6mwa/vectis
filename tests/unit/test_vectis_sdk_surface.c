@@ -2998,8 +2998,11 @@ static void assert_xml_surface(void) {
   sample_xml_attr_doc attr_doc;
   sample_xml_attr_doc parsed_attr_doc;
   sample_xml_line *lines;
+  char deep_xml[2048];
   char *large_xml;
+  size_t deep_xml_size;
   size_t large_body_size;
+  unsigned depth_index;
   vectis_mutable_bytes serialized;
   vectis_bytes serialized_view;
 
@@ -3070,6 +3073,112 @@ static void assert_xml_surface(void) {
   assert(strcmp(parsed_attr_doc.attr_id, "a&b") == 0);
   assert(strcmp(parsed_attr_doc.text, "hello <xml>") == 0);
   vectis_mutable_bytes_cleanup(&serialized);
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\">hello<![CDATA[world]]></item>",
+      strlen("<item id=\"split\">hello<![CDATA[world]]></item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "helloworld") == 0);
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\">hello<!--comment-->world</item>",
+      strlen("<item id=\"split\">hello<!--comment-->world</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "helloworld") == 0);
+
+  config.trim_text = 1;
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\"> hello <![CDATA[world]]> </item>",
+      strlen("<item id=\"split\"> hello <![CDATA[world]]> </item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "hello world") == 0);
+  config.trim_text = 0;
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\" text=\"attribute\">body</item>",
+      strlen("<item id=\"split\" text=\"attribute\">body</item>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "duplicate") != NULL);
+  vectis_error_clear(&error);
+
+  memset(&attr_doc, 0, sizeof(attr_doc));
+  strcpy(attr_doc.attr_id, "a\tb\nc\rd");
+  strcpy(attr_doc.text, "p\rq");
+  status = vectis_xml_lonejson_to_bytes(&sample_xml_attr_doc_map, &config,
+                                        &attr_doc, &serialized, &error);
+  assert(status == VECTIS_OK);
+  serialized_view.data = serialized.data;
+  serialized_view.size = serialized.size;
+  assert(sample_bytes_contains(serialized_view,
+                               "id=\"a&#9;b&#10;c&#13;d\">p&#13;q</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  xml_source = vectis_source_from_memory(serialized.data, serialized.size);
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.attr_id, "a\tb\nc\rd") == 0);
+  assert(strcmp(parsed_attr_doc.text, "p\rq") == 0);
+  vectis_mutable_bytes_cleanup(&serialized);
+
+  config.max_text_bytes = 4u;
+  xml_source =
+      vectis_source_from_memory("<item id=\"abcdefgh\">ok</item>",
+                                strlen("<item id=\"abcdefgh\">ok</item>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_text_bytes") != NULL);
+  vectis_error_clear(&error);
+  xml_source =
+      vectis_source_from_memory("<item id=\"ok\">abcdefgh</item>",
+                                strlen("<item id=\"ok\">abcdefgh</item>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_text_bytes") != NULL);
+  vectis_error_clear(&error);
+  xml_source = vectis_source_from_memory(
+      "<item id=\"ok\"><text>abcdefgh</text></item>",
+      strlen("<item id=\"ok\"><text>abcdefgh</text></item>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_text_bytes") != NULL);
+  vectis_error_clear(&error);
+
+  config.max_depth = 1u;
+  deep_xml_size = strlen("<item id=\"ok\">text");
+  memcpy(deep_xml, "<item id=\"ok\">text", deep_xml_size);
+  for (depth_index = 0u; depth_index < 70u; ++depth_index) {
+    assert(deep_xml_size + strlen("<unknown>") < sizeof(deep_xml));
+    memcpy(deep_xml + deep_xml_size, "<unknown>", strlen("<unknown>"));
+    deep_xml_size += strlen("<unknown>");
+  }
+  for (depth_index = 0u; depth_index < 70u; ++depth_index) {
+    assert(deep_xml_size + strlen("</unknown>") < sizeof(deep_xml));
+    memcpy(deep_xml + deep_xml_size, "</unknown>", strlen("</unknown>"));
+    deep_xml_size += strlen("</unknown>");
+  }
+  assert(deep_xml_size + strlen("</item>") < sizeof(deep_xml));
+  memcpy(deep_xml + deep_xml_size, "</item>", strlen("</item>"));
+  deep_xml_size += strlen("</item>");
+  xml_source = vectis_source_from_memory(deep_xml, deep_xml_size);
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_depth") != NULL);
+  vectis_error_clear(&error);
 
   config = vectis_xml_default();
   config.root_element = "invoice";

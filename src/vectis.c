@@ -381,9 +381,11 @@ struct vectis_dsv_rows {
 
 typedef struct vectis_xml_field_state {
   size_t count;
+  vectis_string_builder text;
   int array;
   int array_open;
   int array_closed;
+  int text_pending;
 } vectis_xml_field_state;
 
 typedef struct vectis_xml_lc_reader {
@@ -33012,6 +33014,11 @@ static int vectis_xml_span_has_nonspace(const char *data, size_t size) {
   return 0;
 }
 
+static int vectis_xml_text_exceeds_limit(size_t accumulated, size_t size,
+                                         size_t limit) {
+  return limit > 0u && (accumulated > limit || size > limit - accumulated);
+}
+
 static int vectis_xml_field_is_direct_text_stream(const lonejson_field *field) {
   return field != NULL && field->kind == LONEJSON_FIELD_KIND_STRING_STREAM;
 }
@@ -33080,6 +33087,11 @@ vectis_xml_set_lonejson_string_field(const lonejson_field *field, void *value,
   size_t copy_size;
 
   if (field->storage == LONEJSON_STORAGE_DYNAMIC) {
+    if (text_size == SIZE_MAX) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "XML lonejson string field is too large");
+      return VECTIS_ERR_NOMEM;
+    }
     dyn = (char **)((unsigned char *)value + field->struct_offset);
     *dyn = (char *)vectis_lonejson_owned_malloc(text_size + 1u);
     if (*dyn == NULL) {
@@ -33271,6 +33283,7 @@ static vectis_status vectis_xml_set_array_scalar_field(
   lonejson_u64_array *u64s;
   lonejson_f64_array *f64s;
   lonejson_bool_array *bools;
+  vectis_status status;
 
   item_field = *field;
   item_field.struct_offset = 0u;
@@ -33287,9 +33300,13 @@ static vectis_status vectis_xml_set_array_scalar_field(
     }
     item_field.kind = LONEJSON_FIELD_KIND_STRING;
     item_field.storage = LONEJSON_STORAGE_DYNAMIC;
-    return vectis_xml_set_lonejson_scalar_field(
-        &item_field, &strings->items[strings->count++], data, size, config,
+    status = vectis_xml_set_lonejson_scalar_field(
+        &item_field, &strings->items[strings->count], data, size, config,
         error);
+    if (status == VECTIS_OK) {
+      strings->count++;
+    }
+    return status;
   case LONEJSON_FIELD_KIND_I64_ARRAY:
     i64s = (lonejson_i64_array *)array_value;
     if (vectis_xml_reserve_array(i64s, sizeof(i64s->items[0]), error) !=
@@ -33297,8 +33314,12 @@ static vectis_status vectis_xml_set_array_scalar_field(
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
     item_field.kind = LONEJSON_FIELD_KIND_I64;
-    return vectis_xml_set_lonejson_scalar_field(
-        &item_field, &i64s->items[i64s->count++], data, size, config, error);
+    status = vectis_xml_set_lonejson_scalar_field(
+        &item_field, &i64s->items[i64s->count], data, size, config, error);
+    if (status == VECTIS_OK) {
+      i64s->count++;
+    }
+    return status;
   case LONEJSON_FIELD_KIND_U64_ARRAY:
     u64s = (lonejson_u64_array *)array_value;
     if (vectis_xml_reserve_array(u64s, sizeof(u64s->items[0]), error) !=
@@ -33306,8 +33327,12 @@ static vectis_status vectis_xml_set_array_scalar_field(
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
     item_field.kind = LONEJSON_FIELD_KIND_U64;
-    return vectis_xml_set_lonejson_scalar_field(
-        &item_field, &u64s->items[u64s->count++], data, size, config, error);
+    status = vectis_xml_set_lonejson_scalar_field(
+        &item_field, &u64s->items[u64s->count], data, size, config, error);
+    if (status == VECTIS_OK) {
+      u64s->count++;
+    }
+    return status;
   case LONEJSON_FIELD_KIND_F64_ARRAY:
     f64s = (lonejson_f64_array *)array_value;
     if (vectis_xml_reserve_array(f64s, sizeof(f64s->items[0]), error) !=
@@ -33315,8 +33340,12 @@ static vectis_status vectis_xml_set_array_scalar_field(
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
     item_field.kind = LONEJSON_FIELD_KIND_F64;
-    return vectis_xml_set_lonejson_scalar_field(
-        &item_field, &f64s->items[f64s->count++], data, size, config, error);
+    status = vectis_xml_set_lonejson_scalar_field(
+        &item_field, &f64s->items[f64s->count], data, size, config, error);
+    if (status == VECTIS_OK) {
+      f64s->count++;
+    }
+    return status;
   case LONEJSON_FIELD_KIND_BOOL_ARRAY:
     bools = (lonejson_bool_array *)array_value;
     if (vectis_xml_reserve_array(bools, sizeof(bools->items[0]), error) !=
@@ -33324,8 +33353,12 @@ static vectis_status vectis_xml_set_array_scalar_field(
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
     item_field.kind = LONEJSON_FIELD_KIND_BOOL;
-    return vectis_xml_set_lonejson_scalar_field(
-        &item_field, &bools->items[bools->count++], data, size, config, error);
+    status = vectis_xml_set_lonejson_scalar_field(
+        &item_field, &bools->items[bools->count], data, size, config, error);
+    if (status == VECTIS_OK) {
+      bools->count++;
+    }
+    return status;
   default:
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "XML scalar array field kind is unsupported");
@@ -33393,15 +33426,21 @@ static vectis_status vectis_xml_append_object_array_item(
 }
 
 static vectis_status vectis_xml_skip_element(xmlTextReaderPtr reader,
+                                             size_t max_depth,
                                              vectis_error *error) {
   int start_depth;
   int rc;
   int type;
 
+  start_depth = xmlTextReaderDepth(reader);
+  if (start_depth < 0 || (size_t)start_depth >= max_depth) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML nesting exceeds max_depth");
+    return VECTIS_ERR_INVALID;
+  }
   if (xmlTextReaderIsEmptyElement(reader)) {
     return VECTIS_OK;
   }
-  start_depth = xmlTextReaderDepth(reader);
   for (;;) {
     rc = xmlTextReaderRead(reader);
     if (rc != 1) {
@@ -33415,6 +33454,13 @@ static vectis_status vectis_xml_skip_element(xmlTextReaderPtr reader,
       return VECTIS_ERR_INVALID;
     }
     type = xmlTextReaderNodeType(reader);
+    if (type == XML_READER_TYPE_ELEMENT &&
+        (xmlTextReaderDepth(reader) < 0 ||
+         (size_t)xmlTextReaderDepth(reader) >= max_depth)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML nesting exceeds max_depth");
+      return VECTIS_ERR_INVALID;
+    }
     if (type == XML_READER_TYPE_END_ELEMENT &&
         xmlTextReaderDepth(reader) == start_depth) {
       return VECTIS_OK;
@@ -33528,8 +33574,8 @@ static vectis_status vectis_xml_stream_scalar_content(
       if (xml_value != NULL) {
         chunk = (const char *)xml_value;
         chunk_size = strlen(chunk);
-        if (config->max_text_bytes > 0u &&
-            text.size + chunk_size > config->max_text_bytes) {
+        if (vectis_xml_text_exceeds_limit(text.size, chunk_size,
+                                          config->max_text_bytes)) {
           vectis_set_error(error, VECTIS_ERR_INVALID,
                            "XML text exceeds max_text_bytes");
           status = VECTIS_ERR_INVALID;
@@ -33611,8 +33657,8 @@ static vectis_status vectis_xml_stream_array_scalar_content(
       if (xml_value != NULL) {
         chunk = (const char *)xml_value;
         chunk_size = strlen(chunk);
-        if (config->max_text_bytes > 0u &&
-            text.size + chunk_size > config->max_text_bytes) {
+        if (vectis_xml_text_exceeds_limit(text.size, chunk_size,
+                                          config->max_text_bytes)) {
           vectis_set_error(error, VECTIS_ERR_INVALID,
                            "XML text exceeds max_text_bytes");
           status = VECTIS_ERR_INVALID;
@@ -33674,7 +33720,9 @@ static vectis_status vectis_xml_stream_text_field(
   const lonejson_field *field;
   void *field_value;
   const char *text;
+  const char *trimmed_text;
   size_t text_size;
+  size_t trimmed_size;
   size_t index;
   vectis_status status;
 
@@ -33683,12 +33731,6 @@ static vectis_status vectis_xml_stream_text_field(
   }
   text = data;
   text_size = size;
-  if (config->trim_text) {
-    vectis_xml_trim_span(&text, &text_size);
-  }
-  if (text_size == 0u) {
-    return VECTIS_OK;
-  }
   field = vectis_xml_find_field(map, config->text_key);
   if (field == NULL) {
     if (!config->skip_unknown_disabled) {
@@ -33698,18 +33740,55 @@ static vectis_status vectis_xml_stream_text_field(
                       config->text_key);
     return VECTIS_ERR_INVALID;
   }
+  if (config->trim_text) {
+    trimmed_text = text;
+    trimmed_size = text_size;
+    vectis_xml_trim_span(&trimmed_text, &trimmed_size);
+    if (trimmed_size == 0u) {
+      return VECTIS_OK;
+    }
+    if (vectis_xml_field_is_array(field)) {
+      text = trimmed_text;
+      text_size = trimmed_size;
+    }
+  }
+  if (text_size == 0u) {
+    return VECTIS_OK;
+  }
   index = (size_t)(field - map->fields);
+  if (vectis_xml_text_exceeds_limit(0u, text_size, config->max_text_bytes)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML text exceeds max_text_bytes");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_xml_field_is_array(field)) {
+    if (!states[index].text_pending) {
+      status = vectis_xml_begin_field(states, open_index, index, field, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    if (vectis_xml_text_exceeds_limit(states[index].text.size, text_size,
+                                      config->max_text_bytes)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML text exceeds max_text_bytes");
+      return VECTIS_ERR_INVALID;
+    }
+    status = vectis_string_builder_append_n(&states[index].text, text,
+                                            text_size, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    states[index].text_pending = 1;
+    return VECTIS_OK;
+  }
   status = vectis_xml_begin_field(states, open_index, index, field, error);
   if (status != VECTIS_OK) {
     return status;
   }
   field_value = (unsigned char *)out + field->struct_offset;
-  if (vectis_xml_field_is_array(field)) {
-    return vectis_xml_set_array_scalar_field(field, field_value, text,
-                                             text_size, config, error);
-  }
-  return vectis_xml_set_lonejson_scalar_field(field, out, text, text_size,
-                                              config, error);
+  return vectis_xml_set_array_scalar_field(field, field_value, text, text_size,
+                                           config, error);
 }
 
 static vectis_status
@@ -33783,6 +33862,14 @@ vectis_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
         goto cleanup;
       }
       value = xmlTextReaderConstValue(reader);
+      if (vectis_xml_text_exceeds_limit(
+              0u, value != NULL ? strlen((const char *)value) : 0u,
+              config->max_text_bytes)) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "XML text exceeds max_text_bytes");
+        status = VECTIS_ERR_INVALID;
+        goto cleanup;
+      }
       if (vectis_xml_field_is_array(field)) {
         status = vectis_xml_set_array_scalar_field(
             field, (unsigned char *)out + field->struct_offset,
@@ -33824,7 +33911,7 @@ vectis_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
             status = VECTIS_ERR_INVALID;
             goto cleanup;
           }
-          status = vectis_xml_skip_element(reader, error);
+          status = vectis_xml_skip_element(reader, config->max_depth, error);
           if (status != VECTIS_OK) {
             goto cleanup;
           }
@@ -33864,6 +33951,18 @@ vectis_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
     goto cleanup;
   }
   for (i = 0u; i < map->field_count; ++i) {
+    if (!states[i].text_pending) {
+      continue;
+    }
+    status = vectis_xml_set_lonejson_scalar_field(
+        &map->fields[i], out,
+        states[i].text.data != NULL ? states[i].text.data : "",
+        states[i].text.size, config, error);
+    if (status != VECTIS_OK) {
+      goto cleanup;
+    }
+  }
+  for (i = 0u; i < map->field_count; ++i) {
     if ((map->fields[i].flags & LONEJSON_FIELD_REQUIRED) != 0u &&
         states[i].count == 0u) {
       vectis_set_errorf(error, VECTIS_ERR_INVALID,
@@ -33876,6 +33975,9 @@ vectis_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
 
 cleanup:
   vectis_string_builder_cleanup(&attr_key);
+  for (i = 0u; i < map->field_count; ++i) {
+    vectis_string_builder_cleanup(&states[i].text);
+  }
   free(states);
   return status;
 }
@@ -34117,9 +34219,17 @@ static vectis_status vectis_xml_write_escaped(lc_sink *sink, const char *data,
     case '\'':
       replacement = attribute ? "&apos;" : NULL;
       break;
+    case '\t':
+      replacement = attribute ? "&#9;" : NULL;
+      break;
+    case '\n':
+      replacement = attribute ? "&#10;" : NULL;
+      break;
+    case '\r':
+      replacement = "&#13;";
+      break;
     default:
-      if (((unsigned char)data[i] < 0x20u) && data[i] != '\t' &&
-          data[i] != '\n' && data[i] != '\r') {
+      if ((unsigned char)data[i] < 0x20u) {
         vectis_set_error(error, VECTIS_ERR_INVALID,
                          "XML text contains a control character");
         return VECTIS_ERR_INVALID;
