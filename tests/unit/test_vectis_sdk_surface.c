@@ -451,6 +451,16 @@ static vectis_status sample_json_array_fail_on_second(void *userdata,
   return VECTIS_OK;
 }
 
+static vectis_status sample_json_array_fail_conflict(void *userdata,
+                                                     size_t index, void *item,
+                                                     vectis_error *error) {
+  (void)userdata;
+  (void)index;
+  (void)item;
+  (void)error;
+  return VECTIS_ERR_CONFLICT;
+}
+
 static lonejson_status sample_json_array_rewrite_item(
     void *user, const lonejson_array_rewrite_context *context, void *item,
     lonejson_array_rewrite_result *result, lonejson_error *error) {
@@ -526,6 +536,14 @@ static vectis_status curl_config_fail(CURL *curl, void *userdata,
   (void)userdata;
   vectis_set_error(error, VECTIS_ERR_STATE, "raw curl configuration failed");
   return VECTIS_ERR_STATE;
+}
+
+static vectis_status curl_config_fail_conflict(CURL *curl, void *userdata,
+                                               vectis_error *error) {
+  (void)curl;
+  (void)userdata;
+  (void)error;
+  return VECTIS_ERR_CONFLICT;
 }
 
 static vectis_status curl_config_fail_first_transfer(CURL *curl, void *userdata,
@@ -771,6 +789,18 @@ static void assert_http_surface(void) {
   assert(array_rows.count == 2u);
   vectis_http_response_cleanup(&response);
 
+  memset(&array_item, 0, sizeof(array_item));
+  vectis_error_clear(&error);
+  status = handle->get_json_array(handle, "/vectis_http_array.json", "items",
+                                  &sample_dsv_doc_map, &array_item,
+                                  sample_json_array_fail_conflict, NULL,
+                                  &response, &error);
+  assert(status == VECTIS_ERR_CONFLICT);
+  assert(error.code == VECTIS_OK);
+  assert(response.body == NULL);
+  assert(response.body_size == 0u);
+  vectis_http_response_cleanup(&response);
+
   memset(&array_rows, 0, sizeof(array_rows));
   memset(&array_item, 0, sizeof(array_item));
   status = handle->get_json_array(
@@ -857,6 +887,25 @@ static void assert_http_surface(void) {
   status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "raw curl") != NULL);
+
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.configure_curl = curl_config_fail_conflict;
+  vectis_error_clear(&error);
+  status = handle->execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_CONFLICT);
+  assert(error.code == VECTIS_OK);
+  vectis_http_response_cleanup(&response);
+
+  client.configure_curl = curl_config_fail_conflict;
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  vectis_error_clear(&error);
+  status = vectis_http_execute(&client, &request, &response, &error);
+  assert(status == VECTIS_ERR_CONFLICT);
+  assert(error.code == VECTIS_OK);
+  vectis_http_response_cleanup(&response);
+  client.configure_curl = curl_config_ok;
 
   status = handle->download_file(handle, "/vectis_http_source.txt",
                                  helper_download_path, &response, &error);

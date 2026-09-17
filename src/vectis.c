@@ -1165,6 +1165,7 @@ typedef struct vectis_curl_response_stream {
   vectis_http_response_body_fn callback;
   void *userdata;
   vectis_error *error;
+  vectis_status status;
   int failed;
 } vectis_curl_response_stream;
 
@@ -37706,14 +37707,16 @@ static size_t vectis_curl_write_stream(char *ptr, size_t size, size_t nmemb,
                                        void *userdata) {
   vectis_curl_response_stream *stream;
   size_t bytes;
+  vectis_status status;
 
   stream = (vectis_curl_response_stream *)userdata;
   bytes = size * nmemb;
   if (stream == NULL || stream->callback == NULL || bytes == 0u) {
     return bytes;
   }
-  if (stream->callback(ptr, bytes, stream->userdata, stream->error) !=
-      VECTIS_OK) {
+  status = stream->callback(ptr, bytes, stream->userdata, stream->error);
+  if (status != VECTIS_OK) {
+    stream->status = status;
     stream->failed = 1;
     return 0u;
   }
@@ -38405,6 +38408,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
   long low_speed_limit;
   long low_speed_time;
   size_t i;
+  vectis_status callback_status;
   const char *method;
   char content_type_header[256];
 
@@ -38717,31 +38721,36 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_buffer);
   }
 
-  if (client->configure_curl != NULL &&
-      client->configure_curl(curl, client->configure_curl_userdata, error) !=
-          VECTIS_OK) {
-    if (download_file != NULL) {
-      (void)fclose(download_file);
+  if (client->configure_curl != NULL) {
+    callback_status =
+        client->configure_curl(curl, client->configure_curl_userdata, error);
+    if (callback_status != VECTIS_OK) {
+      if (download_file != NULL) {
+        (void)fclose(download_file);
+      }
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(response_buffer.data);
+      free(url);
+      return callback_status;
     }
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    vectis_curl_request_body_cleanup(&request_body);
-    free(response_buffer.data);
-    free(url);
-    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
-  if (request->configure_curl != NULL &&
-      request->configure_curl(curl, request->configure_curl_userdata, error) !=
-          VECTIS_OK) {
-    if (download_file != NULL) {
-      (void)fclose(download_file);
+  if (request->configure_curl != NULL) {
+    callback_status = request->configure_curl(curl,
+                                               request->configure_curl_userdata,
+                                               error);
+    if (callback_status != VECTIS_OK) {
+      if (download_file != NULL) {
+        (void)fclose(download_file);
+      }
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(response_buffer.data);
+      free(url);
+      return callback_status;
     }
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    vectis_curl_request_body_cleanup(&request_body);
-    free(response_buffer.data);
-    free(url);
-    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
 
   curl_code = curl_easy_perform(curl);
@@ -38780,6 +38789,9 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     free(response_buffer.data);
     free(url);
     vectis_http_response_headers_cleanup(response);
+    if (response_stream.status != VECTIS_OK) {
+      return response_stream.status;
+    }
     if (error != NULL && error->code != VECTIS_OK) {
       return error->code;
     }
