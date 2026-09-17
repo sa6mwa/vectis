@@ -32972,9 +32972,8 @@ static const lonejson_field *vectis_xml_find_attribute_field(
     vectis_string_builder *key, vectis_error *error) {
   const lonejson_field *field;
 
-  field = vectis_xml_find_field(map, name);
-  if (field != NULL || config->attribute_prefix[0] == '\0') {
-    return field;
+  if (config->attribute_prefix[0] == '\0') {
+    return vectis_xml_find_field(map, name);
   }
   key->size = 0u;
   if (key->data != NULL) {
@@ -32985,7 +32984,8 @@ static const lonejson_field *vectis_xml_find_attribute_field(
       vectis_string_builder_append(key, name, error) != VECTIS_OK) {
     return NULL;
   }
-  return vectis_xml_find_field(map, key->data);
+  field = vectis_xml_find_field(map, key->data);
+  return field != NULL ? field : vectis_xml_find_field(map, name);
 }
 
 static int vectis_xml_field_is_array(const lonejson_field *field) {
@@ -33704,6 +33704,11 @@ static vectis_status vectis_xml_stream_field_value(
   void *field_value;
   void *item;
 
+  if (depth > config->max_depth) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML nesting exceeds max_depth");
+    return VECTIS_ERR_INVALID;
+  }
   field_value = (unsigned char *)out + field->struct_offset;
   if (field->kind == LONEJSON_FIELD_KIND_OBJECT) {
     if (field->submap == NULL) {
@@ -33756,17 +33761,15 @@ static vectis_status vectis_xml_stream_text_field(
                       config->text_key);
     return VECTIS_ERR_INVALID;
   }
-  if (config->trim_text) {
+  if (config->trim_text && vectis_xml_field_is_array(field)) {
     trimmed_text = text;
     trimmed_size = text_size;
     vectis_xml_trim_span(&trimmed_text, &trimmed_size);
     if (trimmed_size == 0u) {
       return VECTIS_OK;
     }
-    if (vectis_xml_field_is_array(field)) {
-      text = trimmed_text;
-      text_size = trimmed_size;
-    }
+    text = trimmed_text;
+    text_size = trimmed_size;
   }
   if (text_size == 0u) {
     return VECTIS_OK;

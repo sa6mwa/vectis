@@ -77,6 +77,11 @@ typedef struct sample_xml_attr_doc {
   char text[32];
 } sample_xml_attr_doc;
 
+typedef struct sample_xml_prefixed_attr_doc {
+  char id[16];
+  char attr_id[16];
+} sample_xml_prefixed_attr_doc;
+
 static int sample_bytes_contains(vectis_bytes bytes, const char *needle) {
   size_t needle_size;
   size_t i;
@@ -228,6 +233,12 @@ static const lonejson_field sample_xml_attr_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_attr_doc, text, "text",
                                     LONEJSON_OVERFLOW_FAIL)};
 
+static const lonejson_field sample_xml_prefixed_attr_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_prefixed_attr_doc, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_prefixed_attr_doc, attr_id,
+                                    "@id", LONEJSON_OVERFLOW_FAIL)};
+
 LONEJSON_MAP_DEFINE(sample_doc_map, sample_doc, sample_doc_fields);
 LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc,
                     sample_error_doc_fields);
@@ -237,6 +248,9 @@ LONEJSON_MAP_DEFINE(sample_xml_blob_doc_map, sample_xml_blob_doc,
                     sample_xml_blob_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_attr_doc_map, sample_xml_attr_doc,
                     sample_xml_attr_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_prefixed_attr_doc_map,
+                    sample_xml_prefixed_attr_doc,
+                    sample_xml_prefixed_attr_doc_fields);
 
 static void assert_lockd_state_update_release_ownership(void) {
   lockd_state_update_fake fake;
@@ -2997,6 +3011,8 @@ static void assert_xml_surface(void) {
   sample_xml_blob_doc blob_doc;
   sample_xml_attr_doc attr_doc;
   sample_xml_attr_doc parsed_attr_doc;
+  sample_xml_prefixed_attr_doc prefixed_attr_doc;
+  sample_xml_prefixed_attr_doc parsed_prefixed_attr_doc;
   sample_xml_line *lines;
   char deep_xml[2048];
   char *large_xml;
@@ -3074,6 +3090,27 @@ static void assert_xml_surface(void) {
   assert(strcmp(parsed_attr_doc.text, "hello <xml>") == 0);
   vectis_mutable_bytes_cleanup(&serialized);
 
+  memset(&prefixed_attr_doc, 0, sizeof(prefixed_attr_doc));
+  strcpy(prefixed_attr_doc.id, "element");
+  strcpy(prefixed_attr_doc.attr_id, "attribute");
+  status =
+      vectis_xml_lonejson_to_bytes(&sample_xml_prefixed_attr_doc_map, &config,
+                                   &prefixed_attr_doc, &serialized, &error);
+  assert(status == VECTIS_OK);
+  serialized_view.data = serialized.data;
+  serialized_view.size = serialized.size;
+  assert(sample_bytes_contains(
+      serialized_view, "<item id=\"attribute\"><id>element</id></item>"));
+  memset(&parsed_prefixed_attr_doc, 0, sizeof(parsed_prefixed_attr_doc));
+  xml_source = vectis_source_from_memory(serialized.data, serialized.size);
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_prefixed_attr_doc_map, &config,
+      &parsed_prefixed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_prefixed_attr_doc.id, "element") == 0);
+  assert(strcmp(parsed_prefixed_attr_doc.attr_id, "attribute") == 0);
+  vectis_mutable_bytes_cleanup(&serialized);
+
   xml_source = vectis_source_from_memory(
       "<item id=\"split\">hello<![CDATA[world]]></item>",
       strlen("<item id=\"split\">hello<![CDATA[world]]></item>"));
@@ -3121,6 +3158,17 @@ static void assert_xml_surface(void) {
   assert(strcmp(parsed_attr_doc.text, "hello world") == 0);
   config.trim_text = 0;
 
+  config.trim_text = 1;
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\">a<![CDATA[ ]]>b</item>",
+      strlen("<item id=\"split\">a<![CDATA[ ]]>b</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "a b") == 0);
+  config.trim_text = 0;
+
   xml_source = vectis_source_from_memory(
       "<item id=\"split\" text=\"attribute\">body</item>",
       strlen("<item id=\"split\" text=\"attribute\">body</item>"));
@@ -3164,6 +3212,26 @@ static void assert_xml_surface(void) {
 
   config = vectis_xml_default();
   config.root_element = "invoice";
+  config.max_depth = 1u;
+  xml_source = vectis_source_from_memory(
+      "<invoice><id>x</id></invoice>", strlen("<invoice><id>x</id></invoice>"));
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_depth") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source =
+      vectis_source_from_memory("<invoice><tag>x</tag></invoice>",
+                                strlen("<invoice><tag>x</tag></invoice>"));
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_depth") != NULL);
+  vectis_error_clear(&error);
+  config.max_depth = 64u;
   xml_source = vectis_source_from_memory(
       "<!DOCTYPE invoice [<!ENTITY x \"MISSING\">]>"
       "<invoice><id>entity</id><amount currency=\"SEK\">1&x;</amount>"
