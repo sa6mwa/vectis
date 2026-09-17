@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "vectis_internal.h"
@@ -401,6 +403,7 @@ int main(void) {
   char redirect_url[128];
   char empty_path[] = "vectis-https-empty-XXXXXX";
   char file_path[] = "vectis-https-file-XXXXXX";
+  struct timespec file_times[2];
   int fd;
 
   app = NULL;
@@ -410,6 +413,10 @@ int main(void) {
   fd = mkstemp(file_path);
   assert(fd >= 0);
   assert(write(fd, "hello", 5u) == 5);
+  assert(clock_gettime(CLOCK_REALTIME, &file_times[0]) == 0);
+  file_times[1] = file_times[0];
+  file_times[1].tv_nsec = 123000000L;
+  assert(futimens(fd, file_times) == 0);
   assert(close(fd) == 0);
   assert(vectis_internal_kore_autoblock_mutex_recovers_worker_death());
   root_cert_pem = NULL;

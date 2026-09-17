@@ -3052,6 +3052,68 @@ static void assert_websocket_echo(unsigned short port) {
   (void)close(fd);
 }
 
+static void assert_websocket_handshake_rejected(unsigned short port) {
+  const char *request;
+  char response[2048];
+  size_t i;
+  int fd;
+
+  request = "GET /ws HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n";
+  fd = connect_local(port);
+  for (i = 0u; i < 4u; ++i) {
+    socket_send_all(fd, request, strlen(request));
+    framing_read_headers(fd, response, sizeof(response));
+    assert(strncmp(response, "HTTP/1.1 400 ", 13u) == 0);
+    assert(strstr(response, " 101 ") == NULL);
+  }
+  (void)shutdown(fd, SHUT_RDWR);
+  (void)close(fd);
+}
+
+static void assert_websocket_rejection_metrics(void) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_websocket_route_config websocket_route;
+  vectis_mutable_bytes snapshot;
+  vectis_error error;
+  vectis_status status;
+  vectis_app *app;
+  unsigned short port;
+  int reserved_fd;
+
+  memset(&snapshot, 0, sizeof(snapshot));
+  reserved_fd = reserve_loopback_port(&port);
+  assert(reserved_fd >= 0);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.server.keepalive_max_requests = 8u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/metrics";
+  metrics.json_path = "/metrics.json";
+  assert(app->metrics(app, &metrics, &error) == VECTIS_OK);
+  websocket_route = vectis_websocket_route("/ws", runtime_websocket_echo, NULL);
+  assert(app->websocket(app, &websocket_route, &error) == VECTIS_OK);
+
+  assert(close(reserved_fd) == 0);
+  assert(app->start(app, &error) == VECTIS_OK);
+  assert_websocket_handshake_rejected(port);
+  status = vectis_metrics_snapshot_json(app, &snapshot, &error);
+  assert(status == VECTIS_OK);
+  assert(strstr((const char *)snapshot.data, "\"1xx\":0") != NULL);
+  vectis_mutable_bytes_cleanup(&snapshot);
+  assert(app->stop(app, &error) == VECTIS_OK);
+  app->close(app);
+}
+
 static int bytes_contain_text(const char *buffer, size_t buffer_size,
                               const char *needle) {
   size_t needle_size;
@@ -8970,6 +9032,7 @@ int main(int argc, char **argv) {
   assert(status == VECTIS_ERR_STATE);
 
   app->close(app);
+  assert_websocket_rejection_metrics();
   assert_kore_smoke();
   return 0;
 }

@@ -3002,8 +3002,11 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
       http_response(req, status, NULL, 0);
       return;
     }
-    ts.tv_sec = st.st_mtime;
-    ts.tv_nsec = 0L;
+#if defined(__APPLE__)
+    ts = st.st_mtimespec;
+#else
+    ts = st.st_mtim;
+#endif
     ref = kore_fileref_create(req->owner->owner->server, file_path, fd,
                               st.st_size, &ts);
     if (ref == NULL) {
@@ -3218,10 +3221,18 @@ int vectis_kore_route(struct http_request *req) {
       websocket_state->app = app;
       websocket_state->match = websocket_match;
       req->owner->hdlr_extra = websocket_state;
-      vectis_internal_metrics_note_http_status(app, 101);
       kore_websocket_handshake(req, "vectis_kore_ws_connect",
                                "vectis_kore_ws_message",
                                "vectis_kore_ws_disconnect");
+      /* Kore rejects malformed handshakes before installing the WebSocket
+       * disconnect callback. Keep the state only after it has committed the
+       * protocol transition, which is also the point at which a 101 exists. */
+      if (req->owner->proto != CONN_PROTO_WEBSOCKET) {
+        req->owner->hdlr_extra = NULL;
+        kore_free(websocket_state);
+      } else {
+        vectis_internal_metrics_note_http_status(app, 101);
+      }
       vectis_internal_request_free(request);
       vectis_internal_response_free(response);
       return KORE_RESULT_OK;
