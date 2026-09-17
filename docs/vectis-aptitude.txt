@@ -1,0 +1,115 @@
+VECTIS — APTITUDE
+
+[Verse I]
+
+Built for the point where the systems meet,
+fast on the wire, light on its feet.
+From factory floor to a cloud-bound stream,
+Vectis turns distance into a seam.
+
+Files, events, signals in flight,
+shaped on arrival, sent out right.
+Rows become structure, streams stay clean,
+old-world systems join the machine.
+
+State stays clear when the paths divide,
+work keeps moving from side to side.
+Local today, distributed wide,
+same steady hand on either side.
+
+[Pre-Chorus]
+
+Bring the protocol, bring the load,
+bring the edge and bring the node.
+Different systems, different view—
+
+Vectis finds a way through.
+
+[Chorus]
+
+Vectis. Ready to move.
+Built with range and built to prove.
+From edge to cloud, from line to line,
+turning separate parts into one design.
+
+Vectis. Built to connect.
+Carry the change, preserve the effect.
+Fast in motion, clear in sight,
+make the whole system work right.
+
+[Verse II]
+
+J.SON races, X.M.L flows,
+C.S.V lands and the pipeline knows.
+M.Q.T.T calls from a distant line,
+O.P.C U.A brings the plant online.
+
+S.S.H opens the road ahead,
+S.F.T.P moves what must be fed.
+A.P.Is rise behind T.L.S,
+routes come live with less excess.
+
+Lua moves on a C-built core,
+small enough to take anywhere.
+Pack the runtime, pack the site,
+ship the service, start it right.
+
+[Pre-Chorus]
+
+Bring the message, bring the file,
+bring the factory mile by mile.
+Bring the system, old or new—
+
+Vectis finds a way through.
+
+[Chorus]
+
+Vectis. Ready to move.
+Built with range and built to prove.
+From edge to cloud, from line to line,
+turning separate parts into one design.
+
+Vectis. Built to connect.
+Carry the change, preserve the effect.
+Fast in motion, clear in sight,
+make the whole system work right.
+
+[Verse III — heavier]
+
+Queue the work and hold the state,
+keep the sequence, keep it straight.
+Inbox, outbox, lease and fence,
+reliable flow with consequence.
+
+Pouch runs local, close at hand,
+lockd reaches across the span.
+One intent through many parts,
+one clear line through many starts.
+
+Prepare the change, align the view,
+commit the work when all comes through.
+From queue to state to A.P.I,
+keep the truth aligned in stride.
+
+Then let the agent join the frame,
+with tools to use and state to name.
+Calls go out, responses stream,
+thought connects to the working scene.
+
+[Final Chorus]
+
+Vectis. Ready to move.
+Built with range and built to prove.
+From factory floor to cloud above,
+make the systems fit the job.
+
+Vectis. Built to connect.
+Carry the change, preserve the effect.
+Fast in motion, sharp in sight,
+make the whole system work right.
+
+Vectis. Built with range.
+Built for motion, built for change.
+Bring the problem, old or new—
+
+Vectis finds a way through.
