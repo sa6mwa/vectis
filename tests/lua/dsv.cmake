@@ -93,6 +93,61 @@ local headerless_tsv = assert(dsv.to_string({
 }))
 assert(headerless_tsv == "true\tomega\n")
 
+local scalar_schema = lonejson.schema("dsv-scalar-row", {
+  lonejson.field("id", lonejson.string({required = true, fixed_capacity = 64})),
+  lonejson.field("ratio", lonejson.f64()),
+  lonejson.field("active", lonejson.boolean({required = true})),
+})
+local decimal_delimited = assert(dsv.to_string({
+  schema = scalar_schema,
+  rows = {{id = "decimal", ratio = 1.5, active = true}},
+  delimiter = ".",
+  header = false,
+}))
+assert(decimal_delimited == 'decimal."1.5".true\n')
+local decimal_round_trip = assert(dsv.parse({
+  schema = scalar_schema,
+  data = decimal_delimited,
+  delimiter = ".",
+  headerless = true,
+  columns = {"id", "ratio", "active"},
+}))
+assert(decimal_round_trip[1].ratio == 1.5)
+
+local negative_comment = assert(dsv.to_string({
+  schema = scalar_schema,
+  rows = {{id = "negative", ratio = -5, active = false}},
+  columns = {"ratio", "id", "active"},
+  comment_prefix = "-",
+  header = false,
+}))
+assert(negative_comment == '"-5",negative,false\n')
+local negative_round_trip = assert(dsv.parse({
+  schema = scalar_schema,
+  data = negative_comment,
+  headerless = true,
+  columns = {"ratio", "id", "active"},
+  comment_prefix = "-",
+}))
+assert(negative_round_trip[1].ratio == -5)
+
+local boolean_delimited = assert(dsv.to_string({
+  schema = scalar_schema,
+  rows = {{id = "boolean", ratio = 0, active = false}},
+  columns = {"active", "id"},
+  delimiter = "f",
+  header = false,
+}))
+assert(boolean_delimited == '"false"fboolean\n')
+local boolean_round_trip = assert(dsv.parse({
+  schema = scalar_schema,
+  data = boolean_delimited,
+  delimiter = "f",
+  headerless = true,
+  columns = {"active", "id"},
+}))
+assert(boolean_round_trip[1].active == false)
+
 local bad, err = dsv.parse({
   schema = schema,
   data = "id,count,active\nbad,1\n",

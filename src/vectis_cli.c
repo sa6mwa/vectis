@@ -7155,8 +7155,8 @@ vectis_lua_app_callback_route_free(vectis_lua_app_callback_route *route) {
 }
 
 /* The app userdata owns registration threads through its uservalue table. This
- * makes the edge visible to Lua's cycle collector while route callbacks retain
- * raw lua_State pointers. */
+ * makes the edge visible to Lua's cycle collector while app registrations
+ * retain raw lua_State pointers. */
 static void vectis_lua_app_retain_callback_owner(lua_State *lua, int app_index,
                                                  void *route) {
   app_index = lua_absindex(lua, app_index);
@@ -8162,13 +8162,17 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
 }
 
 static void
-vectis_lua_app_native_auth_retain(vectis_lua_app *server,
+vectis_lua_app_native_auth_retain(lua_State *lua, int app_index,
+                                  vectis_lua_app *server,
                                   vectis_lua_app_native_auth *auth) {
   if (server == NULL || auth == NULL) {
     return;
   }
   auth->next = server->native_auths;
   server->native_auths = auth;
+  if (auth->lua != NULL && auth->callback_ref != LUA_NOREF) {
+    vectis_lua_app_retain_callback_owner(lua, app_index, auth);
+  }
 }
 
 static void
@@ -8780,6 +8784,7 @@ static int vectis_lua_app_opcua_server_service(lua_State *lua) {
   service->started = start_service ? 1 : 0;
   service->next = server->opcua_services;
   server->opcua_services = service;
+  vectis_lua_app_retain_callback_owner(lua, 1, service);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -8997,6 +9002,7 @@ static int vectis_lua_app_curl_worker_service(lua_State *lua) {
   service->started = start_service ? 1 : 0;
   service->next = server->curl_worker_services;
   server->curl_worker_services = service;
+  vectis_lua_app_retain_callback_owner(lua, 1, service);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -9217,6 +9223,7 @@ static int vectis_lua_app_cai_worker_service(lua_State *lua) {
   service->started = start_service ? 1 : 0;
   service->next = server->cai_worker_services;
   server->cai_worker_services = service;
+  vectis_lua_app_retain_callback_owner(lua, 1, service);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -9396,6 +9403,7 @@ static int vectis_lua_app_audio_worker_service(lua_State *lua) {
   service->started = start_service ? 1 : 0;
   service->next = server->audio_worker_services;
   server->audio_worker_services = service;
+  vectis_lua_app_retain_callback_owner(lua, 1, service);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -9564,6 +9572,7 @@ static int vectis_lua_app_sus_worker_service(lua_State *lua) {
   service->started = start_service ? 1 : 0;
   service->next = server->sus_worker_services;
   server->sus_worker_services = service;
+  vectis_lua_app_retain_callback_owner(lua, 1, service);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -9772,7 +9781,7 @@ static int vectis_lua_app_webdav(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   if (auth != NULL) {
-    vectis_lua_app_native_auth_retain(server, auth);
+    vectis_lua_app_native_auth_retain(lua, 1, server, auth);
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -9856,7 +9865,7 @@ static int vectis_lua_app_webdav_embedded_site(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   if (auth != NULL) {
-    vectis_lua_app_native_auth_retain(server, auth);
+    vectis_lua_app_native_auth_retain(lua, 1, server, auth);
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -9926,7 +9935,7 @@ static int vectis_lua_app_webdav_embedded(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   if (auth != NULL) {
-    vectis_lua_app_native_auth_retain(server, auth);
+    vectis_lua_app_native_auth_retain(lua, 1, server, auth);
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -9999,7 +10008,7 @@ static int vectis_lua_app_metrics(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   if (auth != NULL) {
-    vectis_lua_app_native_auth_retain(server, auth);
+    vectis_lua_app_native_auth_retain(lua, 1, server, auth);
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -11240,7 +11249,7 @@ static int vectis_lua_app_route(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   if (auth != NULL) {
-    vectis_lua_app_native_auth_retain(server, auth);
+    vectis_lua_app_native_auth_retain(lua, 1, server, auth);
   }
   route_data->next = server->callback_routes;
   server->callback_routes = route_data;
@@ -12152,7 +12161,7 @@ static int vectis_lua_app_auth_json(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
 
-  vectis_lua_app_native_auth_retain(server, auth);
+  vectis_lua_app_native_auth_retain(lua, 1, server, auth);
   route_data->next = server->auth_json_routes;
   server->auth_json_routes = route_data;
   openapi_result = vectis_lua_app_attach_openapi(lua, server, 2, methods, path);
@@ -13785,10 +13794,11 @@ static int vectis_lua_app_dsv(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   if (route_data->auth != NULL) {
-    vectis_lua_app_native_auth_retain(server, route_data->auth);
+    vectis_lua_app_native_auth_retain(lua, 1, server, route_data->auth);
   }
   route_data->next = server->dsv_routes;
   server->dsv_routes = route_data;
+  vectis_lua_app_retain_callback_owner(lua, 1, route_data);
   openapi_result = vectis_lua_app_attach_openapi(lua, server, 2, methods, path);
   if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
     return openapi_result;
@@ -14180,10 +14190,11 @@ static int vectis_lua_app_upload(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   if (route_data->auth != NULL) {
-    vectis_lua_app_native_auth_retain(server, route_data->auth);
+    vectis_lua_app_native_auth_retain(lua, 1, server, route_data->auth);
   }
   route_data->next = server->upload_routes;
   server->upload_routes = route_data;
+  vectis_lua_app_retain_callback_owner(lua, 1, route_data);
   openapi_result = vectis_lua_app_attach_openapi(lua, server, 2, methods, path);
   if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
     return openapi_result;
@@ -14739,6 +14750,7 @@ static int vectis_lua_app_mcp(lua_State *lua) {
   }
   route_data->next = server->mcp_routes;
   server->mcp_routes = route_data;
+  vectis_lua_app_retain_callback_owner(lua, 1, route_data);
   openapi_result = vectis_lua_app_attach_openapi(lua, server, 2, methods, path);
   if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
     return openapi_result;
@@ -14764,7 +14776,8 @@ static void vectis_lua_openapi_schema_ref_free_list(
 }
 
 static void
-vectis_lua_openapi_schema_ref_retain(vectis_lua_app *server,
+vectis_lua_openapi_schema_ref_retain(lua_State *lua, int app_index,
+                                     vectis_lua_app *server,
                                      vectis_lua_app_openapi_schema_ref *refs) {
   vectis_lua_app_openapi_schema_ref *tail;
 
@@ -14772,7 +14785,11 @@ vectis_lua_openapi_schema_ref_retain(vectis_lua_app *server,
     return;
   }
   tail = refs;
-  while (tail->next != NULL) {
+  for (;;) {
+    vectis_lua_app_retain_callback_owner(lua, app_index, tail);
+    if (tail->next == NULL) {
+      break;
+    }
     tail = tail->next;
   }
   tail->next = server->openapi_schema_refs;
@@ -15017,7 +15034,7 @@ static int vectis_lua_app_attach_openapi(lua_State *lua, vectis_lua_app *server,
     vectis_lua_openapi_schema_ref_free_list(refs);
     return vectis_lua_push_error(lua, status, &error);
   }
-  vectis_lua_openapi_schema_ref_retain(server, refs);
+  vectis_lua_openapi_schema_ref_retain(lua, 1, server, refs);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -15056,7 +15073,7 @@ static int vectis_lua_app_openapi_doc(lua_State *lua) {
     vectis_lua_openapi_schema_ref_free_list(refs);
     return vectis_lua_push_error(lua, status, &error);
   }
-  vectis_lua_openapi_schema_ref_retain(server, refs);
+  vectis_lua_openapi_schema_ref_retain(lua, 1, server, refs);
   lua_pushboolean(lua, 1);
   return 1;
 }

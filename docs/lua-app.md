@@ -70,6 +70,12 @@ supervisor topology, `direct` fails if such services are declared, and
 for Kore startup. `warn_unavailable` only applies on platforms without exact
 thread inspection and does not allow known unsafe services or observed extra
 threads.
+
+Lua app registrations may be created from a coroutine. The app retains that
+coroutine until `app:close()` releases the registration, including route,
+auth, DSV, upload, WebSocket, MCP, OpenAPI-schema, and managed-worker service
+registrations. This prevents retained Lua references from leaving a dangling
+Lua state after normal garbage collection.
 `request_body_spool_dir` controls the directory Kore uses for request-body spill
 files when a route enables streaming upload disk offload. Omission uses the
 Vectis per-user runtime default under `XDG_RUNTIME_DIR` when available,

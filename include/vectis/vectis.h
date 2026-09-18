@@ -2876,12 +2876,20 @@ vectis_status vectis_dsv_source_to_lonejson_array_spill(
     const vectis_source *source, const lonejson_map *map,
     const vectis_dsv_config *config, const vectis_body_spill_config *spill,
     vectis_body_spill_result *out, vectis_error *error);
+/* Serialize scalar LoneJSON rows as DSV. Fields with
+ * LONEJSON_FIELD_HAS_PRESENCE clear emit an empty cell. Every scalar is passed
+ * through the configured DSV quoting policy, including numeric and boolean
+ * values, so delimiter and comment-prefix settings round trip safely.
+ */
 vectis_status vectis_dsv_write_lonejson_rows(struct lc_sink *sink,
                                              const lonejson_map *map,
                                              const vectis_dsv_config *config,
                                              const void *rows, size_t row_count,
                                              size_t row_stride,
                                              vectis_error *error);
+/* Buffered form of vectis_dsv_write_lonejson_rows(). The caller owns `out` and
+ * cleans it with vectis_mutable_bytes_cleanup().
+ */
 vectis_status vectis_dsv_lonejson_rows_to_bytes(
     const lonejson_map *map, const vectis_dsv_config *config, const void *rows,
     size_t row_count, size_t row_stride, vectis_mutable_bytes *out,

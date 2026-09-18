@@ -1006,6 +1006,86 @@ do
   assert(websocket_owner_weak.thread ~= nil)
 end
 do
+local callback_owner_app = assert(vectis.app.new({
+  app_name = "lua-smoke-callback-owners",
+  port = 18081,
+}))
+local callback_owner_weak = setmetatable({}, {__mode = "v"})
+local callback_owner_registrations = {
+  function()
+    local provider = assert(vectis.auth.provider_callback(function()
+      return {action = "allow", principal = "callback-owner"}
+    end))
+    assert(callback_owner_app:metrics({
+      path = "/callback-owner-metrics",
+      json_path = "/callback-owner-metrics.json",
+      auth = provider,
+    }) == true)
+  end,
+  function()
+    local schema = lonejson.schema("callback-owner-dsv", {
+      lonejson.field("id", lonejson.string({required = true})),
+    })
+    assert(callback_owner_app:dsv({
+      path = "/callback-owner-dsv",
+      schema = schema,
+      on_row = function() end,
+    }) == true)
+  end,
+  function()
+    assert(callback_owner_app:upload({
+      path = "/callback-owner-upload",
+      on_chunk = function() end,
+    }) == true)
+  end,
+  function()
+    assert(callback_owner_app:mcp({
+      path = "/callback-owner-mcp",
+      tools = {{
+        name = "callback_owner",
+        schema_json = '{"type":"object"}',
+        callback = function()
+          return '{"content":[]}'
+        end,
+      }},
+    }) == true)
+  end,
+  function()
+    local schema = lonejson.schema("callback-owner-openapi", {
+      lonejson.field("id", lonejson.string({required = true})),
+    })
+    local registered, register_err = callback_owner_app:openapi_doc({
+      path = "/callback-owner-openapi",
+      method = "POST",
+      request = {name = "CallbackOwnerRequest", schema = schema},
+      responses = {{
+        status = 200,
+        description = "OK",
+        name = "CallbackOwnerResponse",
+        schema = schema,
+      }},
+    })
+    assert(registered, register_err and register_err.message)
+  end,
+}
+for index, register_callback_owner in ipairs(callback_owner_registrations) do
+  local owner_thread = coroutine.create(function()
+    callback_owner_weak[index] = coroutine.running()
+    register_callback_owner()
+  end)
+  assert(coroutine.resume(owner_thread))
+  owner_thread = nil
+  collectgarbage("collect")
+  assert(callback_owner_weak[index] ~= nil)
+end
+callback_owner_app:close()
+collectgarbage("collect")
+collectgarbage("collect")
+for index = 1, #callback_owner_registrations do
+  assert(callback_owner_weak[index] == nil)
+end
+end
+do
   local requests = assert(vectis.mailbox.new({ capacity = 4 }))
   local audio_events = assert(vectis.mailbox.new({ capacity = 4 }))
   assert(server:curl_worker_service({

@@ -32593,6 +32593,10 @@ vectis_dsv_write_field_value(lc_sink *sink, const lonejson_field *field,
   char number[64];
   int written;
 
+  if ((field->flags & LONEJSON_FIELD_HAS_PRESENCE) != 0u &&
+      *(const int *)((const char *)row + field->presence_offset) == 0) {
+    return VECTIS_OK;
+  }
   base = (const char *)row + field->struct_offset;
   switch (field->kind) {
   case LONEJSON_FIELD_KIND_STRING:
@@ -32612,7 +32616,8 @@ vectis_dsv_write_field_value(lc_sink *sink, const lonejson_field *field,
     break;
   case LONEJSON_FIELD_KIND_BOOL:
     text = *(const int *)base ? "true" : "false";
-    return vectis_dsv_sink_write_cstr(sink, text, error);
+    return vectis_dsv_write_delimited_field(sink, text, strlen(text), config,
+                                            first_field, error);
   default:
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "DSV output field is not scalar");
@@ -32623,7 +32628,8 @@ vectis_dsv_write_field_value(lc_sink *sink, const lonejson_field *field,
                      "failed to format DSV scalar field");
     return VECTIS_ERR_STATE;
   }
-  return vectis_dsv_sink_write(sink, number, (size_t)written, error);
+  return vectis_dsv_write_delimited_field(sink, number, (size_t)written, config,
+                                          first_field, error);
 }
 
 vectis_status vectis_dsv_write_lonejson_rows(struct lc_sink *sink,

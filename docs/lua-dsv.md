@@ -47,6 +47,11 @@ callback, raises a Lua error.
 - `memory_limit_bytes`, `directory`, `prefix`: spill controls for
   `parse_spill()`.
 
+`to_string()` preserves optional scalar presence: an absent LoneJSON scalar
+emits an empty cell rather than a synthetic zero or `false`. It applies the
+same configured quoting policy to strings, numbers, and booleans, including
+when a scalar contains the delimiter or begins with `comment_prefix`.
+
 ## Example
 
 ```lua
