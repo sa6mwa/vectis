@@ -24,6 +24,7 @@
 #include <openssl/sha.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
+#include <pslog_lua.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -345,6 +346,7 @@ typedef struct vectis_lua_consumer_registration {
 typedef struct vectis_lua_opcua_service_registration {
   lua_State *lua;
   vectis_managed_service *service;
+  pslog_logger *logger;
   char *name;
   int server_ref;
   int started;
@@ -354,6 +356,7 @@ typedef struct vectis_lua_opcua_service_registration {
 typedef struct vectis_lua_curl_worker_registration {
   lua_State *lua;
   vectis_managed_service *service;
+  pslog_logger *logger;
   char *name;
   int request_ref;
   int broker_ref;
@@ -364,6 +367,7 @@ typedef struct vectis_lua_curl_worker_registration {
 typedef struct vectis_lua_cai_worker_registration {
   lua_State *lua;
   vectis_managed_service *service;
+  pslog_logger *logger;
   char *name;
   int request_ref;
   int broker_ref;
@@ -374,6 +378,7 @@ typedef struct vectis_lua_cai_worker_registration {
 typedef struct vectis_lua_audio_worker_registration {
   lua_State *lua;
   vectis_managed_service *service;
+  pslog_logger *logger;
   char *name;
   int request_ref;
   int broker_ref;
@@ -385,6 +390,7 @@ typedef struct vectis_lua_audio_worker_registration {
 typedef struct vectis_lua_sus_worker_registration {
   lua_State *lua;
   vectis_managed_service *service;
+  pslog_logger *logger;
   char *name;
   int request_ref;
   int broker_ref;
@@ -395,6 +401,18 @@ typedef struct vectis_lua_sus_worker_registration {
 struct vectis_lua_app {
   vectis_app *app;
   int started;
+  pslog_lua_logger_ref log_seed;
+  char *log_app_name;
+  pslog_logger *logger;
+  pslog_logger *lockdc_logger;
+  pslog_logger *cai_logger;
+  int log_sub_vectis;
+  int log_sub_lockdc;
+  int log_sub_cai;
+  int log_sub_opcua;
+  int log_sub_curl;
+  int log_sub_audio;
+  int log_sub_sus;
   vectis_lua_app_json_route *json_routes;
   vectis_lua_app_callback_route *callback_routes;
   vectis_lua_app_dsv_route *dsv_routes;
@@ -7174,6 +7192,213 @@ static void vectis_lua_app_release_callback_owners(lua_State *lua,
   lua_setiuservalue(lua, app_index, 1);
 }
 
+static void vectis_lua_app_log_seed_init(vectis_lua_app *server) {
+  if (server == NULL) {
+    return;
+  }
+  memset(&server->log_seed, 0, sizeof(server->log_seed));
+  server->log_seed.size = sizeof(server->log_seed);
+  server->log_seed.abi_version = PSLOG_LUA_INTEROP_ABI_VERSION;
+  server->log_seed.registry_ref = LUA_NOREF;
+  server->log_sub_vectis = 1;
+  server->log_sub_lockdc = 1;
+  server->log_sub_cai = 1;
+  server->log_sub_opcua = 1;
+  server->log_sub_curl = 1;
+  server->log_sub_audio = 1;
+  server->log_sub_sus = 1;
+}
+
+static void vectis_lua_app_logger_destroy(pslog_logger **logger) {
+  if (logger != NULL && *logger != NULL) {
+    (*logger)->destroy(*logger);
+    *logger = NULL;
+  }
+}
+
+static void vectis_lua_app_log_seed_cleanup(vectis_lua_app *server) {
+  if (server == NULL) {
+    return;
+  }
+  vectis_lua_app_logger_destroy(&server->cai_logger);
+  vectis_lua_app_logger_destroy(&server->lockdc_logger);
+  vectis_lua_app_logger_destroy(&server->logger);
+  free(server->log_app_name);
+  server->log_app_name = NULL;
+  pslog_lua_unref_logger(&server->log_seed);
+  vectis_lua_app_log_seed_init(server);
+}
+
+static int vectis_lua_app_log_sub_enabled(lua_State *lua, int index,
+                                          const char *name) {
+  int enabled;
+
+  enabled = 1;
+  index = lua_absindex(lua, index);
+  lua_getfield(lua, index, name);
+  if (!lua_isnil(lua, -1)) {
+    enabled = lua_toboolean(lua, -1) ? 1 : 0;
+  }
+  lua_pop(lua, 1);
+  return enabled;
+}
+
+static pslog_logger *vectis_lua_app_log_derive(vectis_lua_app *server,
+                                               const char *app_name,
+                                               const char *sub) {
+  if (server == NULL || server->log_seed.borrowed == NULL || app_name == NULL ||
+      sub == NULL) {
+    return NULL;
+  }
+  return server->log_seed.borrowed->withf(server->log_seed.borrowed,
+                                          "app=%s sub=%s", app_name, sub);
+}
+
+static int vectis_lua_app_service_logger(vectis_lua_app *server,
+                                         const char *sub, int enabled,
+                                         int disabled, pslog_logger **logger) {
+  if (logger == NULL) {
+    return 0;
+  }
+  *logger = NULL;
+  if (disabled || !enabled) {
+    return 1;
+  }
+  *logger = vectis_lua_app_log_derive(server, server->log_app_name, sub);
+  return *logger != NULL;
+}
+
+static int vectis_lua_app_seed_logging(lua_State *lua, int app_index,
+                                       vectis_lua_app *server,
+                                       vectis_app_config *config,
+                                       const char *app_name,
+                                       vectis_error *error) {
+  int base;
+  int logger_index;
+  int subs_index;
+  int rc;
+  const char *message;
+
+  if (server == NULL || config == NULL || app_name == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Vectis app logging configuration is invalid");
+    return 0;
+  }
+  app_index = lua_absindex(lua, app_index);
+  base = lua_gettop(lua);
+  lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.log");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                         message != NULL ? message
+                                         : "failed to load vectis.log");
+    lua_settop(lua, base);
+    return 0;
+  }
+  lua_getfield(lua, -1, "_acquire_seed");
+  if (!lua_isfunction(lua, -1)) {
+    vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                         "vectis.log does not provide its seed bridge");
+    lua_settop(lua, base);
+    return 0;
+  }
+  lua_pushvalue(lua, -2);
+  if (lua_pcall(lua, 1, 2, 0) != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                         message != NULL ? message
+                                         : "failed to acquire Vectis log seed");
+    lua_settop(lua, base);
+    return 0;
+  }
+  logger_index = base + 2;
+  subs_index = base + 3;
+  if (lua_isnil(lua, logger_index)) {
+    message = NULL;
+    if (lua_istable(lua, subs_index)) {
+      lua_getfield(lua, subs_index, "message");
+      message = lua_tostring(lua, -1);
+      vectis_cli_error_set(
+          error, VECTIS_ERR_STATE,
+          message != NULL ? message : "failed to acquire Vectis log seed");
+      lua_pop(lua, 1);
+    } else {
+      vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                           "failed to acquire Vectis log seed");
+    }
+    lua_settop(lua, base);
+    return 0;
+  }
+  if (!lua_istable(lua, subs_index)) {
+    vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                         "Vectis log seed returned invalid sub policy");
+    lua_settop(lua, base);
+    return 0;
+  }
+  rc = pslog_lua_ref_logger(lua, logger_index, NULL, 0u, &server->log_seed);
+  if (rc != 0) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Vectis log seed is not a live pslog logger");
+    lua_settop(lua, base);
+    return 0;
+  }
+  server->log_app_name = vectis_cli_strdup(app_name);
+  if (server->log_app_name == NULL) {
+    vectis_lua_app_log_seed_cleanup(server);
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                         "failed to copy Vectis log app name");
+    lua_settop(lua, base);
+    return 0;
+  }
+  server->log_sub_vectis =
+      vectis_lua_app_log_sub_enabled(lua, subs_index, "vectis");
+  server->log_sub_lockdc =
+      vectis_lua_app_log_sub_enabled(lua, subs_index, "lockdc");
+  server->log_sub_cai = vectis_lua_app_log_sub_enabled(lua, subs_index, "cai");
+  server->log_sub_opcua =
+      vectis_lua_app_log_sub_enabled(lua, subs_index, "opcua");
+  server->log_sub_curl =
+      vectis_lua_app_log_sub_enabled(lua, subs_index, "curl");
+  server->log_sub_audio =
+      vectis_lua_app_log_sub_enabled(lua, subs_index, "audio");
+  server->log_sub_sus = vectis_lua_app_log_sub_enabled(lua, subs_index, "sus");
+  server->logger = vectis_lua_app_log_derive(server, app_name, "vectis");
+  if (!server->log_sub_vectis && server->logger != NULL) {
+    pslog_logger *disabled;
+
+    disabled = pslog_with_level(server->logger, PSLOG_LEVEL_DISABLED);
+    server->logger->destroy(server->logger);
+    server->logger = disabled;
+  }
+  if (server->log_sub_lockdc) {
+    server->lockdc_logger =
+        vectis_lua_app_log_derive(server, app_name, "lockdc");
+  }
+  if (server->log_sub_cai) {
+    server->cai_logger = vectis_lua_app_log_derive(server, app_name, "cai");
+  }
+  if (server->logger == NULL ||
+      (server->log_sub_lockdc && server->lockdc_logger == NULL) ||
+      (server->log_sub_cai && server->cai_logger == NULL)) {
+    vectis_lua_app_log_seed_cleanup(server);
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                         "failed to derive Vectis component loggers");
+    lua_settop(lua, base);
+    return 0;
+  }
+  config->logger = server->logger;
+  config->lockd.logger = server->lockdc_logger;
+  config->lockd.logger_disabled = !server->log_sub_lockdc;
+  config->cai.logger = server->cai_logger;
+  config->cai.logger_disabled = !server->log_sub_cai;
+  config->cai.client_config.logger = server->cai_logger;
+  config->cai.client_config.logger_disabled = !server->log_sub_cai;
+  vectis_lua_app_retain_callback_owner(lua, app_index, server);
+  lua_settop(lua, base);
+  return 1;
+}
+
 static void vectis_lua_app_callback_route_free_all(vectis_lua_app *server) {
   vectis_lua_app_callback_route *route;
   vectis_lua_app_callback_route *next;
@@ -7463,6 +7688,7 @@ static void vectis_lua_app_opcua_service_free(
     service->service->close(service->service);
     service->service = NULL;
   }
+  vectis_lua_app_logger_destroy(&service->logger);
   if (service->lua != NULL && service->server_ref != LUA_NOREF) {
     luaL_unref(service->lua, LUA_REGISTRYINDEX, service->server_ref);
     service->server_ref = LUA_NOREF;
@@ -7496,6 +7722,7 @@ static void vectis_lua_app_curl_worker_service_free(
     service->service->close(service->service);
     service->service = NULL;
   }
+  vectis_lua_app_logger_destroy(&service->logger);
   if (service->lua != NULL && service->request_ref != LUA_NOREF) {
     luaL_unref(service->lua, LUA_REGISTRYINDEX, service->request_ref);
     service->request_ref = LUA_NOREF;
@@ -7534,6 +7761,7 @@ static void vectis_lua_app_cai_worker_service_free(
     service->service->close(service->service);
     service->service = NULL;
   }
+  vectis_lua_app_logger_destroy(&service->logger);
   if (service->lua != NULL && service->request_ref != LUA_NOREF) {
     luaL_unref(service->lua, LUA_REGISTRYINDEX, service->request_ref);
     service->request_ref = LUA_NOREF;
@@ -7571,6 +7799,7 @@ static void vectis_lua_app_audio_worker_service_free(
     service->service->close(service->service);
     service->service = NULL;
   }
+  vectis_lua_app_logger_destroy(&service->logger);
   if (service->lua != NULL && service->request_ref != LUA_NOREF) {
     luaL_unref(service->lua, LUA_REGISTRYINDEX, service->request_ref);
     service->request_ref = LUA_NOREF;
@@ -7613,6 +7842,7 @@ static void vectis_lua_app_sus_worker_service_free(
     service->service->close(service->service);
     service->service = NULL;
   }
+  vectis_lua_app_logger_destroy(&service->logger);
   if (service->lua != NULL && service->request_ref != LUA_NOREF) {
     luaL_unref(service->lua, LUA_REGISTRYINDEX, service->request_ref);
     service->request_ref = LUA_NOREF;
@@ -8202,6 +8432,7 @@ static int vectis_lua_app_close(lua_State *lua) {
     server->app->close(server->app);
     server->app = NULL;
   }
+  vectis_lua_app_log_seed_cleanup(server);
   server->started = 0;
   vectis_lua_app_json_route_free_all(server);
   vectis_lua_app_callback_route_free_all(server);
@@ -8763,6 +8994,18 @@ static int vectis_lua_app_opcua_server_service(lua_State *lua) {
   config.server = opcua_server;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
   config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
+  if (!vectis_lua_app_service_logger(server, "opcua", server->log_sub_opcua,
+                                     config.logger_disabled,
+                                     &service->logger)) {
+    vectis_lua_app_opcua_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to derive OPC UA service logger");
+  }
+  if (!server->log_sub_opcua) {
+    config.logger_disabled = 1;
+  } else {
+    config.logger = service->logger;
+  }
   config.wait_internal = vectis_lua_table_bool(lua, 2, "wait_internal", 0);
   config.max_wait_ms =
       vectis_lua_table_long(lua, 2, "max_wait_ms", config.max_wait_ms);
@@ -8981,6 +9224,19 @@ static int vectis_lua_app_curl_worker_service(lua_State *lua) {
   config.reply_broker = reply_broker != NULL ? reply_broker->broker : NULL;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
   config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
+  if (!vectis_lua_app_service_logger(server, "curl", server->log_sub_curl,
+                                     config.logger_disabled,
+                                     &service->logger)) {
+    vectis_lua_app_curl_worker_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to derive curl worker logger");
+  }
+  if (!server->log_sub_curl) {
+    config.logger_disabled = 1;
+  } else {
+    config.logger = service->logger;
+    config.http.logger = service->logger;
+  }
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   vectis_lua_curl_worker_apply_http_config(lua, 2, &config.http);
@@ -9202,6 +9458,20 @@ static int vectis_lua_app_cai_worker_service(lua_State *lua) {
   config.reply_broker = reply_broker != NULL ? reply_broker->broker : NULL;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
   config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
+  if (!vectis_lua_app_service_logger(server, "cai", server->log_sub_cai,
+                                     config.logger_disabled,
+                                     &service->logger)) {
+    vectis_lua_app_cai_worker_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to derive CAI worker logger");
+  }
+  if (!server->log_sub_cai) {
+    config.logger_disabled = 1;
+    config.client.logger_disabled = 1;
+  } else {
+    config.logger = service->logger;
+    config.client.logger = service->logger;
+  }
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   vectis_lua_cai_worker_apply_client_config(lua, 2, &config.client);
@@ -9379,6 +9649,18 @@ static int vectis_lua_app_audio_worker_service(lua_State *lua) {
   config.event_mailbox = event_box != NULL ? event_box->mailbox : NULL;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
   config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
+  if (!vectis_lua_app_service_logger(server, "audio", server->log_sub_audio,
+                                     config.logger_disabled,
+                                     &service->logger)) {
+    vectis_lua_app_audio_worker_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to derive audio worker logger");
+  }
+  if (!server->log_sub_audio) {
+    config.logger_disabled = 1;
+  } else {
+    config.logger = service->logger;
+  }
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   config.max_frames =
@@ -9548,6 +9830,18 @@ static int vectis_lua_app_sus_worker_service(lua_State *lua) {
       lua, 2, "preserve_initial_space_after_first_transcriber", 0);
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
   config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
+  if (!vectis_lua_app_service_logger(server, "sus", server->log_sub_sus,
+                                     config.logger_disabled,
+                                     &service->logger)) {
+    vectis_lua_app_sus_worker_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to derive SUS worker logger");
+  }
+  if (!server->log_sub_sus) {
+    config.logger_disabled = 1;
+  } else {
+    config.logger = service->logger;
+  }
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   config.max_frames =
@@ -12729,14 +13023,27 @@ static int vectis_lua_app_new(lua_State *lua) {
   server->audio_worker_services = NULL;
   server->sus_worker_services = NULL;
   server->openapi_schema_refs = NULL;
+  vectis_lua_app_log_seed_init(server);
   lua_newtable(lua);
   lua_setiuservalue(lua, -2, 1);
+  vectis_error_clear(&error);
+  if (!vectis_lua_app_seed_logging(lua, -1, server, &config, config.app_name,
+                                   &error)) {
+    free(tls_domains);
+    free(trusted_proxies);
+    free(lockd_endpoints);
+    vectis_lua_app_release_callback_owners(lua, -1);
+    return vectis_lua_push_error(
+        lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_STATE, &error);
+  }
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
   free(tls_domains);
   free(trusted_proxies);
   free(lockd_endpoints);
   if (server->app == NULL) {
+    vectis_lua_app_log_seed_cleanup(server);
+    vectis_lua_app_release_callback_owners(lua, -1);
     return vectis_lua_push_error(
         lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM, &error);
   }

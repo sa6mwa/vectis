@@ -130,11 +130,15 @@ explicit request-body guardrails, and conservative autoblock rules for repeated
 `vectis.app.new()` still override the profile. Metrics, auth routes, WebDAV
 mounts, static mounts, and TLS material remain separate opt-in registrations.
 
-Managed app-owned services inherit the app logger for lifecycle events
-such as start, stop, and monitored failure. Lua service registration helpers
-accept `logger_disabled = true` to suppress service lifecycle logging and
-dependency logger inheritance for that service. C embedders can additionally
-provide a per-service `pslog_logger *` override on managed service configs.
+Managed app-owned services inherit the app logger for lifecycle events such as
+start, stop, and monitored failure. Configure the Lua runtime's seed with
+[`vectis.log.configure()`](lua-log.md#seeded-vectis-logging) before creating
+the first app to give every propagated record `sys`, `app`, and `sub` fields,
+or to disable an entire subsystem such as `lockdc` or `cai`. Lua service
+registration helpers also accept `logger_disabled = true` to suppress service
+lifecycle logging and dependency logger inheritance for that individual
+service. C embedders can additionally provide a per-service `pslog_logger *`
+override on managed service configs.
 
 `vectis.app.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:

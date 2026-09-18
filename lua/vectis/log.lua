@@ -7,6 +7,36 @@ local M = {
   native = pslog,
 }
 
+local seeded = {
+  logger = nil,
+  locked = false,
+  subs = {
+    vectis = true,
+    lockdc = true,
+    cai = true,
+    opcua = true,
+    curl = true,
+    audio = true,
+    sus = true,
+  },
+}
+
+local known_subs = {
+  vectis = true,
+  lockdc = true,
+  cai = true,
+  opcua = true,
+  curl = true,
+  audio = true,
+  sus = true,
+}
+
+local reserved_seed_fields = {
+  sys = true,
+  app = true,
+  sub = true,
+}
+
 local reserved_error_fields = {
   dependency_code = true,
   dependency_message = true,
@@ -192,6 +222,143 @@ function M.log_error(logger, level, message, err, fields)
   end
   (function(_) end)(result)
   return true
+end
+
+-- Configure the logger Vectis attaches to native app and managed-service
+-- lifecycles. Direct pslog use stays independent: only this convenience seed
+-- receives automatic propagation into Vectis-owned components.
+function M.configure(opts)
+  local config
+  local fields
+  local subs
+  local use_env
+  local prefix
+  local sys
+  local root
+  local logger
+  local scoped_err
+  local ok
+
+  if seeded.locked then
+    return log_status_error(
+      "vectis.log.configure must run before vectis.app.new", vstatus.ERR_STATE)
+  end
+  if opts ~= nil and type(opts) ~= "table" then
+    error("vectis.log.configure requires an options table", 2)
+  end
+  opts = copy_table(opts)
+  config = copy_table(opts)
+  fields = config.fields or config.default_fields
+  config.fields = nil
+  config.default_fields = nil
+  subs = config.subs
+  config.subs = nil
+  use_env = config.env
+  config.env = nil
+  prefix = config.prefix
+  config.prefix = nil
+  sys = config.sys
+  config.sys = nil
+
+  if use_env == nil then
+    use_env = true
+  elseif type(use_env) ~= "boolean" then
+    error("vectis.log.configure env must be a boolean", 2)
+  end
+  if prefix == nil then
+    prefix = "LOG_"
+  elseif type(prefix) ~= "string" or prefix == "" then
+    error("vectis.log.configure prefix must be a non-empty string", 2)
+  end
+  if sys == nil then
+    sys = "vectis"
+  elseif type(sys) ~= "string" or sys == "" then
+    error("vectis.log.configure sys must be a non-empty string", 2)
+  end
+  if type(config.output) == "function" then
+    return log_status_error(
+      "vectis.log.configure does not accept function output; Vectis loggers "
+        .. "may write from native lifecycle threads", vstatus.ERR_INVALID)
+  end
+  if fields ~= nil and type(fields) ~= "table" then
+    error("vectis.log.configure fields must be a table", 2)
+  end
+  if fields then
+    for key, _ in pairs(fields) do
+      if reserved_seed_fields[key] then
+        return log_status_error(
+          "vectis.log.configure fields may not override " .. key,
+          vstatus.ERR_INVALID)
+      end
+    end
+  end
+  if subs ~= nil and type(subs) ~= "table" then
+    error("vectis.log.configure subs must be a table", 2)
+  end
+  seeded.subs = {
+    vectis = true,
+    lockdc = true,
+    cai = true,
+    opcua = true,
+    curl = true,
+    audio = true,
+    sus = true,
+  }
+  if subs then
+    for key, value in pairs(subs) do
+      if not known_subs[key] then
+        return log_status_error(
+          "vectis.log.configure has unknown sub: " .. tostring(key),
+          vstatus.ERR_INVALID)
+      end
+      if type(value) ~= "boolean" then
+        error("vectis.log.configure subs values must be booleans", 2)
+      end
+      seeded.subs[key] = value
+    end
+  end
+  if config.mode == nil then
+    config.mode = "json"
+  end
+
+  if use_env then
+    ok, root = pcall(pslog.from_env, prefix, config)
+  else
+    ok, root = pcall(pslog.new, config)
+  end
+  if not ok or root == nil then
+    return log_status_error(root or "failed to create pslog logger",
+                            vstatus.ERR_INVALID)
+  end
+  logger, scoped_err = scoped_logger(root, fields)
+  if logger == nil then
+    return nil, scoped_err
+  end
+  ok, logger = pcall(logger.with, logger, "sys", sys)
+  root:close()
+  if not ok or logger == nil then
+    return log_status_error(logger or "failed to derive Vectis logger",
+                            vstatus.ERR_INVALID)
+  end
+  if seeded.logger ~= nil then
+    seeded.logger:close()
+  end
+  seeded.logger = logger
+  return true
+end
+
+-- Internal native-app bridge. Do not use from application code.
+function M._acquire_seed()
+  local ok, err
+
+  if seeded.logger == nil then
+    ok, err = M.configure({})
+    if not ok then
+      return nil, err
+    end
+  end
+  seeded.locked = true
+  return seeded.logger, copy_table(seeded.subs)
 end
 
 return M

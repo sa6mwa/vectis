@@ -5280,7 +5280,8 @@ static pslog_logger *vectis_make_owned_logger(const vectis_app_config *config,
   }
 
   service_name = config->app_name != NULL ? config->app_name : "vectis";
-  scoped = pslog_withf(root, "service=%s component=%s", service_name, "vectis");
+  scoped = pslog_withf(root, "sys=%s app=%s sub=%s", "vectis", service_name,
+                       "vectis");
   root->destroy(root);
   if (scoped == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,

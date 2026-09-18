@@ -283,6 +283,40 @@ assert(type(embedded.chunks) == "function")
 assert(type(embedded.list) == "function")
 assert(type(embedded.extract) == "function")
 assert(vectis.log == log)
+local seeded_log_path = os.tmpname()
+local seeded_log_output = assert(io.open(seeded_log_path, "wb"))
+do
+  local callback_seed, callback_seed_err = log.configure({
+    env = false,
+    output = function() end,
+  })
+  assert(callback_seed == nil)
+  assert(callback_seed_err.status == vectis.ERR_INVALID)
+end
+assert(log.configure({
+  env = false,
+  output = seeded_log_output,
+  sys = "vectis-smoke",
+  fields = { test = "lua-smoke" },
+  subs = {
+    curl = false,
+    sus = false,
+  },
+}))
+do
+  local seeded_logger, seeded_subs = log._acquire_seed()
+  assert(type(seeded_logger) == "userdata")
+  assert(seeded_subs.vectis == true)
+  assert(seeded_subs.lockdc == true)
+  assert(seeded_subs.curl == false)
+  assert(seeded_subs.sus == false)
+  seeded_logger:info("seeded logger smoke")
+  assert(seeded_log_output:flush())
+  local seeded_log_input = assert(io.open(seeded_log_path, "rb"))
+  local seeded_log_payload = seeded_log_input:read("*a")
+  seeded_log_input:close()
+  assert(seeded_log_payload:match('"sys":"vectis%-smoke"'))
+end
 assert(vectis.cai == vcai)
 do
   local smith = require("vectis.smith")
@@ -952,6 +986,11 @@ do
       pouch_compression = "zlib",
     },
   }))
+end
+do
+  local reconfigure_ok, reconfigure_err = log.configure({ sys = "other" })
+  assert(reconfigure_ok == nil)
+  assert(reconfigure_err.status == vectis.ERR_STATE)
 end
 assert(type(server.static_directory) == "function")
 assert(type(server.static_file) == "function")
@@ -2258,3 +2297,5 @@ lonejson.encode_json_to_sink({ z = "sink", a = lonejson.json_array({ true, false
   chunks[#chunks + 1] = chunk
 end)
 assert(table.concat(chunks) == '{"a":[true,false],"z":"sink"}')
+seeded_log_output:close()
+os.remove(seeded_log_path)

@@ -1247,6 +1247,7 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated/include"
     "${vectis_external_include_dir}"
+    "${vectis_pslog_lua_source_dir}/include"
     "${vectis_lonejson_lua_source_dir}/src/lua"
   )
   if(VECTIS_BUILD_STATIC)

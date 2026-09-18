@@ -114,7 +114,8 @@ modules or C SDK workflows:
   [Lua Kore](lua-kore.md).
 - `vectis.lockd`: Vectis lockd client/workflow helpers, documented in
   [Lua lockd](lua-lockd.md).
-- `vectis.log`: logging defaults and structured Vectis error fields over pslog,
+- `vectis.log`: logging defaults, seeded `sys`/`app`/`sub` propagation for
+  Vectis-owned services, and structured Vectis error fields over pslog,
   documented in [Lua logging](lua-log.md).
 - `vectis.mailbox`: bounded in-process service handoff and owner-state Lua
   pumping, documented in [Lua mailbox](lua-mailbox.md).
