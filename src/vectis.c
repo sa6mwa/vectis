@@ -10754,6 +10754,44 @@ static vectis_status vectis_configure_pouch_client(lc_client_config *config,
   return VECTIS_OK;
 }
 
+/* Every Vectis-owned Lockd client starts from this complete application
+ * configuration. A caller may choose a distinct endpoint, namespace, or
+ * timeout, but never reconstructs mTLS, logging, allocator defaults, or
+ * Pouch policy piecemeal. */
+static void vectis_lockd_client_config_from_app(const vectis_app_impl *impl,
+                                                lc_client_config *config,
+                                                const char *const *endpoints,
+                                                size_t endpoint_count,
+                                                const char *unix_socket_path,
+                                                const char *default_namespace,
+                                                long timeout_ms) {
+  lc_client_config_init(config);
+  config->endpoints = endpoints;
+  config->endpoint_count = endpoint_count;
+  config->unix_socket_path = unix_socket_path;
+  config->client_bundle_path = impl != NULL ? impl->client_bundle_path : NULL;
+  config->client_bundle_source =
+      impl != NULL ? impl->client_bundle_source : NULL;
+  config->default_namespace = default_namespace;
+  config->timeout_ms =
+      timeout_ms > 0L
+          ? timeout_ms
+          : (impl != NULL && impl->timeout_ms > 0L ? impl->timeout_ms : 30000L);
+  config->logger =
+      impl == NULL || impl->lockd_logger_disabled
+          ? NULL
+          : (impl->lockd_logger != NULL ? impl->lockd_logger : impl->logger);
+  if (impl != NULL) {
+    config->pouch_crypto_key = impl->pouch_crypto_key;
+    config->pouch_crypto_key_file = impl->pouch_crypto_key_file;
+    config->pouch_crypto_generate_key_file =
+        impl->pouch_crypto_generate_key_file;
+    config->pouch_crypto_generate_key_file_set =
+        impl->pouch_crypto_generate_key_file_set;
+    config->pouch_compression = impl->pouch_compression;
+  }
+}
+
 static int vectis_lockd_endpoints_are_pouch_only(const vectis_app_impl *impl) {
   size_t i;
 
@@ -11113,10 +11151,11 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
   default_endpoint = NULL;
   default_key_file = NULL;
   lc_error_init(&lcerr);
-  lc_client_config_init(&config);
   if (vectis_lockd_is_configured(impl)) {
-    config.endpoints = (const char *const *)impl->endpoints;
-    config.endpoint_count = impl->endpoint_count;
+    vectis_lockd_client_config_from_app(
+        impl, &config, (const char *const *)impl->endpoints,
+        impl->endpoint_count, impl->unix_socket_path, impl->default_namespace,
+        impl->timeout_ms);
   } else {
     default_endpoint = vectis_persistence_default_pouch_endpoint(error);
     if (default_endpoint == NULL) {
@@ -11124,18 +11163,10 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
     default_endpoints[0] = default_endpoint;
-    config.endpoints = default_endpoints;
-    config.endpoint_count = 1u;
+    vectis_lockd_client_config_from_app(
+        impl, &config, default_endpoints, 1u, impl->unix_socket_path,
+        impl->default_namespace, impl->timeout_ms);
   }
-  config.unix_socket_path = impl->unix_socket_path;
-  config.client_bundle_path = impl->client_bundle_path;
-  config.client_bundle_source = impl->client_bundle_source;
-  config.default_namespace = impl->default_namespace;
-  config.timeout_ms = impl->timeout_ms;
-  config.logger =
-      impl->lockd_logger_disabled
-          ? NULL
-          : (impl->lockd_logger != NULL ? impl->lockd_logger : impl->logger);
   pouch_endpoint = default_endpoint != NULL
                        ? default_endpoint
                        : vectis_lockd_first_pouch_endpoint(impl);
@@ -11626,16 +11657,12 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->acme_storage_namespace = impl->acme_storage_namespace;
   kore_config->acme_storage_key = impl->acme_storage_key;
   kore_config->acme_state_dir = impl->acme_state_dir;
-  kore_config->lockd_client_bundle_path = impl->client_bundle_path;
+  vectis_lockd_client_config_from_app(
+      impl, &kore_config->lockd_client_config,
+      (const char *const *)&kore_config->acme_storage_endpoint, 1u, NULL,
+      kore_config->acme_storage_namespace, impl->timeout_ms);
   kore_config->lockd_client_bundle_pem = impl->client_bundle_pem;
   kore_config->lockd_client_bundle_pem_size = impl->client_bundle_pem_size;
-  kore_config->pouch_crypto_key = impl->pouch_crypto_key;
-  kore_config->pouch_crypto_key_file = impl->pouch_crypto_key_file;
-  kore_config->pouch_crypto_generate_key_file =
-      impl->pouch_crypto_generate_key_file;
-  kore_config->pouch_crypto_generate_key_file_set =
-      impl->pouch_crypto_generate_key_file_set;
-  kore_config->pouch_compression = impl->pouch_compression;
   kore_config->cert_key_bundle_path = impl->cert_key_bundle_path;
   kore_config->cert_key_bundle_pem = impl->cert_key_bundle_pem;
   kore_config->cert_key_bundle_pem_size = impl->cert_key_bundle_pem_size;
@@ -21391,6 +21418,8 @@ static void vectis_app_ready_state_free(int *ready) {
 static vectis_status vectis_app_prepare_acme_state(vectis_app_impl *impl,
                                                    vectis_error *error) {
   vectis_acme_state_config config;
+  lc_client_config lockd_client_config;
+  const char *endpoints[1];
   char *value;
   int hydrated;
 
@@ -21437,23 +21466,20 @@ static vectis_status vectis_app_prepare_acme_state(vectis_app_impl *impl,
     impl->acme_state_dir_owned = 1;
   }
   memset(&config, 0, sizeof(config));
+  endpoints[0] = impl->acme_storage_endpoint;
+  vectis_lockd_client_config_from_app(impl, &lockd_client_config, endpoints, 1u,
+                                      NULL, impl->acme_storage_namespace,
+                                      impl->timeout_ms);
+  config.lockd_client_config = lockd_client_config;
   config.endpoint = impl->acme_storage_endpoint;
   config.namespace_name = impl->acme_storage_namespace;
   config.key = impl->acme_storage_key;
   config.owner = "vectis-acme";
   config.runtime_dir = impl->acme_state_dir;
-  config.client_bundle_path = impl->client_bundle_path;
   config.client_bundle_pem = impl->client_bundle_pem;
   config.client_bundle_pem_size = impl->client_bundle_pem_size;
-  config.pouch_crypto_key = impl->pouch_crypto_key;
-  config.pouch_crypto_key_file = impl->pouch_crypto_key_file;
-  config.pouch_crypto_generate_key_file = impl->pouch_crypto_generate_key_file;
-  config.pouch_crypto_generate_key_file_set =
-      impl->pouch_crypto_generate_key_file_set;
-  config.pouch_compression = impl->pouch_compression;
   config.domains = (const char *const *)impl->domains;
   config.domain_count = impl->domain_count;
-  config.timeout_ms = impl->timeout_ms;
   hydrated = 0;
   return vectis_acme_state_hydrate(&config, &hydrated, error);
 }
@@ -22328,7 +22354,7 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
 }
 
 static char *vectis_metrics_default_storage_endpoint(vectis_error *error) {
-  return vectis_persistence_default_pouch_endpoint(error);
+  return vectis_metrics_default_pouch_endpoint(error);
 }
 
 typedef struct vectis_metrics_write_context {
@@ -22823,8 +22849,10 @@ vectis_metrics_checkpoint_client_open(vectis_app *app, long timeout_ms,
   lc_client_config config;
   lc_error lcerr;
   const char *endpoint;
+  const char *endpoints[1];
   char *default_key_file;
   lc_client *client;
+  lc_source *memory_source;
   vectis_status status;
   int rc;
 
@@ -22856,13 +22884,12 @@ vectis_metrics_checkpoint_client_open(vectis_app *app, long timeout_ms,
     endpoint = impl->endpoints[0];
   }
   default_key_file = NULL;
-  lc_client_config_init(&config);
-  config.endpoints = &endpoint;
-  config.endpoint_count = 1u;
-  config.default_namespace = metrics->storage_namespace != NULL
-                                 ? metrics->storage_namespace
-                                 : "vectis.metrics";
-  config.timeout_ms = timeout_ms > 0L ? timeout_ms : 30000L;
+  endpoints[0] = endpoint;
+  vectis_lockd_client_config_from_app(impl, &config, endpoints, 1u, NULL,
+                                      metrics->storage_namespace != NULL
+                                          ? metrics->storage_namespace
+                                          : "vectis.metrics",
+                                      timeout_ms);
   status = vectis_configure_pouch_client(&config, endpoint, impl,
                                          &default_key_file, error);
   if (status != VECTIS_OK) {
@@ -22870,8 +22897,28 @@ vectis_metrics_checkpoint_client_open(vectis_app *app, long timeout_ms,
   }
 
   client = NULL;
+  memory_source = NULL;
   lc_error_init(&lcerr);
+  if (impl->client_bundle_pem != NULL && impl->client_bundle_pem_size > 0u) {
+    rc = lc_source_from_memory(impl->client_bundle_pem,
+                               impl->client_bundle_pem_size, &memory_source,
+                               &lcerr);
+    if (rc != LC_OK) {
+      if (default_key_file != NULL) {
+        free(default_key_file);
+      }
+      (void)vectis_set_lockdc_error(
+          error, rc, &lcerr,
+          "failed to create metrics checkpoint client bundle source");
+      lc_error_cleanup(&lcerr);
+      return VECTIS_ERR_STATE;
+    }
+    config.client_bundle_source = memory_source;
+  }
   rc = lc_client_open(&config, &client, &lcerr);
+  if (memory_source != NULL) {
+    lc_source_close(memory_source);
+  }
   if (default_key_file != NULL) {
     free(default_key_file);
   }

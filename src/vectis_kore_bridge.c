@@ -115,25 +115,17 @@ int vectis_kore_acme_state_persist(const char *domain) {
     return 1;
   }
   memset(&config, 0, sizeof(config));
+  config.lockd_client_config = vectis_kore_current.lockd_client_config;
   config.endpoint = vectis_kore_current.acme_storage_endpoint;
   config.namespace_name = vectis_kore_current.acme_storage_namespace;
   config.key = vectis_kore_current.acme_storage_key;
   config.owner = "vectis-acme";
   config.runtime_dir = vectis_kore_current.acme_state_dir;
-  config.client_bundle_path = vectis_kore_current.lockd_client_bundle_path;
   config.client_bundle_pem = vectis_kore_current.lockd_client_bundle_pem;
   config.client_bundle_pem_size =
       vectis_kore_current.lockd_client_bundle_pem_size;
-  config.pouch_crypto_key = vectis_kore_current.pouch_crypto_key;
-  config.pouch_crypto_key_file = vectis_kore_current.pouch_crypto_key_file;
-  config.pouch_crypto_generate_key_file =
-      vectis_kore_current.pouch_crypto_generate_key_file;
-  config.pouch_crypto_generate_key_file_set =
-      vectis_kore_current.pouch_crypto_generate_key_file_set;
-  config.pouch_compression = vectis_kore_current.pouch_compression;
   config.domains = vectis_kore_current.domains;
   config.domain_count = vectis_kore_current.domain_count;
-  config.timeout_ms = 30000L;
   vectis_error_clear(&error);
   return vectis_acme_state_persist(&config, &error) == VECTIS_OK;
 }

@@ -715,8 +715,9 @@ typedef struct vectis_metrics_config {
    * vectis_app_config.app_name. Vectis restores cumulative counters for that
    * logical app before startup and writes its current checkpoint through
    * liblockdc. storage_endpoint may be any lockdc endpoint, including pouch://.
-   * When NULL, Vectis uses a local pouch under
-   * ${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage.
+   * When NULL, Vectis uses a dedicated local Pouch root under
+   * ${XDG_STATE_HOME:-$HOME/.local/state}/vectis/metrics. General Vectis
+   * state, including ACME, uses the sibling `vectis/storage` root.
    */
   int persistence_enabled;
   const char *storage_endpoint;

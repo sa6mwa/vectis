@@ -59,7 +59,9 @@ static int vectis_acme_state_mkdirs(const char *path) {
          (errno == EEXIST && stat(copy, &st) == 0 && S_ISDIR(st.st_mode));
 }
 
-char *vectis_persistence_default_pouch_endpoint(vectis_error *error) {
+static char *
+vectis_persistence_default_pouch_endpoint_for_leaf(const char *leaf,
+                                                   vectis_error *error) {
   const char *state_home;
   const char *home;
   char path[4096];
@@ -68,7 +70,7 @@ char *vectis_persistence_default_pouch_endpoint(vectis_error *error) {
 
   state_home = getenv("XDG_STATE_HOME");
   if (state_home != NULL && state_home[0] == '/') {
-    written = snprintf(path, sizeof(path), "%s/vectis/storage", state_home);
+    written = snprintf(path, sizeof(path), "%s/vectis/%s", state_home, leaf);
   } else {
     home = getenv("HOME");
     if (home == NULL || home[0] != '/') {
@@ -77,7 +79,7 @@ char *vectis_persistence_default_pouch_endpoint(vectis_error *error) {
       return NULL;
     }
     written =
-        snprintf(path, sizeof(path), "%s/.local/state/vectis/storage", home);
+        snprintf(path, sizeof(path), "%s/.local/state/vectis/%s", home, leaf);
   }
   if (written <= 0 || (size_t)written >= sizeof(path) ||
       !vectis_acme_state_mkdirs(path)) {
@@ -93,6 +95,14 @@ char *vectis_persistence_default_pouch_endpoint(vectis_error *error) {
     return NULL;
   }
   return vectis_acme_state_strdup(endpoint);
+}
+
+char *vectis_persistence_default_pouch_endpoint(vectis_error *error) {
+  return vectis_persistence_default_pouch_endpoint_for_leaf("storage", error);
+}
+
+char *vectis_metrics_default_pouch_endpoint(vectis_error *error) {
+  return vectis_persistence_default_pouch_endpoint_for_leaf("metrics", error);
 }
 
 char *vectis_acme_state_default_key(const char *const *domains,
@@ -317,21 +327,14 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
   *client = NULL;
   *memory = NULL;
   default_key_file = NULL;
-  lc_client_config_init(&client_config);
+  client_config = config->lockd_client_config;
   client_config.endpoints = &config->endpoint;
   client_config.endpoint_count = 1u;
+  /* endpoint selects this independently configured state client; a Unix
+   * socket from the app's general client must not override it. */
+  client_config.unix_socket_path = NULL;
   client_config.default_namespace = config->namespace_name;
-  client_config.timeout_ms =
-      config->timeout_ms > 0L ? config->timeout_ms : 30000L;
-  client_config.client_bundle_path = config->client_bundle_path;
   if (vectis_acme_state_endpoint_is_pouch(config->endpoint)) {
-    client_config.pouch_crypto_key = config->pouch_crypto_key;
-    client_config.pouch_crypto_key_file = config->pouch_crypto_key_file;
-    client_config.pouch_crypto_generate_key_file =
-        config->pouch_crypto_generate_key_file;
-    client_config.pouch_crypto_generate_key_file_set =
-        config->pouch_crypto_generate_key_file_set;
-    client_config.pouch_compression = config->pouch_compression;
     environment_key = getenv(VECTIS_POUCH_CRYPTO_KEY_ENV);
     if (environment_key != NULL) {
       if (environment_key[0] == '\0') {

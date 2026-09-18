@@ -24,6 +24,7 @@ https_runtime_port=${VECTIS_E2E_HTTPS_RUNTIME_PORT:-$((kore_basic_port + 10))}
 https_mtls_runtime_port=${VECTIS_E2E_HTTPS_MTLS_RUNTIME_PORT:-$((kore_basic_port + 11))}
 acme_mock_port=${VECTIS_E2E_ACME_MOCK_PORT:-$((kore_basic_port + 12))}
 lua_site_port=${VECTIS_E2E_LUA_SITE_PORT:-$((kore_basic_port + 13))}
+metrics_remote_lockd_port=${VECTIS_E2E_METRICS_REMOTE_LOCKD_PORT:-$((kore_basic_port + 14))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 acme_mock_provider=${VECTIS_E2E_ACME_MOCK_PROVIDER:-$repo_root/build/debug/tests/vectis_acme_mock_provider}
 mkdir -p "$repo_root/build/e2e"
@@ -370,6 +371,28 @@ run_lockd_lua_consumer_example() {
     VECTIS_LUA_CONSUMER_EXAMPLE_PORT="$lua_consumer_port" \
     VECTIS_LUA_CONSUMER_EXAMPLE_CACHE="$work_dir/lua-consumer-cache-$label" \
     "$repo_root/build/debug/vectis" "$repo_root/examples/lua/consumer_service.lua"
+}
+
+run_remote_metrics_lockd_e2e() {
+  metrics_remote_log="$work_dir/metrics-remote-lockd.log"
+
+  printf '[e2e] supervised metrics remote Lockd mTLS\n'
+  start_server "supervised metrics remote Lockd" "$metrics_remote_log" \
+    "$repo_root/build/debug/vectis" \
+    "$repo_root/tests/lua/metrics_remote_lockd.lua" \
+    "$disk_endpoint" "$client_bundle" "$metrics_remote_lockd_port"
+  wait_for_http "http://127.0.0.1:$metrics_remote_lockd_port/health" \
+    "supervised metrics remote Lockd" "$metrics_remote_log"
+  body=$(curl_or_log "$metrics_remote_log" "supervised metrics remote Lockd" \
+    --max-time 3 -fsS \
+    "http://127.0.0.1:$metrics_remote_lockd_port/.metrics.json")
+  case "$body" in
+    *'"enabled":true'*) ;;
+    *)
+      printf '%s\n' "Remote Lockd metrics response did not enable persistence: $body" >&2
+      return 1
+      ;;
+  esac
 }
 
 run_service_examples() {
@@ -3666,6 +3689,7 @@ install_ssh_public_key
 provision_ssh_known_hosts
 make -C "$repo_root" build-debug
 python3 "$repo_root/tests/metrics_startup.py" --binary "$repo_root/build/debug/vectis"
+run_remote_metrics_lockd_e2e
 
 cd "$work_dir"
 run_lua_examples

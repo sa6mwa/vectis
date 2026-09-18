@@ -7,6 +7,8 @@
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
 
+#include <lc/lc.h>
+
 int vectis_smith_store_set_diagnostic_context(vectis_smith_store *store,
                                               const char *endpoint,
                                               const char *namespace_name);
@@ -71,14 +73,9 @@ typedef struct vectis_kore_runtime_config {
   const char *acme_storage_namespace;
   const char *acme_storage_key;
   const char *acme_state_dir;
-  const char *lockd_client_bundle_path;
+  lc_client_config lockd_client_config;
   const void *lockd_client_bundle_pem;
   size_t lockd_client_bundle_pem_size;
-  const char *pouch_crypto_key;
-  const char *pouch_crypto_key_file;
-  int pouch_crypto_generate_key_file;
-  int pouch_crypto_generate_key_file_set;
-  const char *pouch_compression;
   const char *cert_key_bundle_path;
   const void *cert_key_bundle_pem;
   size_t cert_key_bundle_pem_size;

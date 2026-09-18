@@ -120,6 +120,14 @@ def main():
                                 connection.request("GET", "/.metrics.json")
                                 response = connection.getresponse()
                                 body = response.read()
+                                if (response.status == 503 and
+                                        body == b"vectis app is starting\n"):
+                                    # The listener can accept just before the
+                                    # supervisor publishes its ready state.
+                                    # This is a transient readiness signal, not
+                                    # a successfully served metrics response.
+                                    time.sleep(.025)
+                                    continue
                                 assert response.status == 200, body
                                 snapshot = json.loads(body)
                                 assert snapshot["http"]["requests_total"] >= count, snapshot

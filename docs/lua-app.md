@@ -131,8 +131,10 @@ Kore starts.
 
 ACME uses `domains`, `email` (or `acme_email`), and `provider` (or
 `acme_directory_url`). Its durable account and certificate state is a lockd
-object with attachments. By default it uses `pouch://` under XDG state; an app
-lockd endpoint is used when configured. `acme_storage_endpoint`,
+object with attachments. By default it uses the normal Vectis Pouch root under
+XDG state (`vectis/storage`) or the configured app Lockd endpoint, and stores
+records in the `vectis.acme` namespace. Metrics uses the separate sibling
+`vectis/metrics` root by default. `acme_storage_endpoint`,
 `acme_storage_namespace`, and `acme_storage_key` select an explicit store.
 `acme_state_dir` (or the compatibility alias `cache_dir`) is only Kore's
 private derived runtime directory; omission creates an isolated mode-0700

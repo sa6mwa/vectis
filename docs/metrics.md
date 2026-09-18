@@ -122,14 +122,21 @@ measured using an explicit `?single_writer=false` endpoint; Vectis does not
 bypass an exclusive lease or silently change the configured writer policy.
 
 The metrics worker updates the checkpoint at least five minutes apart through
-the public liblockdc client. `storage_endpoint` may point at a remote lockd
+its own supervisor-owned liblockdc client. That client is constructed after the
+Kore fork boundary from the complete app Lockd configuration: mTLS bundle
+path/source/memory material, logger policy, timeout, and Pouch controls are
+all retained. It does not share a client instance with request handling or
+other Vectis subsystems. `storage_endpoint` may point at a remote lockd
 endpoint or a local `pouch://` endpoint. When it is not set, Vectis uses:
 
 ```text
-${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage
+${XDG_STATE_HOME:-$HOME/.local/state}/vectis/metrics
 ```
 
-Local Pouch roots are encrypted at rest by default. They use the same
+The ordinary Vectis root is the sibling `vectis/storage`; it contains normal
+Vectis state, including ACME under the `vectis.acme` namespace. These are the
+only two default Pouch roots. Local Pouch roots are encrypted at rest by
+default. They use the same
 `lockd.pouch_crypto_key`, `lockd.pouch_crypto_key_file`,
 `lockd.pouch_crypto_generate_key_file`, and `lockd.pouch_compression` settings
 as other Vectis persistence. With no key setting or exact

@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <lc/lc.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -176,6 +177,41 @@ static void assert_pouch_crypto_query_option_detection(void) {
       "pouch:///var/lib/storage?pouch_crypto_key"));
 }
 
+static void assert_default_pouch_root_separation(void) {
+  char state_home[] = "/tmp/vectis-default-pouch-roots-XXXXXX";
+  const char *existing_state_home;
+  char *saved_state_home;
+  char *state_endpoint;
+  char *metrics_endpoint;
+  vectis_error error;
+
+  assert(mkdtemp(state_home) != NULL);
+  existing_state_home = getenv("XDG_STATE_HOME");
+  saved_state_home =
+      existing_state_home != NULL ? strdup(existing_state_home) : NULL;
+  assert(existing_state_home == NULL || saved_state_home != NULL);
+  assert(setenv("XDG_STATE_HOME", state_home, 1) == 0);
+
+  state_endpoint = vectis_persistence_default_pouch_endpoint(&error);
+  assert(state_endpoint != NULL);
+  metrics_endpoint = vectis_metrics_default_pouch_endpoint(&error);
+  assert(metrics_endpoint != NULL);
+  assert(strstr(state_endpoint, "/vectis/storage?single_writer=false") != NULL);
+  assert(strstr(metrics_endpoint, "/vectis/metrics?single_writer=false") !=
+         NULL);
+  assert(strcmp(state_endpoint, metrics_endpoint) != 0);
+  free(state_endpoint);
+  free(metrics_endpoint);
+
+  if (existing_state_home != NULL) {
+    assert(setenv("XDG_STATE_HOME", saved_state_home, 1) == 0);
+  } else {
+    assert(unsetenv("XDG_STATE_HOME") == 0);
+  }
+  free(saved_state_home);
+  remove_tree(state_home);
+}
+
 int main(void) {
   char root[] = "/tmp/vectis-acme-state-XXXXXX";
   char endpoint[4096];
@@ -213,6 +249,7 @@ int main(void) {
   int hydrated;
 
   assert_pouch_crypto_query_option_detection();
+  assert_default_pouch_root_separation();
   assert(mkdtemp(root) != NULL);
   assert(snprintf(storage, sizeof(storage), "%s/storage", root) > 0);
   assert(snprintf(endpoint, sizeof(endpoint), "pouch://%s", storage) > 0);
@@ -274,17 +311,18 @@ int main(void) {
 
   domains[0] = "example.test";
   memset(&config, 0, sizeof(config));
+  lc_client_config_init(&config.lockd_client_config);
   config.endpoint = endpoint;
   config.namespace_name = "vectis.acme";
   config.key = "round-trip";
   config.owner = "test";
   config.runtime_dir = runtime_one;
-  config.pouch_crypto_key_file = key_file;
-  config.pouch_crypto_generate_key_file = 0;
-  config.pouch_crypto_generate_key_file_set = 1;
+  config.lockd_client_config.pouch_crypto_key_file = key_file;
+  config.lockd_client_config.pouch_crypto_generate_key_file = 0;
+  config.lockd_client_config.pouch_crypto_generate_key_file_set = 1;
   config.domains = domains;
   config.domain_count = 1u;
-  config.timeout_ms = 30000L;
+  config.lockd_client_config.timeout_ms = 30000L;
   assert(vectis_acme_state_persist(&config, &error) == VECTIS_OK);
 
   config.runtime_dir = runtime_two;
@@ -306,9 +344,9 @@ int main(void) {
   config.endpoint = default_endpoint;
   config.key = "default-key";
   config.runtime_dir = runtime_two;
-  config.pouch_crypto_key_file = NULL;
-  config.pouch_crypto_generate_key_file = 0;
-  config.pouch_crypto_generate_key_file_set = 0;
+  config.lockd_client_config.pouch_crypto_key_file = NULL;
+  config.lockd_client_config.pouch_crypto_generate_key_file = 0;
+  config.lockd_client_config.pouch_crypto_generate_key_file_set = 0;
   assert(vectis_acme_state_persist(&config, &error) == VECTIS_OK);
   assert_private_file(default_key);
 
@@ -321,10 +359,10 @@ int main(void) {
   config.endpoint = environment_endpoint;
   config.key = "environment-key";
   config.runtime_dir = runtime_two;
-  config.pouch_crypto_key = NULL;
-  config.pouch_crypto_key_file = wrong_key_file;
-  config.pouch_crypto_generate_key_file = 0;
-  config.pouch_crypto_generate_key_file_set = 1;
+  config.lockd_client_config.pouch_crypto_key = NULL;
+  config.lockd_client_config.pouch_crypto_key_file = wrong_key_file;
+  config.lockd_client_config.pouch_crypto_generate_key_file = 0;
+  config.lockd_client_config.pouch_crypto_generate_key_file_set = 1;
   assert(vectis_acme_state_persist(&config, &error) == VECTIS_OK);
   hydrated = 0;
   assert(vectis_acme_state_hydrate(&config, &hydrated, &error) == VECTIS_OK);
@@ -344,11 +382,11 @@ int main(void) {
 
   config.endpoint = endpoint;
   config.key = "round-trip";
-  config.pouch_crypto_key_file = wrong_key_file;
+  config.lockd_client_config.pouch_crypto_key_file = wrong_key_file;
   hydrated = 0;
   assert(vectis_acme_state_hydrate(&config, &hydrated, &error) ==
          VECTIS_ERR_STATE);
-  config.pouch_crypto_key_file = key_file;
+  config.lockd_client_config.pouch_crypto_key_file = key_file;
   hydrated = 0;
   assert(vectis_acme_state_hydrate(&config, &hydrated, &error) == VECTIS_OK);
   assert(hydrated != 0);
@@ -358,9 +396,9 @@ int main(void) {
                         "legacy plaintext state");
   config.endpoint = plaintext_endpoint;
   config.key = "legacy";
-  config.pouch_crypto_key_file = NULL;
-  config.pouch_crypto_generate_key_file = 0;
-  config.pouch_crypto_generate_key_file_set = 0;
+  config.lockd_client_config.pouch_crypto_key_file = NULL;
+  config.lockd_client_config.pouch_crypto_generate_key_file = 0;
+  config.lockd_client_config.pouch_crypto_generate_key_file_set = 0;
   hydrated = 0;
   assert(vectis_acme_state_hydrate(&config, &hydrated, &error) ==
          VECTIS_ERR_STATE);

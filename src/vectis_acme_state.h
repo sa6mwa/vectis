@@ -4,22 +4,19 @@
 #include "vectis_internal.h"
 
 typedef struct vectis_acme_state_config {
+  /* Complete Lockd client settings prepared by Vectis. The state operation
+   * selects its endpoint and namespace below without reconstructing transport,
+   * mTLS, logging, allocator, or Pouch policy. */
+  lc_client_config lockd_client_config;
   const char *endpoint;
   const char *namespace_name;
   const char *key;
   const char *owner;
   const char *runtime_dir;
-  const char *client_bundle_path;
   const void *client_bundle_pem;
   size_t client_bundle_pem_size;
-  const char *pouch_crypto_key;
-  const char *pouch_crypto_key_file;
-  int pouch_crypto_generate_key_file;
-  int pouch_crypto_generate_key_file_set;
-  const char *pouch_compression;
   const char *const *domains;
   size_t domain_count;
-  long timeout_ms;
 } vectis_acme_state_config;
 
 /*
@@ -29,6 +26,7 @@ typedef struct vectis_acme_state_config {
  * able to use the same root concurrently.
  */
 char *vectis_persistence_default_pouch_endpoint(vectis_error *error);
+char *vectis_metrics_default_pouch_endpoint(vectis_error *error);
 char *vectis_persistence_default_pouch_key_file(void);
 char *vectis_acme_state_default_key(const char *const *domains,
                                     size_t domain_count, vectis_error *error);
