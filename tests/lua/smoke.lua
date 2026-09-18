@@ -304,6 +304,14 @@ assert(log.configure({
   },
 }))
 do
+  local invalid_seed, invalid_seed_err = log.configure({
+    env = false,
+    subs = { unknown = false },
+  })
+  assert(invalid_seed == nil)
+  assert(invalid_seed_err.status == vectis.ERR_INVALID)
+end
+do
   local seeded_logger, seeded_subs = log._acquire_seed()
   assert(type(seeded_logger) == "userdata")
   assert(seeded_subs.vectis == true)

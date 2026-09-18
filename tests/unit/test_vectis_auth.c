@@ -29,6 +29,14 @@ typedef struct smtp_mock_server {
   int started;
 } smtp_mock_server;
 
+static vectis_status smtp_configure_curl_failure(CURL *curl, void *userdata,
+                                                 vectis_error *error) {
+  (void)curl;
+  (void)userdata;
+  (void)error;
+  return VECTIS_ERR_INVALID;
+}
+
 static char *test_strdup(const char *value) {
   char *copy;
   size_t len;
@@ -1084,6 +1092,17 @@ int main(void) {
                                                 &error);
   expect(status == VECTIS_ERR_INVALID, "SMTP helper enforces recipient domain");
   vectis_error_clear(&error);
+
+  smtp_config.configure_curl = smtp_configure_curl_failure;
+  email_message.email = "email-user@example.test";
+  status = vectis_auth_email_token_deliver_smtp(&smtp_config, &email_message,
+                                                &error);
+  expect(status == VECTIS_ERR_INVALID,
+         "SMTP helper preserves configure callback failure status");
+  expect(error.code == VECTIS_OK,
+         "SMTP configure callback may fail without an error diagnostic");
+  vectis_error_clear(&error);
+  smtp_config.configure_curl = NULL;
 
   if (smtp_mock_start(&smtp_server)) {
     written = snprintf(smtp_url, sizeof(smtp_url), "smtp://127.0.0.1:%u",

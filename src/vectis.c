@@ -39045,6 +39045,7 @@ vectis_auth_email_token_deliver_smtp(const vectis_auth_smtp_config *config,
   vectis_curl_request_body upload;
   vectis_string_builder body;
   char curl_error[CURL_ERROR_SIZE];
+  vectis_status configure_status;
   vectis_status status;
 
   if (config == NULL || config->url == NULL || config->url[0] == '\0' ||
@@ -39141,13 +39142,15 @@ vectis_auth_email_token_deliver_smtp(const vectis_auth_smtp_config *config,
   (void)curl_easy_setopt(curl, CURLOPT_READDATA, &upload);
   (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
                          (curl_off_t)upload.size);
-  if (config->configure_curl != NULL &&
-      config->configure_curl(curl, config->configure_curl_userdata, error) !=
-          VECTIS_OK) {
-    curl_slist_free_all(recipients);
-    curl_easy_cleanup(curl);
-    vectis_string_builder_cleanup(&body);
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  if (config->configure_curl != NULL) {
+    configure_status =
+        config->configure_curl(curl, config->configure_curl_userdata, error);
+    if (configure_status != VECTIS_OK) {
+      curl_slist_free_all(recipients);
+      curl_easy_cleanup(curl);
+      vectis_string_builder_cleanup(&body);
+      return configure_status;
+    }
   }
   curl_code = curl_easy_perform(curl);
   curl_slist_free_all(recipients);

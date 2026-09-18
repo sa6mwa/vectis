@@ -236,6 +236,7 @@ function M.configure(opts)
   local sys
   local root
   local logger
+  local next_subs
   local scoped_err
   local ok
 
@@ -295,7 +296,7 @@ function M.configure(opts)
   if subs ~= nil and type(subs) ~= "table" then
     error("vectis.log.configure subs must be a table", 2)
   end
-  seeded.subs = {
+  next_subs = {
     vectis = true,
     lockdc = true,
     cai = true,
@@ -314,7 +315,7 @@ function M.configure(opts)
       if type(value) ~= "boolean" then
         error("vectis.log.configure subs values must be booleans", 2)
       end
-      seeded.subs[key] = value
+      next_subs[key] = value
     end
   end
   if config.mode == nil then
@@ -344,6 +345,7 @@ function M.configure(opts)
     seeded.logger:close()
   end
   seeded.logger = logger
+  seeded.subs = next_subs
   return true
 end
 
