@@ -14,6 +14,16 @@ if mode:find("sftp", 1, true) == 1 then
   end
   return
 end
+if mode == "scp-close-failure" then
+  local ok, err = vectis.ssh.scp_upload_file({
+    host = "127.0.0.1", port = tonumber(arg[1]), host_key_sha256 = arg[2],
+    username = "test", password = "test", local_path = arg[4],
+    remote_path = "/upload", timeout_ms = 8000,
+  })
+  assert(ok == nil and err, "failed remote SCP completion must not report success")
+  assert(err.message:find("SCP upload", 1, true), err.message)
+  return
+end
 local result, err = vectis.ssh.exec({
   host = "127.0.0.1",
   port = assert(tonumber(arg[1])),

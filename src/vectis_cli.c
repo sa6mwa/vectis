@@ -16682,9 +16682,10 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   }
   (void)curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, vectis_lua_curl_write);
   (void)curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
-  (void)curl_easy_setopt(
-      curl, CURLOPT_FOLLOWLOCATION,
-      vectis_lua_table_bool(lua, 1, "follow_redirects", 0) ? 1L : 0L);
+  (void)curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,
+                         vectis_lua_table_bool(lua, 1, "follow_redirects", 0)
+                             ? CURLFOLLOW_OBEYCODE
+                             : 0L);
   if (timeout_ms > 0L) {
     (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
   }

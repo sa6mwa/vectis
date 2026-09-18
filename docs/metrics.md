@@ -90,10 +90,14 @@ unreadable or invalid checkpoint fails startup rather than silently publishing
 zeroed history.
 
 The single-checkpoint lookup does not make local storage recovery constant-time:
-opening Pouch can replay its persisted log before Vectis opens its listener.
-Vectis currently performs this open synchronously. Remote request timeouts do
-not establish a CPU/time bound on local Pouch recovery. Startup errors preserve
-the underlying lockdc message and dependency error metadata.
+opening Pouch can replay its persisted log while Vectis is becoming ready.
+For route-backed applications, Vectis opens the checkpoint client only in the
+supervisor after the Kore fork boundary and before it marks the child ready. It
+then reuses that client for the worker's five-minute checkpoints and the final
+shutdown checkpoint. A failed checkpoint discards the client; the next
+scheduled checkpoint opens a fresh one. Remote request timeouts do not
+establish a CPU/time bound on local Pouch recovery. Startup errors preserve the
+underlying lockdc message and dependency error metadata.
 
 `make perf-gate` (also mandatory in `make test-e2e` and hence `make test-all`)
 tests the actual binary against encrypted Pouch on Linux. It writes 20,000

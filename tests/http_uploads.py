@@ -100,9 +100,9 @@ def main():
                     assert server.requests.count((method, "/" + kind + "/received")) == 2
                 assert server.requests.count((method, "/json/retry")) == 2
             for kind in ("file", "multipart", "raw", "json", "buffered"):
-                assert server.requests.count(("GET", "/" + kind + "/received")) == 3
-            assert len(server.requests) == 112, server.requests
-            print("Passed 64 uploads, including 45 redirects and 3 retries (112 requests)")
+                assert server.requests.count(("GET", "/" + kind + "/received")) == 5
+            assert len(server.requests) == 132, server.requests
+            print("Passed 64 uploads, including 55 redirects and 3 retries (132 requests)")
 
 
 if __name__ == "__main__":

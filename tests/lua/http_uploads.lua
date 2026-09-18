@@ -47,6 +47,13 @@ for _, method in ipairs({"POST", "PUT", "PATCH"}) do
         assert(result.ok, result.error)
         assert(result.status == 200 and result.body == "GET", kind .. " redirect " .. code)
       end
+    else
+      opts.url = base .. "/" .. kind .. "/303"
+      opts.follow_redirects = true
+      result = kind == "json" and curl.stream_json(opts) or curl.perform(opts)
+      assert(result.ok, result.error)
+      assert(result.status == 200 and result.body == "GET",
+          kind .. " " .. method .. " redirect 303")
     end
     if kind == "json" then
       opts.url = base .. "/json/retry"

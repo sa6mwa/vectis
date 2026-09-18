@@ -53,6 +53,34 @@ class Server(paramiko.ServerInterface):
         return True
 
 
+def receive_exact(channel, size):
+    chunks = []
+    remaining = size
+    while remaining:
+        chunk = channel.recv(remaining)
+        assert chunk
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def serve_scp_close_failure(channel):
+    channel.sendall(b"\0")
+    header = b""
+    while not header.endswith(b"\n"):
+        header += receive_exact(channel, 1)
+    assert header.startswith(b"C0644 ")
+    _, size_text, _ = header.rstrip(b"\n").split(b" ", 2)
+    channel.sendall(b"\0")
+    receive_exact(channel, int(size_text))
+    channel.sendall(b"\1No space left on device\n")
+    channel.send_exit_status(1)
+    try:
+        channel.close()
+    except EOFError:
+        pass
+
+
 def serve(listener, key, errors, mode):
     try:
         connection, _ = listener.accept()
@@ -72,6 +100,10 @@ def serve(listener, key, errors, mode):
                 return
             assert channel is not None and server.ready.wait(10)
             channel.settimeout(10)
+            if mode == "scp-close-failure":
+                assert server.mode.startswith("scp -t ")
+                serve_scp_close_failure(channel)
+                return
             if server.mode == "stderr":
                 channel.sendall_stderr(b"e" * (4 * 1024 * 1024))
             elif server.mode == "mixed":
@@ -109,7 +141,8 @@ def main():
     key = paramiko.RSAKey.generate(2048)
     fingerprint = hashlib.sha256(key.asbytes()).hexdigest()
     for mode in ("stderr", "mixed", "delayed", "empty", "idle", "late-status",
-                 "completion-timeout", "sftp-close-failure", "sftp-ok"):
+                 "completion-timeout", "sftp-close-failure", "sftp-ok",
+                 "scp-close-failure"):
         errors = []
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))

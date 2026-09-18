@@ -285,6 +285,8 @@ typedef struct vectis_metrics_state {
   char *storage_endpoint;
   char *storage_namespace;
   char *storage_owner;
+  lc_client *checkpoint_client;
+  pid_t checkpoint_client_pid;
   unsigned snapshot_interval_seconds;
   int persistence_enabled;
   vectis_metrics_shared_state *shared;
@@ -1296,7 +1298,7 @@ static vectis_status vectis_app_prepare_acme_state(vectis_app_impl *impl,
 static vectis_status vectis_app_discard_owned_acme_state(vectis_app_impl *impl,
                                                          vectis_error *error);
 static void vectis_app_mark_kore_ready(vectis_app_impl *impl);
-static char *vectis_metrics_default_storage_endpoint(void);
+static char *vectis_metrics_default_storage_endpoint(vectis_error *error);
 static vectis_status vectis_metrics_route_handler(vectis_app *app,
                                                   vectis_request *request,
                                                   vectis_response *response,
@@ -10675,6 +10677,23 @@ static int vectis_endpoint_is_pouch(const char *endpoint) {
   return endpoint != NULL && strncmp(endpoint, "pouch://", 8u) == 0;
 }
 
+static int vectis_pouch_endpoints_share_root(const char *left,
+                                             const char *right) {
+  const char *left_end;
+  const char *right_end;
+  size_t left_size;
+  size_t right_size;
+
+  if (!vectis_endpoint_is_pouch(left) || !vectis_endpoint_is_pouch(right)) {
+    return 0;
+  }
+  left_end = strchr(left, '?');
+  right_end = strchr(right, '?');
+  left_size = left_end != NULL ? (size_t)(left_end - left) : strlen(left);
+  right_size = right_end != NULL ? (size_t)(right_end - right) : strlen(right);
+  return left_size == right_size && memcmp(left, right, left_size) == 0;
+}
+
 static vectis_status vectis_configure_pouch_client(lc_client_config *config,
                                                    const char *endpoint,
                                                    const vectis_app_impl *impl,
@@ -12060,15 +12079,6 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     }
   }
 
-  if (route_count > 0u && vectis_app_has_metrics_persistence(impl)) {
-    status = vectis_metrics_persist_snapshot(
-        app, vectis_metrics_background_persistence_timeout_ms(impl), error);
-    if (status != VECTIS_OK) {
-      return status;
-    }
-    impl->metrics->last_snapshot_at = time(NULL);
-  }
-
   if (route_count > 0u) {
     control_fds[0] = -1;
     control_fds[1] = -1;
@@ -12161,6 +12171,19 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       (void)vectis_app_stop_impl(app, &cleanup_error);
       vectis_app_clear_kore_ready_state(impl);
       return status;
+    }
+    if (vectis_app_has_metrics_persistence(impl)) {
+      status = vectis_metrics_persist_snapshot(
+          app, vectis_metrics_background_persistence_timeout_ms(impl), error);
+      if (status != VECTIS_OK) {
+        vectis_error cleanup_error;
+
+        vectis_error_clear(&cleanup_error);
+        (void)vectis_app_stop_impl(app, &cleanup_error);
+        vectis_app_clear_kore_ready_state(impl);
+        return status;
+      }
+      impl->metrics->last_snapshot_at = time(NULL);
     }
     status = vectis_metrics_worker_start(app, error);
     if (status != VECTIS_OK) {
@@ -13297,7 +13320,7 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
       effective->storage_endpoint[0] != '\0') {
     metrics->storage_endpoint = vectis_strdup(effective->storage_endpoint);
   } else if (metrics->persistence_enabled) {
-    metrics->storage_endpoint = vectis_metrics_default_storage_endpoint();
+    metrics->storage_endpoint = vectis_metrics_default_storage_endpoint(error);
   }
   if (metrics->html_path == NULL || metrics->json_path == NULL ||
       metrics->storage_namespace == NULL || metrics->storage_owner == NULL ||
@@ -22297,59 +22320,8 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
   return status;
 }
 
-static int vectis_mkdir_recursive(const char *path) {
-  char tmp[4096];
-  char *p;
-  size_t len;
-
-  if (path == NULL || path[0] != '/') {
-    return 0;
-  }
-  len = strlen(path);
-  if (len == 0u || len >= sizeof(tmp)) {
-    return 0;
-  }
-  memcpy(tmp, path, len + 1u);
-  for (p = tmp + 1; *p != '\0'; ++p) {
-    if (*p == '/') {
-      *p = '\0';
-      if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
-        return 0;
-      }
-      *p = '/';
-    }
-  }
-  if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
-    return 0;
-  }
-  return 1;
-}
-
-static char *vectis_metrics_default_storage_endpoint(void) {
-  const char *xdg;
-  const char *home;
-  char path[4096];
-  char endpoint[4108];
-  int n;
-
-  xdg = getenv("XDG_STATE_HOME");
-  if (xdg != NULL && xdg[0] == '/') {
-    n = snprintf(path, sizeof(path), "%s/vectis/storage", xdg);
-  } else {
-    home = getenv("HOME");
-    if (home == NULL || home[0] != '/') {
-      return NULL;
-    }
-    n = snprintf(path, sizeof(path), "%s/.local/state/vectis/storage", home);
-  }
-  if (n <= 0 || (size_t)n >= sizeof(path) || !vectis_mkdir_recursive(path)) {
-    return NULL;
-  }
-  n = snprintf(endpoint, sizeof(endpoint), "pouch://%s", path);
-  if (n <= 0 || (size_t)n >= sizeof(endpoint)) {
-    return NULL;
-  }
-  return vectis_strdup(endpoint);
+static char *vectis_metrics_default_storage_endpoint(vectis_error *error) {
+  return vectis_persistence_default_pouch_endpoint(error);
 }
 
 typedef struct vectis_metrics_write_context {
@@ -22820,19 +22792,108 @@ vectis_metrics_background_persistence_timeout_ms(const vectis_app_impl *impl) {
   return grace_ms / 2L;
 }
 
+/* The checkpoint client is owned by the supervisor metrics worker. It must
+ * never cross the Kore fork boundary and is discarded after a failed storage
+ * operation so the next scheduled checkpoint constructs a fresh client. */
+static void vectis_metrics_checkpoint_client_close_for_current_process(
+    vectis_metrics_state *metrics) {
+  if (metrics == NULL || metrics->checkpoint_client == NULL) {
+    return;
+  }
+  if (metrics->checkpoint_client_pid == 0 ||
+      metrics->checkpoint_client_pid == getpid()) {
+    lc_client_close(metrics->checkpoint_client);
+  }
+  metrics->checkpoint_client = NULL;
+  metrics->checkpoint_client_pid = 0;
+}
+
+static vectis_status
+vectis_metrics_checkpoint_client_open(vectis_app *app, long timeout_ms,
+                                      vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  lc_client_config config;
+  lc_error lcerr;
+  const char *endpoint;
+  char *default_key_file;
+  lc_client *client;
+  vectis_status status;
+  int rc;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL || !metrics->persistence_enabled) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (metrics->checkpoint_client != NULL &&
+      metrics->checkpoint_client_pid != getpid()) {
+    metrics->checkpoint_client = NULL;
+    metrics->checkpoint_client_pid = 0;
+  }
+  if (metrics->checkpoint_client != NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+
+  endpoint = metrics->storage_endpoint;
+  if (impl->endpoint_count == 1u &&
+      vectis_pouch_endpoints_share_root(endpoint, impl->endpoints[0])) {
+    /* A metrics namespace is still isolated, but the Pouch client must retain
+     * the app endpoint's writer policy when both addresses name one root. */
+    endpoint = impl->endpoints[0];
+  }
+  default_key_file = NULL;
+  lc_client_config_init(&config);
+  config.endpoints = &endpoint;
+  config.endpoint_count = 1u;
+  config.default_namespace = metrics->storage_namespace != NULL
+                                 ? metrics->storage_namespace
+                                 : "vectis.metrics";
+  config.timeout_ms = timeout_ms > 0L ? timeout_ms : 30000L;
+  status = vectis_configure_pouch_client(&config, endpoint, impl,
+                                         &default_key_file, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  client = NULL;
+  lc_error_init(&lcerr);
+  rc = lc_client_open(&config, &client, &lcerr);
+  if (default_key_file != NULL) {
+    free(default_key_file);
+  }
+  if (rc != LC_OK) {
+    if (client != NULL) {
+      lc_client_close(client);
+    }
+    (void)vectis_set_lockdc_error(error, rc, &lcerr,
+                                  "metrics checkpoint persistence failed");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  metrics->checkpoint_client = client;
+  metrics->checkpoint_client_pid = getpid();
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
                                                      long timeout_ms,
                                                      vectis_error *error) {
   vectis_app_impl *impl;
   vectis_metrics_state *metrics;
   vectis_metrics_write_context write;
-  lc_client_config config;
   lc_client *client;
   lc_acquire_req req;
   lc_error lcerr;
-  char *default_key_file;
   char key[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
-  const char *endpoint;
   const char *owner;
   vectis_status status;
   int rc;
@@ -22847,50 +22908,34 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
   }
   memset(&write, 0, sizeof(write));
   write.app = app;
-  endpoint = metrics->storage_endpoint;
-  default_key_file = NULL;
-  lc_client_config_init(&config);
-  config.endpoints = &endpoint;
-  config.endpoint_count = 1u;
-  config.default_namespace = metrics->storage_namespace != NULL
-                                 ? metrics->storage_namespace
-                                 : "vectis.metrics";
-  config.timeout_ms = timeout_ms > 0L ? timeout_ms : 30000L;
-  status = vectis_configure_pouch_client(&config, endpoint, impl,
-                                         &default_key_file, error);
+  status = vectis_metrics_checkpoint_client_open(app, timeout_ms, error);
   if (status != VECTIS_OK) {
     vectis_mutable_bytes_cleanup(&write.json);
     vectis_metrics_note_snapshot_error(metrics);
     return status;
   }
   lc_error_init(&lcerr);
-  client = NULL;
-  rc = lc_client_open(&config, &client, &lcerr);
-  if (rc == LC_OK) {
-    lc_acquire_req_init(&req);
-    req.namespace_name = config.default_namespace;
-    owner = metrics->storage_owner != NULL ? metrics->storage_owner : "vectis";
-    req.owner = owner;
-    req.ttl_seconds = 30L;
-    req.block_seconds = config.timeout_ms >= 1000L ? 1L : 0L;
-    if (vectis_internal_metrics_snapshot_key(owner, impl->app_name, key,
-                                             sizeof(key), NULL) != VECTIS_OK) {
-      rc = LC_ERR_INVALID;
-    } else {
-      req.key = key;
-      rc = client->acquire_for_update(client, &req, vectis_metrics_write_update,
-                                      &write, &lcerr);
-    }
-  }
-  if (client != NULL) {
-    client->close(client);
-  }
-  if (default_key_file != NULL) {
-    free(default_key_file);
+  client = metrics->checkpoint_client;
+  lc_acquire_req_init(&req);
+  req.namespace_name = metrics->storage_namespace != NULL
+                           ? metrics->storage_namespace
+                           : "vectis.metrics";
+  owner = metrics->storage_owner != NULL ? metrics->storage_owner : "vectis";
+  req.owner = owner;
+  req.ttl_seconds = 30L;
+  req.block_seconds = timeout_ms >= 1000L ? 1L : 0L;
+  if (vectis_internal_metrics_snapshot_key(owner, impl->app_name, key,
+                                           sizeof(key), NULL) != VECTIS_OK) {
+    rc = LC_ERR_INVALID;
+  } else {
+    req.key = key;
+    rc = client->acquire_for_update(client, &req, vectis_metrics_write_update,
+                                    &write, &lcerr);
   }
   if (rc != LC_OK) {
     (void)vectis_set_lockdc_error(error, rc, &lcerr,
                                   "metrics checkpoint persistence failed");
+    vectis_metrics_checkpoint_client_close_for_current_process(metrics);
   }
   lc_error_cleanup(&lcerr);
   vectis_mutable_bytes_cleanup(&write.json);
@@ -23083,6 +23128,7 @@ vectis_metrics_worker_stop(vectis_app *app,
     }
     vectis_app_record_lifecycle_sequence(impl, &impl->metrics_stop_sequence);
   }
+  vectis_metrics_checkpoint_client_close_for_current_process(metrics);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -23116,6 +23162,7 @@ static void vectis_metrics_state_destroy(vectis_metrics_state *metrics) {
     return;
   }
   vectis_metrics_worker_join_before_destroy(metrics);
+  vectis_metrics_checkpoint_client_close_for_current_process(metrics);
   free(metrics->html_path);
   free(metrics->json_path);
   free(metrics->title);
@@ -42709,6 +42756,7 @@ vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
   size_t remaining;
   ssize_t nwritten;
   int fd;
+  int rc;
   vectis_status status;
 
   if (config == NULL || config->host == NULL || config->username == NULL) {
@@ -42788,9 +42836,40 @@ vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
                      "failed to read local SCP upload file");
   }
   (void)fclose(local);
-  (void)libssh2_channel_send_eof(channel);
-  (void)libssh2_channel_wait_eof(channel);
-  (void)libssh2_channel_wait_closed(channel);
+  if (status == VECTIS_OK) {
+    rc = libssh2_channel_send_eof(channel);
+    if (rc != 0) {
+      status = VECTIS_ERR_STATE;
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to finish remote SCP upload");
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+        error->dependency_code = (long)rc;
+      }
+    }
+  }
+  if (status == VECTIS_OK) {
+    rc = libssh2_channel_wait_closed(channel);
+    if (rc != 0) {
+      status = rc == LIBSSH2_ERROR_TIMEOUT || rc == LIBSSH2_ERROR_SOCKET_TIMEOUT
+                   ? VECTIS_ERR_TIMEOUT
+                   : VECTIS_ERR_STATE;
+      vectis_set_error(error, status,
+                       "failed waiting for remote SCP upload completion");
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+        error->dependency_code = (long)rc;
+      }
+    } else if (libssh2_channel_get_exit_status(channel) != 0) {
+      status = VECTIS_ERR_STATE;
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "remote SCP upload failed after receiving payload");
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+        error->dependency_code = (long)libssh2_channel_get_exit_status(channel);
+      }
+    }
+  }
   libssh2_channel_free(channel);
   vectis_ssh_session_close(session, fd);
   if (status == VECTIS_OK) {
