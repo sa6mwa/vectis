@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,6 +81,26 @@ typedef struct sample_xml_doc {
 typedef struct sample_xml_blob_doc {
   lonejson_spooled body;
 } sample_xml_blob_doc;
+
+typedef struct sample_xml_present_blob_doc {
+  lonejson_spooled body;
+  int body_present;
+} sample_xml_present_blob_doc;
+
+typedef struct sample_xml_optional_text_doc {
+  lonejson_int64 text;
+  char body[32];
+} sample_xml_optional_text_doc;
+
+typedef struct sample_xml_text_array_doc {
+  char text[32];
+  lonejson_string_array item;
+} sample_xml_text_array_doc;
+
+typedef struct sample_xml_text_arrays_doc {
+  lonejson_string_array text;
+  lonejson_string_array item;
+} sample_xml_text_arrays_doc;
 
 typedef struct sample_xml_attr_doc {
   char attr_id[16];
@@ -239,6 +260,33 @@ static const lonejson_field sample_xml_doc_fields[] = {
 static const lonejson_field sample_xml_blob_doc_fields[] = {
     LONEJSON_FIELD_STRING_STREAM_REQ(sample_xml_blob_doc, body, "body")};
 
+static const lonejson_field sample_xml_optional_blob_doc_fields[] = {
+    LONEJSON_FIELD_STRING_STREAM(sample_xml_blob_doc, body, "body")};
+
+static const lonejson_field sample_xml_present_blob_doc_fields[] = {
+    {"body", 4u, 'b', 'y', offsetof(sample_xml_present_blob_doc, body),
+     LONEJSON_FIELD_KIND_STRING_STREAM, LONEJSON_STORAGE_FIXED,
+     LONEJSON_OVERFLOW_FAIL, LONEJSON_FIELD_HAS_PRESENCE, 0u, 0u, NULL, NULL,
+     offsetof(sample_xml_present_blob_doc, body_present),
+     LONEJSON_SPOOL_CLASS_DEFAULT}};
+
+static const lonejson_field sample_xml_optional_text_doc_fields[] = {
+    LONEJSON_FIELD_I64(sample_xml_optional_text_doc, text, "text"),
+    LONEJSON_FIELD_STRING_FIXED(sample_xml_optional_text_doc, body, "body",
+                                LONEJSON_OVERFLOW_FAIL)};
+
+static const lonejson_field sample_xml_text_array_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED(sample_xml_text_array_doc, text, "text",
+                                LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_ARRAY(sample_xml_text_array_doc, item, "item",
+                                LONEJSON_OVERFLOW_FAIL)};
+
+static const lonejson_field sample_xml_text_arrays_doc_fields[] = {
+    LONEJSON_FIELD_STRING_ARRAY(sample_xml_text_arrays_doc, text, "text",
+                                LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_ARRAY(sample_xml_text_arrays_doc, item, "item",
+                                LONEJSON_OVERFLOW_FAIL)};
+
 static const lonejson_field sample_xml_attr_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_attr_doc, attr_id, "@id",
                                     LONEJSON_OVERFLOW_FAIL),
@@ -260,6 +308,18 @@ LONEJSON_MAP_DEFINE(sample_dsv_dynamic_doc_map, sample_dsv_dynamic_doc,
 LONEJSON_MAP_DEFINE(sample_xml_doc_map, sample_xml_doc, sample_xml_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_blob_doc_map, sample_xml_blob_doc,
                     sample_xml_blob_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_optional_blob_doc_map, sample_xml_blob_doc,
+                    sample_xml_optional_blob_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_present_blob_doc_map,
+                    sample_xml_present_blob_doc,
+                    sample_xml_present_blob_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_optional_text_doc_map,
+                    sample_xml_optional_text_doc,
+                    sample_xml_optional_text_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_text_array_doc_map, sample_xml_text_array_doc,
+                    sample_xml_text_array_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_text_arrays_doc_map, sample_xml_text_arrays_doc,
+                    sample_xml_text_arrays_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_attr_doc_map, sample_xml_attr_doc,
                     sample_xml_attr_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_prefixed_attr_doc_map,
@@ -3156,6 +3216,10 @@ static void assert_xml_surface(void) {
   sample_xml_doc doc;
   sample_xml_doc roundtrip_doc;
   sample_xml_blob_doc blob_doc;
+  sample_xml_present_blob_doc present_blob_doc;
+  sample_xml_optional_text_doc optional_text_doc;
+  sample_xml_text_array_doc text_array_doc;
+  sample_xml_text_arrays_doc text_arrays_doc;
   sample_xml_attr_doc attr_doc;
   sample_xml_attr_doc parsed_attr_doc;
   sample_xml_prefixed_attr_doc prefixed_attr_doc;
@@ -3237,6 +3301,191 @@ static void assert_xml_surface(void) {
   assert(strcmp(parsed_attr_doc.text, "hello <xml>") == 0);
   vectis_mutable_bytes_cleanup(&serialized);
 
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\">\n  <text>hello</text>\n</item>",
+      strlen("<item id=\"split\">\n  <text>hello</text>\n</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.attr_id, "split") == 0);
+  assert(strcmp(parsed_attr_doc.text, "hello") == 0);
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\"><text>hello</text><![CDATA[ ]]></item>",
+      strlen("<item id=\"split\"><text>hello</text><![CDATA[ ]]></item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "duplicate") != NULL);
+  vectis_error_clear(&error);
+
+  memset(&optional_text_doc, 0, sizeof(optional_text_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  xml_source =
+      vectis_source_from_memory("<doc>\n  <body>hello</body>\n</doc>",
+                                strlen("<doc>\n  <body>hello</body>\n</doc>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_optional_text_doc_map, &config,
+      &optional_text_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(optional_text_doc.body, "hello") == 0);
+
+  memset(&optional_text_doc, 0, sizeof(optional_text_doc));
+  config.max_text_bytes = 4u;
+  xml_source =
+      vectis_source_from_memory("<doc><body>a</body>\n    </doc>",
+                                strlen("<doc><body>a</body>\n    </doc>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_optional_text_doc_map, &config,
+      &optional_text_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(optional_text_doc.body, "a") == 0);
+
+  memset(&text_array_doc, 0, sizeof(text_array_doc));
+  xml_source =
+      vectis_source_from_memory("<doc>     </doc>", strlen("<doc>     </doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_array_doc_map,
+                                            &config, &text_array_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_text_bytes") != NULL);
+  vectis_error_clear(&error);
+
+  memset(&text_arrays_doc, 0, sizeof(text_arrays_doc));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_arrays_doc_map,
+                                            &config, &text_arrays_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_text_bytes") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source = vectis_source_from_memory(
+      "<doc>     <![CDATA[a]]></doc>", strlen("<doc>     <![CDATA[a]]></doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_arrays_doc_map,
+                                            &config, &text_arrays_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_text_bytes") != NULL);
+  vectis_error_clear(&error);
+
+  memset(&text_array_doc, 0, sizeof(text_array_doc));
+  xml_source = vectis_source_from_memory(
+      "<doc><item>a</item>\n  <item>b</item></doc>",
+      strlen("<doc><item>a</item>\n  <item>b</item></doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_array_doc_map,
+                                            &config, &text_array_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(text_array_doc.item.count == 2u);
+  assert(strcmp(text_array_doc.item.items[0], "a") == 0);
+  assert(strcmp(text_array_doc.item.items[1], "b") == 0);
+  lonejson_cleanup(&sample_xml_text_array_doc_map, &text_array_doc);
+
+  memset(&text_arrays_doc, 0, sizeof(text_arrays_doc));
+  xml_source = vectis_source_from_memory("<doc><![CDATA[a]]> </doc>",
+                                         strlen("<doc><![CDATA[a]]> </doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_arrays_doc_map,
+                                            &config, &text_arrays_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(text_arrays_doc.text.count == 2u);
+  assert(strcmp(text_arrays_doc.text.items[0], "a") == 0);
+  assert(strcmp(text_arrays_doc.text.items[1], " ") == 0);
+  lonejson_cleanup(&sample_xml_text_arrays_doc_map, &text_arrays_doc);
+
+  memset(&text_arrays_doc, 0, sizeof(text_arrays_doc));
+  xml_source = vectis_source_from_memory("<doc>a<ignored/> </doc>",
+                                         strlen("<doc>a<ignored/> </doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_arrays_doc_map,
+                                            &config, &text_arrays_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(text_arrays_doc.text.count == 2u);
+  assert(strcmp(text_arrays_doc.text.items[0], "a") == 0);
+  assert(strcmp(text_arrays_doc.text.items[1], " ") == 0);
+  lonejson_cleanup(&sample_xml_text_arrays_doc_map, &text_arrays_doc);
+
+  memset(&text_arrays_doc, 0, sizeof(text_arrays_doc));
+  xml_source =
+      vectis_source_from_memory("<doc><![CDATA[a]]> <ignored/></doc>",
+                                strlen("<doc><![CDATA[a]]> <ignored/></doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_arrays_doc_map,
+                                            &config, &text_arrays_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(text_arrays_doc.text.count == 2u);
+  assert(strcmp(text_arrays_doc.text.items[0], "a") == 0);
+  assert(strcmp(text_arrays_doc.text.items[1], " ") == 0);
+  lonejson_cleanup(&sample_xml_text_arrays_doc_map, &text_arrays_doc);
+
+  config = vectis_xml_default();
+  config.root_element = "item";
+  config.attribute_prefix = "@";
+  xml_source = vectis_source_from_memory(
+      "<item id=\"mixed\"><ignored/><![CDATA[a]]><![CDATA[ ]]><![CDATA[b]]>"
+      "</item>",
+      strlen(
+          "<item id=\"mixed\"><ignored/><![CDATA[a]]><![CDATA[ ]]><![CDATA[b]]>"
+          "</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "a b") == 0);
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"cdata\"><![CDATA[ ]]><ignored/>hello</item>",
+      strlen("<item id=\"cdata\"><![CDATA[ ]]><ignored/>hello</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, " hello") == 0);
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"space\" xml:space=\"preserve\"> <ignored/>hello</item>",
+      strlen(
+          "<item id=\"space\" xml:space=\"preserve\"> <ignored/>hello</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, " hello") == 0);
+
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  memset(&text_arrays_doc, 0, sizeof(text_arrays_doc));
+  xml_source = vectis_source_from_memory(
+      "<doc><item>a</item>\n  <item>b</item></doc>",
+      strlen("<doc><item>a</item>\n  <item>b</item></doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_arrays_doc_map,
+                                            &config, &text_arrays_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(text_arrays_doc.text.count == 0u);
+  assert(text_arrays_doc.item.count == 2u);
+  lonejson_cleanup(&sample_xml_text_arrays_doc_map, &text_arrays_doc);
+
+  memset(&text_arrays_doc, 0, sizeof(text_arrays_doc));
+  xml_source = vectis_source_from_memory(
+      "<doc>\n  <item>a</item><text>b</text></doc>",
+      strlen("<doc>\n  <item>a</item><text>b</text></doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_text_arrays_doc_map,
+                                            &config, &text_arrays_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(text_arrays_doc.text.count == 1u);
+  assert(strcmp(text_arrays_doc.text.items[0], "b") == 0);
+  assert(text_arrays_doc.item.count == 1u);
+  assert(strcmp(text_arrays_doc.item.items[0], "a") == 0);
+  lonejson_cleanup(&sample_xml_text_arrays_doc_map, &text_arrays_doc);
+
+  config = vectis_xml_default();
+  config.root_element = "item";
+  config.attribute_prefix = "@";
   memset(&prefixed_attr_doc, 0, sizeof(prefixed_attr_doc));
   strcpy(prefixed_attr_doc.id, "element");
   strcpy(prefixed_attr_doc.attr_id, "attribute");
@@ -3279,6 +3528,15 @@ static void assert_xml_surface(void) {
   xml_source = vectis_source_from_memory(
       "<item id=\"split\">a<![CDATA[ ]]>b</item>",
       strlen("<item id=\"split\">a<![CDATA[ ]]>b</item>"));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.text, "a b") == 0);
+
+  xml_source = vectis_source_from_memory(
+      "<item id=\"split\"><![CDATA[a]]> <![CDATA[b]]></item>",
+      strlen("<item id=\"split\"><![CDATA[a]]> <![CDATA[b]]></item>"));
   memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
   status = vectis_xml_parse_lonejson_source(
       &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
@@ -3514,7 +3772,7 @@ static void assert_xml_surface(void) {
   vectis_error_clear(&error);
 
   memset(&blob_doc, 0, sizeof(blob_doc));
-  large_body_size = 2u * 1024u * 1024u;
+  large_body_size = 11u * 1024u * 1024u;
   large_xml = (char *)malloc(large_body_size + 24u);
   assert(large_xml != NULL);
   memcpy(large_xml, "<doc><body>", 11u);
@@ -3522,6 +3780,7 @@ static void assert_xml_surface(void) {
   memcpy(large_xml + 11u + large_body_size, "</body></doc>", 13u);
   config = vectis_xml_default();
   config.root_element = "doc";
+  config.max_text_bytes = 64u * 1024u * 1024u;
   xml_source = vectis_source_from_memory(large_xml, large_body_size + 24u);
   status = vectis_xml_parse_lonejson_source(
       &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
@@ -3535,7 +3794,122 @@ static void assert_xml_surface(void) {
          large_body_size + strlen("<doc><body></body></doc>"));
   vectis_mutable_bytes_cleanup(&serialized);
   lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+
+  memcpy(large_xml, "<doc>", 5u);
+  memset(large_xml + 5u, ' ', large_body_size);
+  memcpy(large_xml + 5u + large_body_size, "</doc>", 6u);
+  memset(&blob_doc, 0, sizeof(blob_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.text_key = "body";
+  config.max_text_bytes = 64u * 1024u * 1024u;
+  xml_source = vectis_source_from_memory(large_xml, large_body_size + 11u);
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(lonejson_spooled_size(&blob_doc.body) == large_body_size);
+  assert(lonejson_spooled_spilled(&blob_doc.body));
+  lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+
+  memset(&blob_doc, 0, sizeof(blob_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.text_key = "body";
+  xml_source =
+      vectis_source_from_memory("<doc>hello</doc>", strlen("<doc>hello</doc>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(lonejson_spooled_size(&blob_doc.body) == 5u);
+  lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+
+  memset(&blob_doc, 0, sizeof(blob_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.text_key = "body";
+  config.max_text_bytes = 4u;
+  xml_source =
+      vectis_source_from_memory("<doc>     <body>a</body></doc>",
+                                strlen("<doc>     <body>a</body></doc>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(lonejson_spooled_size(&blob_doc.body) == 1u);
+  lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+
+  memset(&present_blob_doc, 0, sizeof(present_blob_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.text_key = "body";
+  xml_source =
+      vectis_source_from_memory("<doc>hello</doc>", strlen("<doc>hello</doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_present_blob_doc_map,
+                                            &config, &present_blob_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "presence") != NULL);
+  vectis_error_clear(&error);
+
+  memset(&blob_doc, 0, sizeof(blob_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.skip_unknown_disabled = 1;
+  xml_source =
+      vectis_source_from_memory("<doc>\n  <body>hello</body>\n</doc>",
+                                strlen("<doc>\n  <body>hello</body>\n</doc>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(lonejson_spooled_size(&blob_doc.body) == 5u);
+  lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+
+  memset(&blob_doc, 0, sizeof(blob_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.skip_unknown_disabled = 1;
+  xml_source = vectis_source_from_memory(
+      "<doc><body>hello</body><![CDATA[ ]]></doc>",
+      strlen("<doc><body>hello</body><![CDATA[ ]]></doc>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "unknown") != NULL);
+  vectis_error_clear(&error);
+
+  memset(&blob_doc, 0, sizeof(blob_doc));
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.text_key = "body";
+  xml_source =
+      vectis_source_from_memory("<doc>hello</doc>", strlen("<doc>hello</doc>"));
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_optional_blob_doc_map,
+                                            &config, &blob_doc, &error);
+  assert(status == VECTIS_OK);
+  memset(&serialized, 0, sizeof(serialized));
+  status =
+      vectis_xml_lonejson_to_bytes(&sample_xml_optional_blob_doc_map, &config,
+                                   &blob_doc, &serialized, &error);
+  assert(status == VECTIS_OK);
+  serialized_view.data = serialized.data;
+  serialized_view.size = serialized.size;
+  assert(sample_bytes_contains(serialized_view, "<doc>hello</doc>"));
+  vectis_mutable_bytes_cleanup(&serialized);
+  lonejson_cleanup(&sample_xml_optional_blob_doc_map, &blob_doc);
+
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  config.text_key = "body";
   config.trim_text = 1;
+  xml_source = vectis_source_from_memory("<doc><![CDATA[ ]]></doc>",
+                                         strlen("<doc><![CDATA[ ]]></doc>"));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "trim_text=0") != NULL);
+  vectis_error_clear(&error);
+  xml_source =
+      vectis_source_from_memory("<doc>hello</doc>", strlen("<doc>hello</doc>"));
   status = vectis_xml_parse_lonejson_source(
       &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
   assert(status == VECTIS_ERR_INVALID);
