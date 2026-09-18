@@ -5903,8 +5903,8 @@ static int vectis_opcua_lua_server_add_method_many(lua_State *lua) {
     return luaL_error(lua,
                       "opcua server add_method_many requires output_types");
   }
-  callback = vectis_opcua_lua_method_callback_new(lua, callback_index,
-                                                  output_count);
+  callback =
+      vectis_opcua_lua_method_callback_new(lua, callback_index, output_count);
   vectis_opcua_lua_retain_owner(lua, 1, callback);
   status = 0u;
   result = cpkt_opcua_server_add_method_many(

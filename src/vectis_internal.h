@@ -214,12 +214,10 @@ vectis_status vectis_internal_metrics_snapshot_key(const char *storage_owner,
                                                    const char *app_name,
                                                    char *key, size_t key_size,
                                                    vectis_error *error);
-vectis_status vectis_internal_route_body_policy(vectis_app *app,
-                                                vectis_http_method method,
-                                                const char *path,
-                                                vectis_body_policy *policy,
-                                                int *is_live_upload,
-                                                vectis_error *error);
+vectis_status
+vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
+                                  const char *path, vectis_body_policy *policy,
+                                  int *is_live_upload, vectis_error *error);
 vectis_status
 vectis_internal_upload_stream_open(vectis_app *app, vectis_http_method method,
                                    const char *path, vectis_request *request,

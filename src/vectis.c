@@ -13321,12 +13321,19 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
     metrics->storage_endpoint = vectis_strdup(effective->storage_endpoint);
   } else if (metrics->persistence_enabled) {
     metrics->storage_endpoint = vectis_metrics_default_storage_endpoint(error);
+    if (metrics->storage_endpoint == NULL) {
+      status = error != NULL && error->code != VECTIS_OK ? error->code
+                                                         : VECTIS_ERR_STATE;
+      vectis_metrics_state_destroy(metrics);
+      free(html_data);
+      free(json_data);
+      return status;
+    }
   }
   if (metrics->html_path == NULL || metrics->json_path == NULL ||
       metrics->storage_namespace == NULL || metrics->storage_owner == NULL ||
       metrics->auth_purpose == NULL ||
-      (effective->title != NULL && metrics->title == NULL) ||
-      (metrics->persistence_enabled && metrics->storage_endpoint == NULL)) {
+      (effective->title != NULL && metrics->title == NULL)) {
     vectis_metrics_state_destroy(metrics);
     free(html_data);
     free(json_data);
@@ -26590,12 +26597,10 @@ vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
   return VECTIS_ERR_STATE;
 }
 
-vectis_status vectis_internal_route_body_policy(vectis_app *app,
-                                                vectis_http_method method,
-                                                const char *path,
-                                                vectis_body_policy *policy,
-                                                int *is_live_upload,
-                                                vectis_error *error) {
+vectis_status
+vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
+                                  const char *path, vectis_body_policy *policy,
+                                  int *is_live_upload, vectis_error *error) {
   vectis_app_impl *impl;
   vectis_request scratch;
   vectis_status status;
@@ -39588,9 +39593,8 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     }
   }
   if (request->configure_curl != NULL) {
-    callback_status = request->configure_curl(curl,
-                                               request->configure_curl_userdata,
-                                               error);
+    callback_status =
+        request->configure_curl(curl, request->configure_curl_userdata, error);
     if (callback_status != VECTIS_OK) {
       if (download_file != NULL) {
         (void)fclose(download_file);

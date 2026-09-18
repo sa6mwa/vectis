@@ -944,10 +944,9 @@ static void assert_http_surface(void) {
 
   memset(&array_item, 0, sizeof(array_item));
   vectis_error_clear(&error);
-  status = handle->get_json_array(handle, "/vectis_http_array.json", "items",
-                                  &sample_dsv_doc_map, &array_item,
-                                  sample_json_array_fail_conflict, NULL,
-                                  &response, &error);
+  status = handle->get_json_array(
+      handle, "/vectis_http_array.json", "items", &sample_dsv_doc_map,
+      &array_item, sample_json_array_fail_conflict, NULL, &response, &error);
   assert(status == VECTIS_ERR_CONFLICT);
   assert(error.code == VECTIS_OK);
   assert(response.body == NULL);

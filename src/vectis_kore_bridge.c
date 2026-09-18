@@ -2550,9 +2550,8 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
   }
   method = vectis_kore_method(req->method);
   if (!state->initialized) {
-    status = vectis_internal_route_body_policy(app, method, req->path,
-                                               &state->policy,
-                                               &state->live_upload, &error);
+    status = vectis_internal_route_body_policy(
+        app, method, req->path, &state->policy, &state->live_upload, &error);
     if (status != VECTIS_OK) {
       vectis_kore_reject_body_chunk(req, state, 404, NULL);
       return KORE_RESULT_OK;
@@ -3253,9 +3252,8 @@ int vectis_kore_route(struct http_request *req) {
     vectis_error_clear(&error);
   }
   if (status == VECTIS_OK) {
-    status = vectis_internal_route_body_policy(app, method, req->path,
-                                               &body_policy,
-                                               &body_is_live_upload, &error);
+    status = vectis_internal_route_body_policy(
+        app, method, req->path, &body_policy, &body_is_live_upload, &error);
     if (status == VECTIS_OK) {
       route_matched = 1;
     }

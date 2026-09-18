@@ -1641,6 +1641,9 @@ static void assert_metrics_surface(void) {
   vectis_auth_provider provider;
   char snapshot_key_a[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
   char snapshot_key_b[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
+  const char *state_home;
+  char *saved_state_home;
+  int had_state_home;
 
   vectis_error_clear(&error);
   app = vectis_app_new(NULL, &error);
@@ -1795,6 +1798,29 @@ static void assert_metrics_surface(void) {
                 "persistent metrics require an explicit non-default "
                 "app_name") == 0);
   app->close(app);
+
+  state_home = getenv("XDG_STATE_HOME");
+  had_state_home = state_home != NULL;
+  saved_state_home = state_home != NULL ? strdup(state_home) : NULL;
+  assert(state_home == NULL || saved_state_home != NULL);
+  assert(setenv("XDG_STATE_HOME", "/dev/null", 1) == 0);
+  vectis_app_config_init(&app_config);
+  app_config.app_name = "metrics-default-storage-error";
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+  vectis_metrics_config_init(&metrics);
+  metrics.persistence_enabled = 1;
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strcmp(error.message,
+                "failed to create default Vectis Pouch state directory") == 0);
+  app->close(app);
+  if (had_state_home) {
+    assert(setenv("XDG_STATE_HOME", saved_state_home, 1) == 0);
+  } else {
+    assert(unsetenv("XDG_STATE_HOME") == 0);
+  }
+  free(saved_state_home);
 }
 
 static void assert_supervised_metrics_persistence_worker(void) {
@@ -2576,9 +2602,10 @@ static vectis_status upload_redirect_handler(vectis_app *app,
   return status;
 }
 
-static vectis_status upload_see_other_redirect_handler(
-    vectis_app *app, vectis_request *request, vectis_response *response,
-    void *userdata, vectis_error *error) {
+static vectis_status
+upload_see_other_redirect_handler(vectis_app *app, vectis_request *request,
+                                  vectis_response *response, void *userdata,
+                                  vectis_error *error) {
   vectis_mutable_bytes body;
   vectis_status status;
   size_t i;
@@ -2597,9 +2624,11 @@ static vectis_status upload_see_other_redirect_handler(
   return status;
 }
 
-static vectis_status upload_see_other_result_handler(
-    vectis_app *app, vectis_request *request, vectis_response *response,
-    void *userdata, vectis_error *error) {
+static vectis_status upload_see_other_result_handler(vectis_app *app,
+                                                     vectis_request *request,
+                                                     vectis_response *response,
+                                                     void *userdata,
+                                                     vectis_error *error) {
   vectis_mutable_bytes body;
   vectis_status status;
   (void)app;
@@ -2765,9 +2794,9 @@ static void assert_upload_redirect_replay(void) {
     route.body = vectis_body_buffered_max(sizeof(payload));
     assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   }
-  route = vectis_route_methods(VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_PATCH,
-                               "/303", upload_see_other_redirect_handler,
-                               NULL);
+  route =
+      vectis_route_methods(VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_PATCH,
+                           "/303", upload_see_other_redirect_handler, NULL);
   route.body = vectis_body_buffered_max(sizeof(payload));
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/see-other",
@@ -4738,9 +4767,9 @@ static void assert_kore_smoke(void) {
   status = app->upload_stream(app, &overlap_stream_route, &error);
   assert(status == VECTIS_OK);
   overlap_live_upload = 1;
-  status = vectis_internal_route_body_policy(
-      app, VECTIS_HTTP_POST, "/upload-overlap", &policy,
-      &overlap_live_upload, &error);
+  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST,
+                                             "/upload-overlap", &policy,
+                                             &overlap_live_upload, &error);
   assert(status == VECTIS_OK);
   assert(policy.max_bytes == 4u);
   assert(overlap_live_upload == 0);

@@ -7157,8 +7157,8 @@ vectis_lua_app_callback_route_free(vectis_lua_app_callback_route *route) {
 /* The app userdata owns registration threads through its uservalue table. This
  * makes the edge visible to Lua's cycle collector while route callbacks retain
  * raw lua_State pointers. */
-static void vectis_lua_app_retain_callback_owner(
-    lua_State *lua, int app_index, void *route) {
+static void vectis_lua_app_retain_callback_owner(lua_State *lua, int app_index,
+                                                 void *route) {
   app_index = lua_absindex(lua, app_index);
   lua_getiuservalue(lua, app_index, 1);
   lua_pushlightuserdata(lua, route);
@@ -7168,7 +7168,7 @@ static void vectis_lua_app_retain_callback_owner(
 }
 
 static void vectis_lua_app_release_callback_owners(lua_State *lua,
-                                                    int app_index) {
+                                                   int app_index) {
   app_index = lua_absindex(lua, app_index);
   lua_newtable(lua);
   lua_setiuservalue(lua, app_index, 1);
@@ -12642,8 +12642,7 @@ static int vectis_lua_app_new(lua_State *lua) {
   }
   lua_pop(lua, 1);
   vectis_lua_parse_lockd_config(lua, 1, &config.lockd, &lockd_endpoints);
-  server =
-      (vectis_lua_app *)lua_newuserdatauv(lua, sizeof(*server), 1);
+  server = (vectis_lua_app *)lua_newuserdatauv(lua, sizeof(*server), 1);
   server->app = NULL;
   server->started = 0;
   server->json_routes = NULL;

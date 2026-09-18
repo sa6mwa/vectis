@@ -60,8 +60,7 @@ static int invoke_encoder_callback(lua_State *lua) {
   vectis_audio_encoder_lua *handle;
 
   handle = vectis_audio_lua_check_encoder(lua, 1);
-  lua_pushinteger(lua,
-                  (lua_Integer)vectis_audio_lua_write_cb(handle, "x", 1u));
+  lua_pushinteger(lua, (lua_Integer)vectis_audio_lua_write_cb(handle, "x", 1u));
   return 1;
 }
 
@@ -124,18 +123,19 @@ int main(void) {
     lua_pop(lua, 1);
     assert(allocations == 0u);
   }
-  run_lua(lua,
-          "weak = setmetatable({}, {__mode='v'})\n"
-          "local co = coroutine.create(function()\n"
-          "  weak.thread = coroutine.running()\n"
-          "  encoder = new_callback_encoder(function(bytes) return #bytes end)\n"
-          "end)\n"
-          "assert(coroutine.resume(co)); co = nil; collectgarbage('collect')\n"
-          "assert(weak.thread ~= nil)\n"
-          "assert(invoke_encoder_callback(encoder) == 1)\n"
-          "assert(encoder:close()); encoder = nil\n"
-          "collectgarbage('collect'); collectgarbage('collect')\n"
-          "assert(weak.thread == nil)\n");
+  run_lua(
+      lua,
+      "weak = setmetatable({}, {__mode='v'})\n"
+      "local co = coroutine.create(function()\n"
+      "  weak.thread = coroutine.running()\n"
+      "  encoder = new_callback_encoder(function(bytes) return #bytes end)\n"
+      "end)\n"
+      "assert(coroutine.resume(co)); co = nil; collectgarbage('collect')\n"
+      "assert(weak.thread ~= nil)\n"
+      "assert(invoke_encoder_callback(encoder) == 1)\n"
+      "assert(encoder:close()); encoder = nil\n"
+      "collectgarbage('collect'); collectgarbage('collect')\n"
+      "assert(weak.thread == nil)\n");
   lua_close(lua);
   return 0;
 }
