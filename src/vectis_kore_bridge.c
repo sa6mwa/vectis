@@ -95,6 +95,9 @@ extern u_int64_t kore_curl_recv_max;
 extern void http_server_version(const char *version);
 extern int http_pretty_error;
 
+static int vectis_kore_request_ip(struct http_request *request, char *out,
+                                  size_t out_size);
+
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int vectis_kore_runtime_active = 0;
 static int vectis_kore_dh_loaded = 0;
@@ -105,6 +108,13 @@ static vectis_kore_runtime_config vectis_kore_current;
 static char *vectis_kore_keymgr_root = NULL;
 static char *vectis_kore_acme_root = NULL;
 static char *vectis_kore_body_disk_path = NULL;
+
+static const char *vectis_kore_access_log_real_ip(struct http_request *request,
+                                                  const char *client_ip,
+                                                  char *out, size_t out_size) {
+  (void)client_ip;
+  return vectis_kore_request_ip(request, out, out_size) ? out : NULL;
+}
 
 int vectis_kore_acme_state_persist(const char *domain) {
   vectis_acme_state_config config;
@@ -3458,6 +3468,8 @@ void kore_parent_configure(int argc, char **argv) {
   size_t domain_count;
   size_t i;
   const char *domain_name;
+  struct kore_accesslog_status_level_rule
+      access_log_rules[VECTIS_ACCESS_LOG_MAX_STATUS_LEVEL_RULES];
 
   (void)argc;
   (void)argv;
@@ -3465,6 +3477,27 @@ void kore_parent_configure(int argc, char **argv) {
   (void)pthread_mutex_lock(&vectis_kore_mutex);
   if (vectis_kore_current.logger != NULL) {
     kore_log_set_logger(vectis_kore_current.logger);
+  }
+  if (vectis_kore_current.server.access_log.logger_disabled) {
+    kore_accesslog_set_logger(NULL);
+  } else {
+    for (i = 0u;
+         i < vectis_kore_current.server.access_log.status_level_rule_count;
+         ++i) {
+      access_log_rules[i].status =
+          (u_int16_t)vectis_kore_current.server.access_log.status_level_rules[i]
+              .status;
+      access_log_rules[i].level =
+          vectis_kore_current.server.access_log.status_level_rules[i].level;
+    }
+    kore_accesslog_set_logger(vectis_kore_current.server.access_log.logger);
+    kore_accesslog_set_levels(
+        vectis_kore_current.server.access_log.success_level,
+        vectis_kore_current.server.access_log.client_error_level,
+        vectis_kore_current.server.access_log.server_error_level,
+        access_log_rules,
+        vectis_kore_current.server.access_log.status_level_rule_count);
+    kore_accesslog_set_real_ip_resolver(vectis_kore_access_log_real_ip);
   }
   vectis_kore_apply_server_config(
       &vectis_kore_current.server, vectis_kore_current.body_disk_offload_bytes,

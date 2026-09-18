@@ -774,7 +774,7 @@ if(VECTIS_BUILD_SHARED)
   set_target_properties(vectis_shared PROPERTIES
     OUTPUT_NAME vectis
     VERSION ${PROJECT_VERSION}
-    SOVERSION 1
+    SOVERSION 2
   )
   if(APPLE)
     set_target_properties(vectis_shared PROPERTIES

@@ -119,6 +119,12 @@ int main(void) {
   assert(strcmp(config.server.server_header,
                 VECTIS_SERVER_DEFAULT_SERVER_HEADER) == 0);
   assert(config.server.access_log_path == NULL);
+  assert(config.server.access_log.logger == NULL);
+  assert(config.server.access_log.logger_disabled == 0);
+  assert(config.server.access_log.success_level == PSLOG_LEVEL_TRACE);
+  assert(config.server.access_log.client_error_level == PSLOG_LEVEL_WARN);
+  assert(config.server.access_log.server_error_level == PSLOG_LEVEL_ERROR);
+  assert(config.server.access_log.status_level_rule_count == 0u);
   assert(config.server.pretty_error_pages ==
          VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES);
   assert(config.server.worker_death_policy ==
@@ -319,6 +325,30 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "access_log_path") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.access_log.success_level = (pslog_level)99;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "access log success_level") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.access_log.status_level_rule_count = 1u;
+  config.server.access_log.status_level_rules[0].status = 99u;
+  config.server.access_log.status_level_rules[0].level = PSLOG_LEVEL_INFO;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "access log status level") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.access_log.status_level_rule_count = 2u;
+  config.server.access_log.status_level_rules[0].status = 202u;
+  config.server.access_log.status_level_rules[0].level = PSLOG_LEVEL_INFO;
+  config.server.access_log.status_level_rules[1].status = 202u;
+  config.server.access_log.status_level_rules[1].level = PSLOG_LEVEL_WARN;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "must not repeat") != NULL);
 
   vectis_app_config_init(&config);
   config.server.request_body_spool_dir = "/tmp/vectis-config-spool";

@@ -95,7 +95,7 @@ The same table can also override server guardrails and worker resource knobs:
 `kore_curl_timeout_seconds`, `kore_curl_recv_max_bytes`, `kore_quiet`,
 `worker_death_policy`, `socket_backlog`, `request_process_budget_ms`,
 `hsts_max_age_seconds`, `websocket_max_frame_bytes`,
-`websocket_timeout_ms`, `server_header`, `access_log_path`, and
+`websocket_timeout_ms`, `server_header`, `access_log_path`, `access_log`, and
 `pretty_error_pages`. Zero uses the C default for most guardrails,
 `hsts_max_age_seconds = 0` disables HSTS, `pretty_error_pages = false` keeps
 bodyless framework 4xx/5xx responses minimal, `request_limit = 0` keeps Kore's
@@ -103,9 +103,26 @@ active request-object limit matched to `max_connections`, and
 `max_request_body_bytes = 0` keeps the route-derived global body ceiling
 behavior. `server_header` must be
 omitted or non-empty because Kore does not expose a true Server-header
-suppression switch. `access_log_path` is optional and disabled by default; when
-set, Vectis preflights append access and applies the same Kore access log path
-to every configured domain. `kore_curl_timeout_seconds = 0` and
+suppression switch. Structured pslog access records are enabled by default with
+`sub = "http"`. Their default severity policy is trace for `100..399`, warn for
+`400..499`, and error for `500..599`; ordinary pslog filtering still applies.
+Use `access_log = false` to disable that sink, or configure it explicitly:
+
+```lua
+access_log = {
+  success_level = "trace",
+  client_error_level = "warn",
+  server_error_level = "error",
+  status_levels = { [202] = "info" }, -- exact codes take precedence
+}
+```
+
+Levels accept `trace`, `debug`, `info`, `warn` (or `warning`), `error`,
+`fatal`, `panic`, and `disabled`; `enabled = false` is the table-form opt-out.
+`access_log_path` is a separate optional legacy line-file sink, disabled by
+default. When set, Vectis preflights append access and applies the same path to
+every configured domain; it intentionally receives a second access record and
+has no automatic rotation, so the operator owns rotation. `kore_curl_timeout_seconds = 0` and
 `kore_curl_recv_max_bytes = 0` preserve Kore's compiled defaults for
 Kore-owned curl operations such as ACME and do not affect Vectis application
 curl/http clients. `kore_quiet = true` suppresses native Kore lifecycle

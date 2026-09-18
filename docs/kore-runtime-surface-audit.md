@@ -21,7 +21,8 @@ runtime controls Vectis needs to ship:
   and `worker_death_policy`
 - HTTP runtime controls: `keepalive_disabled`, `keepalive_timeout_ms`,
   `keepalive_max_requests`, `socket_backlog`, `request_process_budget_ms`,
-  `hsts_max_age_seconds`, `server_header`, `access_log_path`, and
+  `hsts_max_age_seconds`, `server_header`, structured pslog `access_log`
+  levels and exact-status overrides, explicit `access_log_path`, and
   `pretty_error_pages`
 - Kore-owned curl internals for framework workflows such as ACME:
   `kore_curl_timeout_seconds`, `kore_curl_recv_max_bytes`, and `kore_quiet`

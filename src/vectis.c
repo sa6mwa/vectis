@@ -509,6 +509,8 @@ typedef struct vectis_app_impl {
   char *request_body_spool_dir;
   char *server_header;
   char *access_log_path;
+  pslog_logger *access_log_logger;
+  int owns_access_log_logger;
   pslog_logger *logger;
   vectis_route_entry *routes;
   size_t route_count;
@@ -2997,6 +2999,16 @@ void vectis_cai_config_init(vectis_cai_config *config) {
   cai_client_config_init(&config->client_config);
 }
 
+void vectis_access_log_config_init(vectis_access_log_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->success_level = PSLOG_LEVEL_TRACE;
+  config->client_error_level = PSLOG_LEVEL_WARN;
+  config->server_error_level = PSLOG_LEVEL_ERROR;
+}
+
 void vectis_server_config_init(vectis_server_config *config) {
   if (config == NULL) {
     return;
@@ -3032,6 +3044,7 @@ void vectis_server_config_init(vectis_server_config *config) {
       VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES;
   config->websocket_timeout_ms = VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS;
   config->server_header = VECTIS_SERVER_DEFAULT_SERVER_HEADER;
+  vectis_access_log_config_init(&config->access_log);
   config->pretty_error_pages = VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES;
   config->worker_death_policy = VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY;
   vectis_client_ip_config_init(&config->client_ip);
@@ -3257,6 +3270,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
                                 ? config->server_header
                                 : VECTIS_SERVER_DEFAULT_SERVER_HEADER;
   effective.access_log_path = config->access_log_path;
+  effective.access_log = config->access_log;
   effective.pretty_error_pages = config->pretty_error_pages;
   effective.worker_death_policy = config->worker_death_policy;
   effective.client_ip = config->client_ip;
@@ -10280,6 +10294,9 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   free(impl->cai_ca_bundle_path);
   free(impl->cai_ca_path);
 
+  if (impl->owns_access_log_logger && impl->access_log_logger != NULL) {
+    impl->access_log_logger->destroy(impl->access_log_logger);
+  }
   if (impl->owns_logger && impl->logger != NULL) {
     impl->logger->destroy(impl->logger);
   }
@@ -10404,12 +10421,65 @@ vectis_validate_server_config(const vectis_server_config *config,
                               vectis_error *error) {
   vectis_server_config effective;
   size_t i;
+  size_t j;
 
   if (config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "server config is required");
     return VECTIS_ERR_INVALID;
   }
+  if (config->access_log.status_level_rule_count >
+      VECTIS_ACCESS_LOG_MAX_STATUS_LEVEL_RULES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "access log status level rule count exceeds maximum");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 0u; i < config->access_log.status_level_rule_count; ++i) {
+    if (config->access_log.status_level_rules[i].status < 100u ||
+        config->access_log.status_level_rules[i].status > 599u) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "access log status level must be 100 through 599");
+      return VECTIS_ERR_INVALID;
+    }
+    if ((config->access_log.status_level_rules[i].level < PSLOG_LEVEL_TRACE ||
+         config->access_log.status_level_rules[i].level > PSLOG_LEVEL_PANIC) &&
+        config->access_log.status_level_rules[i].level !=
+            PSLOG_LEVEL_DISABLED) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "access log status level is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    for (j = 0u; j < i; ++j) {
+      if (config->access_log.status_level_rules[j].status ==
+          config->access_log.status_level_rules[i].status) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "access log status levels must not repeat a status");
+        return VECTIS_ERR_INVALID;
+      }
+    }
+  }
+
   effective = vectis_effective_server_config(config);
+  if ((effective.access_log.success_level < PSLOG_LEVEL_TRACE ||
+       effective.access_log.success_level > PSLOG_LEVEL_PANIC) &&
+      effective.access_log.success_level != PSLOG_LEVEL_DISABLED) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "access log success_level is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((effective.access_log.client_error_level < PSLOG_LEVEL_TRACE ||
+       effective.access_log.client_error_level > PSLOG_LEVEL_PANIC) &&
+      effective.access_log.client_error_level != PSLOG_LEVEL_DISABLED) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "access log client_error_level is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((effective.access_log.server_error_level < PSLOG_LEVEL_TRACE ||
+       effective.access_log.server_error_level > PSLOG_LEVEL_PANIC) &&
+      effective.access_log.server_error_level != PSLOG_LEVEL_DISABLED) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "access log server_error_level is invalid");
+    return VECTIS_ERR_INVALID;
+  }
   if (effective.max_connections > (size_t)UINT_MAX) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server max_connections exceeds Kore uint32");
@@ -11529,6 +11599,25 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     }
     impl->owns_logger = 1;
   }
+  if (impl->server.access_log.logger_disabled) {
+    impl->access_log_logger = NULL;
+    impl->owns_access_log_logger = 0;
+  } else if (effective_server.access_log.logger != NULL) {
+    impl->access_log_logger = effective_server.access_log.logger;
+    impl->owns_access_log_logger = 0;
+  } else {
+    impl->access_log_logger =
+        impl->logger->withf(impl->logger, "sub=%s", "http");
+    if (impl->access_log_logger == NULL) {
+      vectis_destroy_impl(impl);
+      free(app);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to derive access log logger");
+      return NULL;
+    }
+    impl->owns_access_log_logger = 1;
+  }
+  impl->server.access_log.logger = impl->access_log_logger;
 
   status = vectis_copy_cai_config(impl, &effective->cai, error);
   if (status != VECTIS_OK) {

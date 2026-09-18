@@ -18,6 +18,7 @@ local seeded = {
     curl = true,
     audio = true,
     sus = true,
+    http = true,
   },
 }
 
@@ -29,6 +30,7 @@ local known_subs = {
   curl = true,
   audio = true,
   sus = true,
+  http = true,
 }
 
 local reserved_seed_fields = {
@@ -304,6 +306,7 @@ function M.configure(opts)
     curl = true,
     audio = true,
     sus = true,
+    http = true,
   }
   if subs then
     for key, value in pairs(subs) do

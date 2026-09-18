@@ -318,6 +318,7 @@ do
   assert(seeded_subs.lockdc == true)
   assert(seeded_subs.curl == false)
   assert(seeded_subs.sus == false)
+  assert(seeded_subs.http == true)
   seeded_logger:info("seeded logger smoke")
   assert(seeded_log_output:flush())
   local seeded_log_input = assert(io.open(seeded_log_path, "rb"))
@@ -1405,9 +1406,28 @@ do
     websocket_timeout_ms = 45000,
     server_header = "vectis-lua-smoke",
     access_log_path = "/tmp/vectis-lua-smoke-access.log",
+    access_log = {
+      success_level = "debug",
+      client_error_level = "error",
+      server_error_level = "fatal",
+      status_levels = {
+        [202] = "info",
+        [404] = "disabled",
+      },
+    },
     pretty_error_pages = true,
   }))
   worker_count_server:close()
+end
+
+do
+  local ok, message = pcall(vectis.app.new, {
+    app_name = "lua-bad-access-log-level",
+    port = 18175,
+    access_log = { status_levels = { [99] = "info" } },
+  })
+  assert(not ok)
+  assert(tostring(message):match("access_log.status_levels"))
 end
 
 do

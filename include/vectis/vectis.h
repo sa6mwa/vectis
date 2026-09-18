@@ -55,6 +55,7 @@
 #define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_429_THRESHOLD 5u
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
+#define VECTIS_ACCESS_LOG_MAX_STATUS_LEVEL_RULES 32u
 #define VECTIS_CLIENT_IP_MAX_TRUSTED_PROXIES 16u
 #define VECTIS_AUTOBLOCK_MAX_ENTRIES 65536u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
@@ -1147,6 +1148,34 @@ typedef enum vectis_worker_death_policy {
   VECTIS_WORKER_DEATH_TERMINATE = 1
 } vectis_worker_death_policy;
 
+/* An exact HTTP status override for structured access logging. */
+typedef struct vectis_access_log_status_level_rule {
+  /* HTTP status code in the inclusive range 100..599. */
+  unsigned int status;
+  /* pslog level for this status. PSLOG_LEVEL_DISABLED suppresses it. */
+  pslog_level level;
+} vectis_access_log_status_level_rule;
+
+/*
+ * Structured Kore access logging. Vectis derives a logger with `sub=http`
+ * from the app logger unless `logger` is set. File access logging remains an
+ * independent explicit `access_log_path` sink. Exact status rules take
+ * precedence over the category levels: 100..399, 400..499, and 500..599.
+ */
+typedef struct vectis_access_log_config {
+  /* Optional borrowed logger override. NULL derives from the app logger. */
+  pslog_logger *logger;
+  /* Nonzero disables the structured pslog access-log sink. */
+  int logger_disabled;
+  /* Defaults are trace, warn, and error respectively. */
+  pslog_level success_level;
+  pslog_level client_error_level;
+  pslog_level server_error_level;
+  vectis_access_log_status_level_rule
+      status_level_rules[VECTIS_ACCESS_LOG_MAX_STATUS_LEVEL_RULES];
+  size_t status_level_rule_count;
+} vectis_access_log_config;
+
 typedef struct vectis_server_config {
   size_t max_connections;
   /*
@@ -1245,6 +1274,8 @@ typedef struct vectis_server_config {
    * the path to every configured Kore domain. The caller owns the string.
    */
   const char *access_log_path;
+  /* Structured pslog access logging is enabled by default. */
+  vectis_access_log_config access_log;
   /*
    * Nonzero lets Kore synthesize simple HTML bodies for bodyless 4xx/5xx
    * responses. Defaults off so production responses stay minimal unless the
@@ -2485,6 +2516,10 @@ void vectis_opcua_monitor_mailbox_destroy(
     vectis_opcua_monitor_mailbox *adapter);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
+/* Initialize standalone structured access-log settings before embedding them in
+ * a manually assembled server config. vectis_server_config_init() calls this
+ * automatically. */
+void vectis_access_log_config_init(vectis_access_log_config *config);
 /* Initialize an opt-in production webserver server profile. It keeps metrics,
  * auth, routes, WebDAV mounts, and TLS material explicit, while making the
  * server guardrails concrete and enabling conservative autoblock rules.

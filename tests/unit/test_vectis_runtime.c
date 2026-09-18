@@ -276,6 +276,25 @@ static int runtime_file_contains(const char *path, const char *needle) {
   return strstr(buffer, needle) != NULL;
 }
 
+static int runtime_file_line_contains(const char *path, const char *first,
+                                      const char *second) {
+  FILE *fp;
+  char line[4096];
+
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    return 0;
+  }
+  while (fgets(line, sizeof(line), fp) != NULL) {
+    if (strstr(line, first) != NULL && strstr(line, second) != NULL) {
+      (void)fclose(fp);
+      return 1;
+    }
+  }
+  (void)fclose(fp);
+  return 0;
+}
+
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
 
@@ -335,6 +354,16 @@ static vectis_status status_404_handler(vectis_app *app,
   (void)request;
   (void)userdata;
   return vectis_response_status(response, 404, error);
+}
+
+static vectis_status status_202_handler(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)userdata;
+  return vectis_response_status(response, 202, error);
 }
 
 static vectis_status kore_curl_config_handler(vectis_app *app,
@@ -666,6 +695,18 @@ static pslog_logger *runtime_test_logger(runtime_log_buffer *buffer) {
   config.output.isatty = NULL;
   config.output.userdata = buffer;
   config.output.owned = 0;
+  return pslog_new(&config);
+}
+
+static pslog_logger *runtime_file_logger(const char *path) {
+  pslog_config config;
+  pslog_output output;
+
+  pslog_default_config(&config);
+  assert(pslog_output_init_file(&output, path, "w") == 0);
+  config.mode = PSLOG_MODE_JSON;
+  config.min_level = PSLOG_LEVEL_TRACE;
+  config.output = output;
   return pslog_new(&config);
 }
 
@@ -1601,6 +1642,143 @@ static void assert_request_ip_identity(void) {
   status = app->stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);
+}
+
+static void assert_access_log_levels(void) {
+  const char access_log_path[] = "/tmp/vectis-runtime-access-pslog.log";
+  vectis_app_config config;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  vectis_app *app;
+  pslog_logger *logger;
+  char url[128];
+  unsigned short port;
+  int reserved_fd;
+  int attempt;
+
+  memset(&response, 0, sizeof(response));
+  (void)remove(access_log_path);
+  logger = runtime_file_logger(access_log_path);
+  assert(logger != NULL);
+  reserved_fd = reserve_loopback_port(&port);
+  assert(reserved_fd >= 0);
+  vectis_app_config_init(&config);
+  config.logger = logger;
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.server.access_log.status_level_rule_count = 1u;
+  config.server.access_log.status_level_rules[0].status = 202u;
+  config.server.access_log.status_level_rules[0].level = PSLOG_LEVEL_INFO;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/ok", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/accepted", status_202_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  (void)close(reserved_fd);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 20 && status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = vectis_http_get(
+        &http, format_loopback_http_url(url, sizeof(url), port, "/ok"),
+        &response, &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  assert(status == VECTIS_OK && response.status_code == 200L);
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/accepted"),
+      &response, &error);
+  assert(status == VECTIS_OK && response.status_code == 202L);
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/missing"),
+      &response, &error);
+  assert(status == VECTIS_OK && response.status_code == 404L);
+  vectis_http_response_cleanup(&response);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+  logger->destroy(logger);
+  assert(runtime_file_contains(access_log_path, "\"sub\":\"http\""));
+  assert(runtime_file_line_contains(access_log_path, "\"path\":\"/ok\"",
+                                    "\"lvl\":\"trace\""));
+  assert(runtime_file_line_contains(access_log_path, "\"path\":\"/accepted\"",
+                                    "\"lvl\":\"info\""));
+  assert(runtime_file_line_contains(access_log_path, "\"path\":\"/missing\"",
+                                    "\"lvl\":\"warn\""));
+  (void)remove(access_log_path);
+}
+
+static void assert_access_log_disabled(void) {
+  const char access_log_path[] = "/tmp/vectis-runtime-access-disabled.log";
+  vectis_app_config config;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  vectis_app *app;
+  pslog_logger *logger;
+  char url[128];
+  unsigned short port;
+  int reserved_fd;
+  int attempt;
+
+  memset(&response, 0, sizeof(response));
+  (void)remove(access_log_path);
+  logger = runtime_file_logger(access_log_path);
+  assert(logger != NULL);
+  reserved_fd = reserve_loopback_port(&port);
+  assert(reserved_fd >= 0);
+  vectis_app_config_init(&config);
+  config.logger = logger;
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.server.access_log.logger_disabled = 1;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/suppressed", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  (void)close(reserved_fd);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 20 && status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = vectis_http_get(
+        &http, format_loopback_http_url(url, sizeof(url), port, "/suppressed"),
+        &response, &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  assert(status == VECTIS_OK && response.status_code == 200L);
+  vectis_http_response_cleanup(&response);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+  logger->destroy(logger);
+  assert(!runtime_file_contains(access_log_path, "\"path\":\"/suppressed\""));
+  (void)remove(access_log_path);
 }
 
 static vectis_status
@@ -8672,6 +8850,11 @@ static int run_named_runtime_test(const char *name) {
     assert_request_ip_identity();
     return 1;
   }
+  if (strcmp(name, "access_log_levels") == 0) {
+    assert_access_log_levels();
+    assert_access_log_disabled();
+    return 1;
+  }
   if (strcmp(name, "get_only_server_does_not_create_spool_dir") == 0) {
     assert_get_only_server_does_not_create_spool_dir();
     return 1;
@@ -8890,6 +9073,8 @@ int main(int argc, char **argv) {
   assert_runtime_control_frame_contract();
   assert_route_body_policy_validation();
   assert_request_ip_identity();
+  assert_access_log_levels();
+  assert_access_log_disabled();
   assert_get_only_server_does_not_create_spool_dir();
   assert_upload_server_rejects_file_spool_path();
   assert_upload_server_rejects_unsafe_spool_dir();

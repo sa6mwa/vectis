@@ -406,6 +406,7 @@ struct vectis_lua_app {
   pslog_logger *logger;
   pslog_logger *lockdc_logger;
   pslog_logger *cai_logger;
+  pslog_logger *http_logger;
   int log_sub_vectis;
   int log_sub_lockdc;
   int log_sub_cai;
@@ -413,6 +414,7 @@ struct vectis_lua_app {
   int log_sub_curl;
   int log_sub_audio;
   int log_sub_sus;
+  int log_sub_http;
   vectis_lua_app_json_route *json_routes;
   vectis_lua_app_callback_route *callback_routes;
   vectis_lua_app_dsv_route *dsv_routes;
@@ -7207,6 +7209,7 @@ static void vectis_lua_app_log_seed_init(vectis_lua_app *server) {
   server->log_sub_curl = 1;
   server->log_sub_audio = 1;
   server->log_sub_sus = 1;
+  server->log_sub_http = 1;
 }
 
 static void vectis_lua_app_logger_destroy(pslog_logger **logger) {
@@ -7222,6 +7225,7 @@ static void vectis_lua_app_log_seed_cleanup(vectis_lua_app *server) {
   }
   vectis_lua_app_logger_destroy(&server->cai_logger);
   vectis_lua_app_logger_destroy(&server->lockdc_logger);
+  vectis_lua_app_logger_destroy(&server->http_logger);
   vectis_lua_app_logger_destroy(&server->logger);
   free(server->log_app_name);
   server->log_app_name = NULL;
@@ -7363,6 +7367,8 @@ static int vectis_lua_app_seed_logging(lua_State *lua, int app_index,
   server->log_sub_audio =
       vectis_lua_app_log_sub_enabled(lua, subs_index, "audio");
   server->log_sub_sus = vectis_lua_app_log_sub_enabled(lua, subs_index, "sus");
+  server->log_sub_http =
+      vectis_lua_app_log_sub_enabled(lua, subs_index, "http");
   server->logger = vectis_lua_app_log_derive(server, app_name, "vectis");
   if (!server->log_sub_vectis && server->logger != NULL) {
     pslog_logger *disabled;
@@ -7378,9 +7384,14 @@ static int vectis_lua_app_seed_logging(lua_State *lua, int app_index,
   if (server->log_sub_cai) {
     server->cai_logger = vectis_lua_app_log_derive(server, app_name, "cai");
   }
+  if (server->log_sub_http && !config->server.access_log.logger_disabled) {
+    server->http_logger = vectis_lua_app_log_derive(server, app_name, "http");
+  }
   if (server->logger == NULL ||
       (server->log_sub_lockdc && server->lockdc_logger == NULL) ||
-      (server->log_sub_cai && server->cai_logger == NULL)) {
+      (server->log_sub_cai && server->cai_logger == NULL) ||
+      (server->log_sub_http && !config->server.access_log.logger_disabled &&
+       server->http_logger == NULL)) {
     vectis_lua_app_log_seed_cleanup(server);
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
                          "failed to derive Vectis component loggers");
@@ -7394,6 +7405,9 @@ static int vectis_lua_app_seed_logging(lua_State *lua, int app_index,
   config->cai.logger_disabled = !server->log_sub_cai;
   config->cai.client_config.logger = server->cai_logger;
   config->cai.client_config.logger_disabled = !server->log_sub_cai;
+  config->server.access_log.logger = server->http_logger;
+  config->server.access_log.logger_disabled =
+      config->server.access_log.logger_disabled || !server->log_sub_http;
   vectis_lua_app_retain_callback_owner(lua, app_index, server);
   lua_settop(lua, base);
   return 1;
@@ -12664,6 +12678,115 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_access_log_level(const char *value, pslog_level *out) {
+  if (value == NULL || out == NULL) {
+    return 0;
+  }
+  if (strcmp(value, "trace") == 0) {
+    *out = PSLOG_LEVEL_TRACE;
+  } else if (strcmp(value, "debug") == 0) {
+    *out = PSLOG_LEVEL_DEBUG;
+  } else if (strcmp(value, "info") == 0) {
+    *out = PSLOG_LEVEL_INFO;
+  } else if (strcmp(value, "warn") == 0 || strcmp(value, "warning") == 0) {
+    *out = PSLOG_LEVEL_WARN;
+  } else if (strcmp(value, "error") == 0) {
+    *out = PSLOG_LEVEL_ERROR;
+  } else if (strcmp(value, "fatal") == 0) {
+    *out = PSLOG_LEVEL_FATAL;
+  } else if (strcmp(value, "panic") == 0) {
+    *out = PSLOG_LEVEL_PANIC;
+  } else if (strcmp(value, "disabled") == 0) {
+    *out = PSLOG_LEVEL_DISABLED;
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+static int vectis_lua_app_access_log_config(lua_State *lua, int app_index,
+                                            vectis_access_log_config *config) {
+  int access_log_index;
+  int levels_index;
+  int has_code;
+  lua_Integer code;
+  const char *level;
+  size_t count;
+  size_t i;
+
+  if (config == NULL) {
+    return luaL_error(lua, "app access log configuration is unavailable");
+  }
+  app_index = lua_absindex(lua, app_index);
+  lua_getfield(lua, app_index, "access_log");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 0;
+  }
+  if (lua_isboolean(lua, -1)) {
+    config->logger_disabled = lua_toboolean(lua, -1) ? 0 : 1;
+    lua_pop(lua, 1);
+    return 0;
+  }
+  if (!lua_istable(lua, -1)) {
+    return luaL_error(lua, "app access_log must be a boolean or table");
+  }
+  access_log_index = lua_absindex(lua, -1);
+  config->logger_disabled =
+      !vectis_lua_table_bool(lua, access_log_index, "enabled", 1);
+  level = vectis_lua_table_string(lua, access_log_index, "success_level");
+  if (level != NULL &&
+      !vectis_lua_access_log_level(level, &config->success_level)) {
+    return luaL_error(lua, "app access_log.success_level is invalid");
+  }
+  level = vectis_lua_table_string(lua, access_log_index, "client_error_level");
+  if (level != NULL &&
+      !vectis_lua_access_log_level(level, &config->client_error_level)) {
+    return luaL_error(lua, "app access_log.client_error_level is invalid");
+  }
+  level = vectis_lua_table_string(lua, access_log_index, "server_error_level");
+  if (level != NULL &&
+      !vectis_lua_access_log_level(level, &config->server_error_level)) {
+    return luaL_error(lua, "app access_log.server_error_level is invalid");
+  }
+  lua_getfield(lua, access_log_index, "status_levels");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 2);
+    return 0;
+  }
+  if (!lua_istable(lua, -1)) {
+    return luaL_error(lua, "app access_log.status_levels must be a table");
+  }
+  levels_index = lua_absindex(lua, -1);
+  count = 0u;
+  lua_pushnil(lua);
+  while (lua_next(lua, levels_index) != 0) {
+    if (count == VECTIS_ACCESS_LOG_MAX_STATUS_LEVEL_RULES) {
+      return luaL_error(lua, "app access_log.status_levels exceeds maximum");
+    }
+    code = lua_tointegerx(lua, -2, &has_code);
+    level = lua_tostring(lua, -1);
+    if (!has_code || code < 100 || code > 599 || level == NULL ||
+        !vectis_lua_access_log_level(
+            level, &config->status_level_rules[count].level)) {
+      return luaL_error(lua, "app access_log.status_levels must map HTTP "
+                             "status codes to log levels");
+    }
+    for (i = 0u; i < count; ++i) {
+      if (config->status_level_rules[i].status == (unsigned int)code) {
+        return luaL_error(lua, "app access_log.status_levels must not repeat a "
+                               "status code");
+      }
+    }
+    config->status_level_rules[count].status = (unsigned int)code;
+    ++count;
+    lua_pop(lua, 1);
+  }
+  config->status_level_rule_count = count;
+  lua_pop(lua, 2);
+  return 0;
+}
+
 static int vectis_lua_app_new(lua_State *lua) {
   vectis_lua_app *server;
   vectis_app_config config;
@@ -12825,6 +12948,10 @@ static int vectis_lua_app_new(lua_State *lua) {
       vectis_lua_table_string(lua, 1, "server_header");
   config.server.access_log_path =
       vectis_lua_table_string(lua, 1, "access_log_path");
+  if (vectis_lua_app_access_log_config(lua, 1, &config.server.access_log) !=
+      0) {
+    return 0;
+  }
   config.server.pretty_error_pages = vectis_lua_table_bool(
       lua, 1, "pretty_error_pages", config.server.pretty_error_pages);
   lua_getfield(lua, 1, "client_ip");

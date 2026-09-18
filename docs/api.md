@@ -39,9 +39,13 @@ Major groups:
 - TLS/server hardening: `vectis_tls_config` supports manual/ACME material,
   client CA verification, protocol version selection, and OpenSSL cipher lists;
   `vectis_server_config` covers listener backlog, processing budget, and HSTS
-  controls, process-wide WebSocket frame and idle-timeout limits, and the HTTP
-  Server header value, Kore quiet mode, plus worker death policy and opt-in
-  pretty framework error pages.
+  controls, process-wide WebSocket frame and idle-timeout limits, the HTTP
+  Server header value, and structured access logging through
+  `vectis_access_log_config`. Access records derive `sub=http`, use trace for
+  1xx--3xx, warn for 4xx, and error for 5xx by default; exact status rules
+  override those categories. The legacy file path is separate and opt-in.
+  Kore quiet mode, worker death policy, and opt-in pretty framework error pages
+  remain available.
 - WebDAV/auth routes: `vectis_webdav_mount_config`,
   `vectis_webdav_embedded_site_config`, and `vectis_auth_routes_config`.
 - Metrics: `vectis_metrics_config`, `app->metrics()`, and

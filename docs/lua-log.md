@@ -81,6 +81,7 @@ assert(log.configure({
     lockdc = false, -- silence only Vectis-owned lockdc clients
     cai = true,
     curl = true,
+    http = true, -- structured Kore access records
   },
 }))
 ```
@@ -99,7 +100,8 @@ Every propagated record has these structured fields:
 `fields` adds stable application fields. It may not replace `sys`, `app`, or
 `sub`; those fields establish the Vectis record identity. `subs` is an optional
 boolean policy table. Its complete set of names is `vectis`, `lockdc`, `cai`,
-`opcua`, `curl`, `audio`, and `sus`; omitted names remain enabled. Setting a
+`opcua`, `curl`, `audio`, `sus`, and `http`; omitted names remain enabled.
+`http` controls Vectis's default structured Kore access sink. Setting a
 name to `false` disables logging only for that subsystem. A service-level
 `logger_disabled = true` remains a stronger, local opt-out.
 
