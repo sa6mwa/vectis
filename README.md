@@ -71,7 +71,7 @@ archive cache. The current expected dependency set is:
   binding sources.
 - `softline` 0.6.0 for line editing, terminal prompt UX, and Lua binding
   sources.
-- `libpslog` 0.9.0 for structured logging and Lua binding sources.
+- `libpslog` 0.10.0 for structured logging and Lua binding sources.
 - `libpid0` 0.4.2 for Linux PID 1 behavior in the `vectis` executable.
 
 Vectis validates the dependency manifest during CMake configure. A stale or
