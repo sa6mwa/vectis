@@ -63,6 +63,14 @@ typedef struct failing_source_context {
   int read_count;
 } failing_source_context;
 
+typedef struct chunk_source_context {
+  const char *data;
+  size_t size;
+  size_t offset;
+  size_t chunk_size;
+  int fail_at_eof;
+} chunk_source_context;
+
 typedef struct lockd_state_update_fake {
   lc_client client;
   lc_lease lease;
@@ -425,6 +433,45 @@ static int failing_source_reset(void *context, lc_error *error) {
   (void)error;
   state = (failing_source_context *)context;
   state->read_count = 0;
+  return LC_OK;
+}
+
+static size_t chunk_source_read(void *context, void *buffer, size_t count,
+                                lc_error *error) {
+  chunk_source_context *state;
+  size_t n;
+
+  state = (chunk_source_context *)context;
+  assert(state != NULL);
+  if (state->offset >= state->size) {
+    if (state->fail_at_eof && error != NULL) {
+      error->code = LC_ERR_TRANSPORT;
+      error->message = (char *)malloc(sizeof("chunked XML source failed"));
+      assert(error->message != NULL);
+      memcpy(error->message, "chunked XML source failed",
+             sizeof("chunked XML source failed"));
+    }
+    return 0u;
+  }
+  n = state->size - state->offset;
+  if (n > state->chunk_size) {
+    n = state->chunk_size;
+  }
+  if (n > count) {
+    n = count;
+  }
+  memcpy(buffer, state->data + state->offset, n);
+  state->offset += n;
+  return n;
+}
+
+static int chunk_source_reset(void *context, lc_error *error) {
+  chunk_source_context *state;
+
+  (void)error;
+  state = (chunk_source_context *)context;
+  assert(state != NULL);
+  state->offset = 0u;
   return LC_OK;
 }
 
@@ -3213,6 +3260,9 @@ static void assert_xml_surface(void) {
   vectis_source xml_source;
   vectis_error error;
   vectis_status status;
+  chunk_source_context chunk_source;
+  lc_error source_error;
+  lc_source *stream_source;
   sample_xml_doc doc;
   sample_xml_doc roundtrip_doc;
   sample_xml_blob_doc blob_doc;
@@ -3300,6 +3350,65 @@ static void assert_xml_surface(void) {
   assert(strcmp(parsed_attr_doc.attr_id, "a&b") == 0);
   assert(strcmp(parsed_attr_doc.text, "hello <xml>") == 0);
   vectis_mutable_bytes_cleanup(&serialized);
+
+  memset(&chunk_source, 0, sizeof(chunk_source));
+  chunk_source.data = "<item id=\"trail\">ok</item><!-- suffix --><second/>";
+  chunk_source.size = strlen(chunk_source.data);
+  chunk_source.chunk_size = 1u;
+  lc_error_init(&source_error);
+  stream_source = NULL;
+  assert(lc_source_from_callbacks(chunk_source_read, chunk_source_reset, NULL,
+                                  &chunk_source, &stream_source,
+                                  &source_error) == LC_OK);
+  lc_error_cleanup(&source_error);
+  xml_source = vectis_source_from_lc(stream_source);
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(chunk_source.offset > strlen("<item id=\"trail\">ok</item>"));
+  vectis_error_clear(&error);
+  lc_source_close(stream_source);
+
+  memset(&chunk_source, 0, sizeof(chunk_source));
+  chunk_source.data = "<item id=\"trail\">ok</item>";
+  chunk_source.size = strlen(chunk_source.data);
+  chunk_source.chunk_size = 1u;
+  chunk_source.fail_at_eof = 1;
+  lc_error_init(&source_error);
+  stream_source = NULL;
+  assert(lc_source_from_callbacks(chunk_source_read, chunk_source_reset, NULL,
+                                  &chunk_source, &stream_source,
+                                  &source_error) == LC_OK);
+  lc_error_cleanup(&source_error);
+  xml_source = vectis_source_from_lc(stream_source);
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "failed to read XML source") != NULL);
+  vectis_error_clear(&error);
+  lc_source_close(stream_source);
+
+  memset(&attr_doc, 0, sizeof(attr_doc));
+  strcpy(attr_doc.attr_id, "utf8");
+  attr_doc.text[0] = (char)0xff;
+  attr_doc.text[1] = '\0';
+  status = vectis_xml_lonejson_to_bytes(&sample_xml_attr_doc_map, &config,
+                                        &attr_doc, &serialized, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "UTF-8") != NULL);
+  vectis_error_clear(&error);
+
+  attr_doc.text[0] = (char)0xef;
+  attr_doc.text[1] = (char)0xbf;
+  attr_doc.text[2] = (char)0xbe;
+  attr_doc.text[3] = '\0';
+  status = vectis_xml_lonejson_to_bytes(&sample_xml_attr_doc_map, &config,
+                                        &attr_doc, &serialized, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "forbidden") != NULL);
+  vectis_error_clear(&error);
 
   xml_source = vectis_source_from_memory(
       "<item id=\"split\">\n  <text>hello</text>\n</item>",

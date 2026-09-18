@@ -34445,8 +34445,12 @@ static vectis_status vectis_xml_stream_document(xmlTextReaderPtr reader,
                                                 lonejson *runtime, void *out,
                                                 vectis_error *error) {
   const char *name;
+  const xmlChar *value;
+  const char *text;
+  size_t text_size;
   int type;
   int rc;
+  vectis_status status;
 
   for (;;) {
     rc = xmlTextReaderRead(reader);
@@ -34471,8 +34475,45 @@ static vectis_status vectis_xml_stream_document(xmlTextReaderPtr reader,
                       name != NULL ? name : "", config->root_element);
     return VECTIS_ERR_INVALID;
   }
-  return vectis_xml_stream_object(reader, map, config, runtime, out, 1u, 0,
-                                  error);
+  status =
+      vectis_xml_stream_object(reader, map, config, runtime, out, 1u, 0, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  for (;;) {
+    rc = xmlTextReaderRead(reader);
+    if (rc == 0) {
+      return VECTIS_OK;
+    }
+    if (rc < 0) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "libxml2 failed while reading after XML root");
+      return VECTIS_ERR_INVALID;
+    }
+    type = xmlTextReaderNodeType(reader);
+    if (type == XML_READER_TYPE_ENTITY_REFERENCE) {
+      return vectis_xml_reject_entity_reference(error);
+    }
+    if (type == XML_READER_TYPE_ELEMENT) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML document contains multiple root elements");
+      return VECTIS_ERR_INVALID;
+    }
+    if (type != XML_READER_TYPE_TEXT && type != XML_READER_TYPE_CDATA &&
+        type != XML_READER_TYPE_SIGNIFICANT_WHITESPACE &&
+        type != XML_READER_TYPE_WHITESPACE) {
+      continue;
+    }
+    value = xmlTextReaderConstValue(reader);
+    text = value != NULL ? (const char *)value : "";
+    text_size = value != NULL ? strlen(text) : 0u;
+    vectis_xml_trim_span(&text, &text_size);
+    if (text_size != 0u) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML document has non-whitespace content after root");
+      return VECTIS_ERR_INVALID;
+    }
+  }
 }
 
 static vectis_status vectis_xml_open_reader(const vectis_source *source,
@@ -34584,7 +34625,7 @@ vectis_status vectis_xml_parse_lonejson_source(const vectis_source *source,
   if (reader != NULL) {
     xmlFreeTextReader(reader);
   }
-  if (lc_reader.has_error && status == VECTIS_OK) {
+  if (lc_reader.has_error) {
     status = vectis_source_error(error, lc_reader.error.code, &lc_reader.error,
                                  "failed to read XML source");
   }
@@ -34658,9 +34699,10 @@ static vectis_status vectis_xml_validate_output_name(const char *name,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_xml_write_escaped(lc_sink *sink, const char *data,
-                                              size_t size, int attribute,
-                                              vectis_error *error) {
+static vectis_status vectis_xml_write_escaped_valid(lc_sink *sink,
+                                                    const char *data,
+                                                    size_t size, int attribute,
+                                                    vectis_error *error) {
   const char *replacement;
   size_t start;
   size_t i;
@@ -34721,6 +34763,186 @@ static vectis_status vectis_xml_write_escaped(lc_sink *sink, const char *data,
     return vectis_xml_sink_write(sink, data + start, size - start, error);
   }
   return VECTIS_OK;
+}
+
+typedef struct vectis_xml_utf8_state {
+  unsigned char bytes[4];
+  size_t size;
+} vectis_xml_utf8_state;
+
+static size_t vectis_xml_utf8_sequence_size(unsigned char first) {
+  if (first <= 0x7fu) {
+    return 1u;
+  }
+  if (first >= 0xc2u && first <= 0xdfu) {
+    return 2u;
+  }
+  if (first >= 0xe0u && first <= 0xefu) {
+    return 3u;
+  }
+  if (first >= 0xf0u && first <= 0xf4u) {
+    return 4u;
+  }
+  return 0u;
+}
+
+static vectis_status
+vectis_xml_validate_utf8_sequence(const unsigned char *bytes, size_t size,
+                                  vectis_error *error) {
+  unsigned long codepoint;
+  size_t expected;
+  size_t i;
+
+  if (bytes == NULL || size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML text is not valid UTF-8");
+    return VECTIS_ERR_INVALID;
+  }
+  expected = vectis_xml_utf8_sequence_size(bytes[0]);
+  if (expected == 0u || size != expected) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML text is not valid UTF-8");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 1u; i < size; ++i) {
+    if ((bytes[i] & 0xc0u) != 0x80u) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML text is not valid UTF-8");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  if ((bytes[0] == 0xe0u && bytes[1] < 0xa0u) ||
+      (bytes[0] == 0xedu && bytes[1] >= 0xa0u) ||
+      (bytes[0] == 0xf0u && bytes[1] < 0x90u) ||
+      (bytes[0] == 0xf4u && bytes[1] > 0x8fu)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML text is not valid UTF-8");
+    return VECTIS_ERR_INVALID;
+  }
+  if (size == 1u) {
+    codepoint = bytes[0];
+  } else if (size == 2u) {
+    codepoint = ((unsigned long)(bytes[0] & 0x1fu) << 6) |
+                (unsigned long)(bytes[1] & 0x3fu);
+  } else if (size == 3u) {
+    codepoint = ((unsigned long)(bytes[0] & 0x0fu) << 12) |
+                ((unsigned long)(bytes[1] & 0x3fu) << 6) |
+                (unsigned long)(bytes[2] & 0x3fu);
+  } else {
+    codepoint = ((unsigned long)(bytes[0] & 0x07u) << 18) |
+                ((unsigned long)(bytes[1] & 0x3fu) << 12) |
+                ((unsigned long)(bytes[2] & 0x3fu) << 6) |
+                (unsigned long)(bytes[3] & 0x3fu);
+  }
+  if (!(codepoint == 0x9ul || codepoint == 0xaul || codepoint == 0xdul ||
+        (codepoint >= 0x20ul && codepoint <= 0xd7fful) ||
+        (codepoint >= 0xe000ul && codepoint <= 0xfffdul) ||
+        (codepoint >= 0x10000ul && codepoint <= 0x10fffful))) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML text contains a forbidden XML character");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_xml_write_escaped_stream(lc_sink *sink, vectis_xml_utf8_state *state,
+                                const char *data, size_t size, int attribute,
+                                int final, vectis_error *error) {
+  const unsigned char *bytes;
+  size_t available;
+  size_t expected;
+  size_t start;
+  size_t take;
+  vectis_status status;
+
+  if (sink == NULL || state == NULL || (data == NULL && size > 0u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML UTF-8 output state is required");
+    return VECTIS_ERR_INVALID;
+  }
+  bytes = (const unsigned char *)data;
+  available = 0u;
+  if (state->size > 0u) {
+    expected = vectis_xml_utf8_sequence_size(state->bytes[0]);
+    if (expected == 0u) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML text is not valid UTF-8");
+      return VECTIS_ERR_INVALID;
+    }
+    take = expected - state->size;
+    if (take > size) {
+      take = size;
+    }
+    if (take > 0u) {
+      memcpy(state->bytes + state->size, bytes, take);
+      state->size += take;
+      available = take;
+    }
+    if (state->size < expected) {
+      if (final) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "XML text ends with incomplete UTF-8");
+        return VECTIS_ERR_INVALID;
+      }
+      return VECTIS_OK;
+    }
+    status =
+        vectis_xml_validate_utf8_sequence(state->bytes, state->size, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    status = vectis_xml_write_escaped_valid(sink, (const char *)state->bytes,
+                                            state->size, attribute, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    state->size = 0u;
+  }
+  start = available;
+  while (available < size) {
+    expected = vectis_xml_utf8_sequence_size(bytes[available]);
+    if (expected == 0u) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML text is not valid UTF-8");
+      return VECTIS_ERR_INVALID;
+    }
+    if (expected > size - available) {
+      if (available > start) {
+        status = vectis_xml_write_escaped_valid(
+            sink, data + start, available - start, attribute, error);
+        if (status != VECTIS_OK) {
+          return status;
+        }
+      }
+      memcpy(state->bytes, bytes + available, size - available);
+      state->size = size - available;
+      if (final) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "XML text ends with incomplete UTF-8");
+        return VECTIS_ERR_INVALID;
+      }
+      return VECTIS_OK;
+    }
+    status =
+        vectis_xml_validate_utf8_sequence(bytes + available, expected, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    available += expected;
+  }
+  if (available > start) {
+    return vectis_xml_write_escaped_valid(sink, data + start, available - start,
+                                          attribute, error);
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_write_escaped(lc_sink *sink, const char *data,
+                                              size_t size, int attribute,
+                                              vectis_error *error) {
+  vectis_xml_utf8_state state;
+
+  memset(&state, 0, sizeof(state));
+  return vectis_xml_write_escaped_stream(sink, &state, data, size, attribute, 1,
+                                         error);
 }
 
 static const char *vectis_xml_string_field_value(const lonejson_field *field,
@@ -34846,6 +35068,7 @@ static vectis_status vectis_xml_write_scalar_text(lc_sink *sink,
 typedef struct vectis_xml_spooled_sink {
   lc_sink *sink;
   vectis_error *error;
+  vectis_xml_utf8_state utf8;
 } vectis_xml_spooled_sink;
 
 static lonejson_status
@@ -34864,8 +35087,8 @@ vectis_xml_spooled_write_escaped(void *user, const void *data, size_t size,
     }
     return LONEJSON_STATUS_CALLBACK_FAILED;
   }
-  status = vectis_xml_write_escaped(state->sink, (const char *)data, size, 0,
-                                    state->error);
+  status = vectis_xml_write_escaped_stream(
+      state->sink, &state->utf8, (const char *)data, size, 0, 0, state->error);
   if (status != VECTIS_OK) {
     if (json_error != NULL) {
       lonejson_error_init(json_error);
@@ -34889,6 +35112,7 @@ vectis_xml_write_spooled_text(lc_sink *sink, const lonejson_spooled *spooled,
 
   state.sink = sink;
   state.error = error;
+  memset(&state.utf8, 0, sizeof(state.utf8));
   lonejson_error_init(&json_error);
   json_status = lonejson_spooled_write_to_sink(
       spooled, vectis_xml_spooled_write_escaped, &state, &json_error);
@@ -34896,7 +35120,8 @@ vectis_xml_write_spooled_text(lc_sink *sink, const lonejson_spooled *spooled,
     return vectis_xml_lonejson_error(error, json_status, &json_error,
                                      "failed to write XML spooled text");
   }
-  return VECTIS_OK;
+  return vectis_xml_write_escaped_stream(sink, &state.utf8, NULL, 0u, 0, 1,
+                                         error);
 }
 
 static vectis_status vectis_xml_write_scalar_text(lc_sink *sink,
