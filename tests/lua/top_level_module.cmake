@@ -72,6 +72,7 @@ local c_owned = {
   "vectis.cert",
   "vectis.embedded",
   "vectis.app",
+  "vectis.mailbox",
   "vectis.curl_worker",
   "vectis.cai_worker",
   "vectis.audio_worker",
@@ -110,6 +111,7 @@ assert(vectis.auth.core == require("vectis.auth.core"))
 assert(vectis.cert == require("vectis.cert"))
 assert(vectis.embedded == require("vectis.embedded"))
 assert(vectis.app == require("vectis.app"))
+assert(vectis.mailbox == require("vectis.mailbox"))
 assert(vectis.kore == require("vectis.kore"))
 assert(vectis.kore.runtime_available == false)
 assert(vectis.kore.runtime_model == "external")

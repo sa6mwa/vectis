@@ -168,10 +168,10 @@ Use `runtime:steer(text)` to add direction at CAI's next safe boundary and
 `runtime:queue(text)` to add a FIFO turn after the active turn. The Lua facade
 does not own a terminal UI; use `vectis -a smith` for Softline presentation.
 When Lua needs durable state, pass CAI's typed `session_store` handle in the
-runtime options. C hosts can use Vectis's LockDC adapter directly; see
+runtime options. C hosts can use Vectis's lockdc adapter directly; see
 [Agent Smith](agent-smith.md).
 
 Vectis deliberately does not turn agent mode into a second AI SDK. CAI owns
 agent orchestration, tool/session contracts, and model behavior; Vectis
-supplies host adapters for LockDC/Pouch state, service lifecycle, auth, and
+supplies host adapters for lockdc/Pouch state, service lifecycle, auth, and
 dependency-backed tools.

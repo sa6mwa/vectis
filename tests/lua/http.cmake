@@ -805,6 +805,10 @@ assert(api_server:static_directory({
   root_dir = static_dir,
   index_file = "index.html",
 }) == true)
+assert(api_server:static_file({
+  path = "/single-index",
+  file_path = static_dir .. "/index.html",
+}) == true)
 assert(api_server:metrics({
   path = "/.metrics",
   json_path = "/.metrics.json",
@@ -1453,6 +1457,19 @@ assert(inferred_static_index.body == "static directory index\n")
 assert(inferred_static_index.headers:lower():find(
     "content-type: text/html; charset=utf-8", 1, true),
     inferred_static_index.headers)
+local static_file_response = vectis.http.get(
+    "http://127.0.0.1:28484/single-index", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_file_response.ok == true,
+       static_file_response.error and static_file_response.error.message)
+assert(static_file_response.status == 200)
+assert(static_file_response.body == "static directory index\n")
+assert(static_file_response.headers:lower():find(
+    "content-type: text/html; charset=utf-8", 1, true),
+    static_file_response.headers)
 local inferred_static_css = vectis.http.request({
   url = "http://127.0.0.1:28484/site/assets/app.css",
   protocols = "http",

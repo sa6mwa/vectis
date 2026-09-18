@@ -720,7 +720,12 @@ typedef struct vectis_metrics_config {
    * state, including ACME, uses the sibling `vectis/storage` root.
    */
   int persistence_enabled;
+  /* Optional checkpoint endpoint. When NULL, Vectis uses its dedicated local
+   * metrics Pouch root. The metrics supervisor constructs its own client from
+   * the complete app lockdc configuration and this endpoint selection.
+   */
   const char *storage_endpoint;
+  /* Checkpoint namespace. Defaults to "vectis.metrics". */
   const char *storage_namespace;
   /*
    * Combined with app_name to identify one logical app checkpoint. Instances
@@ -728,6 +733,9 @@ typedef struct vectis_metrics_config {
    * storage lease instead of overwriting each other's progress.
    */
   const char *storage_owner;
+  /* Minimum seconds between periodic checkpoints. Defaults to, and is clamped
+   * to, five minutes. Shutdown still performs one final checkpoint.
+   */
   unsigned snapshot_interval_seconds;
 } vectis_metrics_config;
 
@@ -799,7 +807,9 @@ typedef struct vectis_cai_mcp_route_config {
 } vectis_cai_mcp_route_config;
 
 typedef struct vectis_static_file_config {
+  /* Literal route path for the served file. */
   const char *path;
+  /* Disk file served by the route. */
   const char *file_path;
   /* NULL infers from file_path extension; unknown extensions fall back to
    * application/octet-stream. Non-NULL overrides inference.
@@ -1933,6 +1943,7 @@ struct vectis_app {
                            const vectis_openapi_document *document,
                            vectis_openapi_format format,
                            vectis_mutable_bytes *out, vectis_error *error);
+  /* Return the number of routes registered on this app. */
   size_t (*route_count)(const vectis_app *self);
   pslog_logger *(*logger)(vectis_app *self);
 
@@ -2508,6 +2519,10 @@ void vectis_json_typed_route_config_init(
     vectis_json_typed_route_config *config);
 void vectis_xml_route_config_init(vectis_xml_route_config *config);
 void vectis_dsv_route_config_init(vectis_dsv_route_config *config);
+/* Initialize the opt-in metrics configuration with the default paths,
+ * `vectis.metrics` checkpoint namespace, `vectis` owner, and five-minute
+ * checkpoint interval.
+ */
 void vectis_metrics_config_init(vectis_metrics_config *config);
 void vectis_openapi_document_init(vectis_openapi_document *document);
 void vectis_openapi_route_doc_init(vectis_openapi_route_doc *doc);
@@ -3061,6 +3076,10 @@ vectis_status vectis_response_json_generated(vectis_response *response,
                                              const lonejson_map *map,
                                              const void *value,
                                              vectis_error *error);
+/* Materialize the current metrics snapshot as owned JSON in `out`; clean it
+ * with vectis_mutable_bytes_cleanup(). Returns VECTIS_ERR_STATE when metrics
+ * have not been registered on `app`.
+ */
 vectis_status vectis_metrics_snapshot_json(vectis_app *app,
                                            vectis_mutable_bytes *out,
                                            vectis_error *error);

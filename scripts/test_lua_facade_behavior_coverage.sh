@@ -120,6 +120,8 @@ require_fixed "$repo_root/tests/lua/http.cmake" \
   "stream_source" "live response streaming coverage"
 require_fixed "$repo_root/tests/lua/http.cmake" \
   "server:upload" "true request streaming coverage"
+require_fixed "$repo_root/tests/lua/http.cmake" \
+  "api_server:static_file" "static-file receiver coverage"
 require_fixed "$repo_root/tests/lua/dsv.cmake" \
   "spooled_to_disk == true" "large-value DSV spill coverage"
 require_fixed "$repo_root/tests/lua/curl.cmake" \

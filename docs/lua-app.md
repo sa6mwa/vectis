@@ -10,6 +10,27 @@ For the supported generic content-site composition of these receivers, see
 The supported Kore runtime and route surface is audited in
 [`kore-runtime-surface-audit.md`](kore-runtime-surface-audit.md).
 
+## C Receiver Mapping
+
+Lua exposes the `vectis_app` receivers whose configuration and ownership model
+fit Lua directly: lifecycle, routes, static file/directory/embedded mounts,
+WebDAV, auth routes, metrics, WebSockets, OpenAPI, and the concrete managed
+worker-service registrations are available as `app:<method>(opts)` calls.
+`app:route_count()` exposes the C route-count diagnostic.
+
+Every public C receiver has one of these deliberate mappings; the contract
+test fails if the C table gains an unclassified receiver.
+
+| C receiver | Lua surface | Reason when not one-to-one |
+| --- | --- | --- |
+| `app->route()`, `app->prefixed_route()` | `app:route()`, `app:group()` | Buffered Lua callback route and prefix composition. |
+| `app->json_route()`, `app->json_typed_route()`, `app->xml_route()`, `app->prefixed_json_route()`, `app->prefixed_json_typed_route()`, `app->prefixed_xml_route()` | `app:route()` plus LoneJSON or `vectis.xml` | The C forms require C-owned maps and C callbacks. Lua deliberately keeps the request callback and its values in Lua. |
+| `app->dsv_route()`, `app->prefixed_dsv_route()` | `app:dsv()` | Native streaming DSV parsing with Lua row callbacks; it does not materialize the request body. |
+| `app->upload_stream()`, `app->upload_file()`, `app->upload_reader()` | `app:upload()` | Lua exposes an ownership-safe bounded chunk callback rather than borrowed C file/reader callbacks. |
+| `app->cai_mcp_route()` | `app:mcp()` | Lua MCP dispatch stays in the Lua route domain; the C adapter is the streaming C-owned handler path. |
+| `app->logger()`, `app->cai_client()`, `app->lockd_client()` | C-only | These return borrowed process-local native handles; Lua must not fabricate or own them. |
+| `app->managed_service()`, `app->register_consumer_receiver()`, `app->consumer_service_receiver()` | C-only | These accept borrowed C callbacks or native lockdc receiver handles. Lua instead provides the concrete mailbox-backed consumer, curl, CAI, audio, SUS, and OPC UA service workflows. |
+
 ## Lifecycle
 
 ```lua
@@ -529,6 +550,9 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
     `application/octet-stream` for unknown extensions. When provided, it
     overrides inference for every file in the mount.
 - `app:static_file(opts)` serves one disk file.
+  - `path` is the required literal route path. `file_path` is the required disk
+    file; `file` is a compatibility alias.
+  - `methods` accepts `GET`, `HEAD`, or both and defaults to both.
   - `content_type` is optional. When omitted, Vectis infers the response type
     from `file_path` and falls back to `application/octet-stream` for unknown
     extensions.
@@ -783,15 +807,31 @@ assert(app:metrics({
   json_path = "/.metrics.json",
   title = "admin.example",
   auth = auth_provider,
-  persistence_enabled = false,
+  persistence_enabled = true,
+  storage_namespace = "myapp.metrics",
+  storage_owner = "myapp",
+  snapshot_interval_seconds = 300,
 }))
 ```
 
 `auth` is optional and uses the same native/callback auth provider contract as
 ordinary routes and WebDAV. Persistence is also optional; when enabled, Vectis
-writes snapshots through lockdc and defaults to a local `pouch://` store under
-XDG state. Local Pouch snapshots use the same encrypted default and `lockd`
-key settings as ACME. See [metrics.md](metrics.md) for the full contract.
+writes snapshots through lockdc and defaults to the dedicated local
+`vectis/metrics` Pouch root under XDG state. `path` defaults to `"/.metrics"`
+and `json_path` defaults to `path .. ".json"`; their compatibility aliases are
+`dashboard_path` and `snapshot_path`. `persistence_enabled` also accepts the
+`persist` alias. `storage_endpoint` (or `endpoint`) selects a specific local
+or remote lockdc endpoint, while `storage_namespace` defaults to
+`"vectis.metrics"`, `storage_owner` defaults to `"vectis"`, and the periodic
+checkpoint interval defaults to—and is clamped to—300 seconds.
+
+The metrics supervisor owns a distinct post-fork lockdc client. It inherits
+the complete app `lockd` configuration, including endpoint transport, mTLS
+bundle material, timeout, logger policy, and all Pouch controls; the metrics
+options only select the checkpoint endpoint, namespace, and owner. It never
+shares a request-handling client. Local Pouch snapshots use the same encrypted
+default and `lockd` key settings as ACME. See [metrics.md](metrics.md) for the
+full persistence and recovery contract.
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,
 OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.

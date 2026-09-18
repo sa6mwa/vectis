@@ -9656,6 +9656,61 @@ static int vectis_lua_app_static_directory(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_app_static_file(lua_State *lua) {
+  vectis_app *app;
+  vectis_static_file_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+  const char *file_path;
+  vectis_http_methods methods;
+
+  app = vectis_lua_app_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "static file path is required");
+  }
+  file_path = vectis_lua_table_string(lua, 2, "file_path");
+  if (file_path == NULL) {
+    file_path = vectis_lua_table_string(lua, 2, "file");
+  }
+  if (file_path == NULL || file_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "static file file_path is required");
+  }
+
+  vectis_static_file_config_init(&config);
+  config.path = path;
+  config.file_path = file_path;
+  config.content_type = vectis_lua_table_string(lua, 2, "content_type");
+  methods = vectis_lua_route_methods(
+      lua, 2, VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+      "static file");
+  if (methods == VECTIS_HTTP_METHODS_NONE ||
+      (methods & ~(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD)) != 0u) {
+    return luaL_error(lua, "static file methods must be GET and/or HEAD");
+  }
+  config.methods = methods;
+
+  vectis_error_clear(&error);
+  status = app->static_file(app, &config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_app_route_count(lua_State *lua) {
+  vectis_app *app;
+
+  app = vectis_lua_app_app(lua, 1);
+  lua_pushinteger(lua, (lua_Integer)app->route_count(app));
+  return 1;
+}
+
 static int vectis_lua_app_webdav(lua_State *lua) {
   vectis_lua_app *server;
   vectis_app *app;
@@ -9918,7 +9973,12 @@ static int vectis_lua_app_metrics(lua_State *lua) {
   auth = NULL;
   vectis_error_clear(&error);
   lua_getfield(lua, 2, "auth");
-  if (lua_istable(lua, -1)) {
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_istable(lua, -1)) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "metrics auth must be a table");
+    }
     auth =
         vectis_lua_app_native_auth_new(lua, app, -1, "metrics route", &error);
     lua_pop(lua, 1);
@@ -20928,6 +20988,8 @@ static void vectis_lua_register_app(lua_State *lua) {
     lua_setfield(lua, -2, "static_embedded");
     lua_pushcfunction(lua, vectis_lua_app_static_directory);
     lua_setfield(lua, -2, "static_directory");
+    lua_pushcfunction(lua, vectis_lua_app_static_file);
+    lua_setfield(lua, -2, "static_file");
     lua_pushcfunction(lua, vectis_lua_app_webdav);
     lua_setfield(lua, -2, "webdav");
     lua_pushcfunction(lua, vectis_lua_app_webdav_embedded_site);
@@ -20940,6 +21002,8 @@ static void vectis_lua_register_app(lua_State *lua) {
     lua_setfield(lua, -2, "metrics");
     lua_pushcfunction(lua, vectis_lua_app_route);
     lua_setfield(lua, -2, "route");
+    lua_pushcfunction(lua, vectis_lua_app_route_count);
+    lua_setfield(lua, -2, "route_count");
     lua_pushcfunction(lua, vectis_lua_app_group);
     lua_setfield(lua, -2, "group");
     lua_pushcfunction(lua, vectis_lua_app_dsv);

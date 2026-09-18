@@ -45,6 +45,14 @@ assert(app:metrics({
 `app:route`, `app:webdav`, and `app:auth_json`. There is no
 metrics-specific auth mechanism.
 
+Lua accepts the same persistence fields as `vectis_metrics_config`:
+`persistence_enabled` (or `persist`), `storage_endpoint` (or `endpoint`),
+`storage_namespace`, `storage_owner`, and `snapshot_interval_seconds`.
+`storage_namespace` defaults to `"vectis.metrics"`, `storage_owner` to
+`"vectis"`, and the periodic interval to 300 seconds; shorter values are
+clamped to five minutes. A non-`nil` `auth` value must be a provider table, so
+a configuration typo cannot silently expose the dashboard.
+
 The native authenticated shape is:
 
 - mount `vectis.auth.workflow(...):mount(server)` when browser login routes

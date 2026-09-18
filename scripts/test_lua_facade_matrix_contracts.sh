@@ -5,6 +5,11 @@ repo_root=$(cd "$(dirname -- "$0")/.." && pwd)
 lua_index="$repo_root/docs/lua.md"
 matrix="$repo_root/docs/lua-coverage-matrix.md"
 smoke="$repo_root/tests/lua/smoke.lua"
+top_level="$repo_root/lua/vectis.lua"
+api_index="$repo_root/docs/api.md"
+app_header="$repo_root/include/vectis/vectis.h"
+app_binding="$repo_root/src/vectis_cli.c"
+app_docs="$repo_root/docs/lua-app.md"
 
 fail() {
   printf 'lua facade matrix contract failed: %s\n' "$*" >&2
@@ -46,6 +51,7 @@ workflow_modules=(
   "vectis.cai|workflow:cai|package.loaded[\"vectis.cai\"] == vcai|vectis.cai == vcai|lua-cai.md"
   "vectis.cai_worker|workflow:cai|package.loaded[\"vectis.cai_worker\"] == vectis.cai_worker|vectis.cai_worker == require(\"vectis.cai_worker\")|lua-cai.md"
   "vectis.cert|workflow:certs|package.loaded[\"vectis.cert\"] == cert|vectis.cert == cert|lua-certs.md"
+  "vectis.cli|workflow:cli|package.loaded[\"vectis.cli\"] == cli|vectis.cli == cli|lua-cli.md"
   "vectis.curl_worker|dep:curl|package.loaded[\"vectis.curl_worker\"] == vectis.curl_worker|vectis.curl_worker == require(\"vectis.curl_worker\")|lua-curl.md"
   "vectis.dsv|workflow:dsv|package.loaded[\"vectis.dsv\"] == dsv|vectis.dsv == dsv|lua-dsv.md"
   "vectis.embedded|workflow:static-assets|package.loaded[\"vectis.embedded\"] == embedded|vectis.embedded == embedded|lua-embedded.md"
@@ -57,6 +63,7 @@ workflow_modules=(
   "vectis.mqtt|workflow:mqtt|package.loaded[\"vectis.mqtt\"] == mqtt|vectis.mqtt == mqtt|lua-mqtt.md"
   "vectis.rest|workflow:rest|package.loaded[\"vectis.rest\"] == rest|vectis.rest == rest|lua-rest.md"
   "vectis.app|workflow:server-runtime|package.loaded[\"vectis.app\"] == app_module|vectis.app == app_module|lua-app.md"
+  "vectis.smith|workflow:terminal-agent|package.loaded[\"vectis.smith\"] == smith|vectis.smith == smith|agent-smith.md"
   "vectis.smtp|workflow:smtp|package.loaded[\"vectis.smtp\"] == smtp|vectis.smtp == smtp|lua-smtp.md"
   "vectis.ssh|workflow:ssh-exec|package.loaded[\"vectis.ssh\"] == ssh|vectis.ssh == ssh|lua-ssh.md"
   "vectis.status|workflow:status-errors|package.loaded[\"vectis.status\"] == status|vectis.status == status|lua-status.md"
@@ -79,6 +86,7 @@ for entry in "${dependency_modules[@]}"; do
   require_fixed "$smoke" "$libs_alias" "dependency vectis.libs alias"
   if [ -n "$doc" ]; then
     require_fixed "$lua_index" "($doc)" "dependency doc link"
+    require_fixed "$api_index" "($doc)" "C API Lua doc link"
     require_file "$repo_root/docs/$doc"
   fi
 done
@@ -90,12 +98,67 @@ for entry in "${workflow_modules[@]}"; do
   require_fixed "$smoke" "$preload" "workflow preload identity"
   require_fixed "$smoke" "$top_alias" "workflow top-level alias"
   require_fixed "$lua_index" "($doc)" "workflow doc link"
+  require_fixed "$api_index" "($doc)" "C API Lua doc link"
   require_file "$repo_root/docs/$doc"
+
+  field=${module#vectis.}
+  if [ "$field" = "status" ]; then
+    require_fixed "$top_level" 'local status = require("vectis.status")' \
+      "standalone workflow top-level alias"
+  else
+    require_fixed "$top_level" "$field = \"$module\"" \
+      "standalone workflow top-level alias"
+  fi
 done
 
 require_fixed "$matrix" '| workflow:libs | Bundled dependency namespace | yes | yes | yes | yes | n/a |' \
   "vectis.libs matrix row"
 require_fixed "$lua_index" 'Direct `require(...)` remains the canonical way' \
   "direct dependency load policy"
+
+# Keep the Lua receiver facade in lockstep with the public C app receiver. The
+# non-direct mappings are documented because they require C callbacks or raw
+# process-local handles that cannot be safely fabricated in Lua.
+direct_receivers=(
+  start stop restart run wait route route_count static_file
+  static_directory static_embedded webdav webdav_embedded_site webdav_embedded \
+  auth_routes metrics websocket openapi_doc openapi consumer_service \
+  opcua_server_service curl_worker_service cai_worker_service \
+  audio_worker_service sus_worker_service close
+)
+c_only_receivers=(
+  json_route json_typed_route xml_route dsv_route
+  upload_stream upload_file upload_reader cai_mcp_route
+  prefixed_route prefixed_json_route prefixed_json_typed_route
+  prefixed_xml_route prefixed_dsv_route logger cai_client lockd_client
+  managed_service register_consumer_receiver consumer_service_receiver
+)
+
+for receiver in "${direct_receivers[@]}"; do
+  require_fixed "$app_header" "(*$receiver)" "public C app receiver"
+  require_fixed "$app_binding" "\"$receiver\"" "Lua app receiver binding"
+done
+for receiver in "${c_only_receivers[@]}"; do
+  require_fixed "$app_header" "(*$receiver)" "public C app receiver"
+  require_fixed "$app_docs" "app->$receiver()" "C-only receiver mapping"
+done
+
+# A future public receiver must be classified explicitly rather than silently
+# escaping the Lua facade audit.
+while IFS= read -r receiver; do
+  case " ${direct_receivers[*]} ${c_only_receivers[*]} " in
+    *" $receiver "*) ;;
+    *) fail "unclassified public C app receiver: $receiver" ;;
+  esac
+done < <(sed -n '/^struct vectis_app {$/,/^};$/p' "$app_header" |
+  sed -n 's/.*(\*\([a-z_][a-z_]*\)).*/\1/p')
+
+require_fixed "$app_binding" "vectis_lua_app_static_file" \
+  "Lua static-file receiver implementation"
+require_fixed "$app_docs" '## C Receiver Mapping' "C/Lua receiver mapping docs"
+require_fixed "$app_docs" 'The C forms require C-owned maps and C callbacks' \
+  "typed C route mapping rationale"
+require_fixed "$app_docs" 'borrowed process-local native handles' \
+  "C-only receiver rationale"
 
 echo "lua facade matrix contracts ok"

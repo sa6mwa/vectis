@@ -44,6 +44,10 @@ Major groups:
   pretty framework error pages.
 - WebDAV/auth routes: `vectis_webdav_mount_config`,
   `vectis_webdav_embedded_site_config`, and `vectis_auth_routes_config`.
+- Metrics: `vectis_metrics_config`, `app->metrics()`, and
+  `vectis_metrics_snapshot_json()` provide the opt-in dashboard, JSON
+  snapshots, and lockdc/Pouch checkpoint persistence documented in
+  [Metrics](metrics.md).
 - Auth credentials: native users, issued credentials, OAuth2/OIDC WebDAV keys,
   Lockd-backed opaque browser sessions configured with
   `vectis_auth_browser_session_config`, and
@@ -66,7 +70,7 @@ Major groups:
   fingerprint pinning through `host_key_sha256`.
 - MQTT: `vectis_mqtt_config`, publish, and JSON publish helpers.
 - Certificates: key, CSR, bundle, CA, validation, and inspection workflows.
-- Agent Smith: `vectis_smith_store` adapts durable LockDC state to CAI session
+- Agent Smith: `vectis_smith_store` adapts durable lockdc state to CAI session
   callbacks; `vectis_smith` provides owner-thread Smith open, submit,
   steering, queued-turn, pump, state, and wakeup-fd operations. See
   [Agent Smith](agent-smith.md).
@@ -84,19 +88,31 @@ Lua docs:
 - [Lua certificates](lua-certs.md)
 - [Lua CAI](lua-cai.md)
 - [Agent Smith](agent-smith.md)
+- [Lua command-line applications](lua-cli.md)
 - [Lua curl](lua-curl.md)
 - [Lua DSV](lua-dsv.md)
+- [Lua embedded assets](lua-embedded.md)
 - [Lua HTTP](lua-http.md)
+- [Lua Kore](lua-kore.md)
 - [Lua libmdf](lua-libmdf.md)
+- [Lua lockd](lua-lockd.md)
+- [Lua logging](lua-log.md)
+- [Lua LQL](lua-lql.md)
+- [Lua mailbox](lua-mailbox.md)
 - [Lua MQTT](lua-mqtt.md)
 - [Lua OpenSSL](lua-openssl.md)
+- [Lua OPC UA](lua-opcua.md)
 - [Lua app](lua-app.md)
+- [Lua pslog](lua-pslog.md)
+- [Lua REST](lua-rest.md)
 - [Serving a Lua site](lua-site.md)
 - [Lua softline](lua-softline.md)
 - [Lua SMTP](lua-smtp.md)
 - [Lua SSH](lua-ssh.md)
+- [Lua status](lua-status.md)
 - [Lua SUS](lua-sus.md)
 - [Lua audio](lua-audio.md)
+- [Lua terminal](lua-terminal.md)
 - [Lua WebDAV](lua-webdav.md)
 - [Lua XML](lua-xml.md)
 - [Lua zlib](lua-zlib.md)

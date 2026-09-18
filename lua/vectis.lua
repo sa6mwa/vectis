@@ -46,6 +46,7 @@ local workflow_modules = {
   cert = "vectis.cert",
   embedded = "vectis.embedded",
   app = "vectis.app",
+  mailbox = "vectis.mailbox",
   curl_worker = "vectis.curl_worker",
   cai_worker = "vectis.cai_worker",
   audio_worker = "vectis.audio_worker",

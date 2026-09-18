@@ -62,6 +62,10 @@ assert(vectis.auth.store_init({
   app = auth_app,
 }) == true)
 
+local metrics_result, metrics_error = auth_app:metrics({ auth = false })
+assert(metrics_result == nil)
+assert_status_error(metrics_error, vectis.ERR_INVALID, "metrics auth must be a table")
+
 local user = assert(vectis.auth.user_add({
   app = auth_app,
   username = "facade-admin@example.com",

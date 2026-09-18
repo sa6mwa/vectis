@@ -17,7 +17,7 @@ Vectis owns:
 - the `vectis -a smith` terminal product surface;
 - bounded CAI-to-libmdf-to-Softline presentation;
 - the workspace-rooted terminal configuration;
-- LockDC/Pouch session persistence;
+- lockdc/Pouch session persistence;
 - the public C adapter and the non-TUI `vectis.smith` Lua facade.
 
 This split is deliberate. Vectis may add host tools and durable storage, but it
@@ -110,16 +110,16 @@ following against a controllable streaming CAI fixture:
 
 ## State adapter
 
-`vectis_smith_store` adapts LockDC to CAI's
+`vectis_smith_store` adapts lockdc to CAI's
 `cai_agent_session_store` callbacks. It stores the latest checkpoint and a
 strictly ordered append-only event journal under hashed opaque scope/session
 keys. A checkpoint watermark makes resume deterministic: CAI reloads the
-checkpoint and Vectis replays only subsequent events. A LockDC lease serializes
+checkpoint and Vectis replays only subsequent events. A lockdc lease serializes
 each update, and the adapter is mutex-protected so a shared store is safe for
 CAI callbacks from multiple runtimes.
 
 The default CLI store is a user-owned encrypted Pouch directory. Deployments
-can choose a different LockDC endpoint and namespace. ChatGPT OAuth state is
+can choose a different lockdc endpoint and namespace. ChatGPT OAuth state is
 not agent session state and remains CAI-owned, as described in
 [Agent Smith](agent-smith.md).
 
@@ -128,11 +128,11 @@ not agent session state and remains CAI-owned, as described in
 The public C API intentionally exposes the borrowed underlying
 `cai_agent_runtime` for advanced composition while retaining simple Vectis
 wrappers for lifecycle and owner-thread control. A host that supplies a
-`vectis_smith_store` must retain its LockDC client and store until all
+`vectis_smith_store` must retain its lockdc client and store until all
 borrowing runtimes have closed. A host that needs another CAI session backend
 can supply `runtime.session_store` directly instead.
 
 Lua keeps the same ownership boundary. `vectis.smith` delegates to CAI's native
 runtime and exposes no terminal UI. Lua applications may supply CAI's typed
-session-store handle; the Vectis CLI uses the C LockDC adapter for its
+session-store handle; the Vectis CLI uses the C lockdc adapter for its
 durability.
