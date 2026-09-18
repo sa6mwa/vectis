@@ -56,6 +56,7 @@
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
 #define VECTIS_ACCESS_LOG_MAX_STATUS_LEVEL_RULES 32u
+#define VECTIS_RECEIVER_RESERVED_SLOTS 8u
 #define VECTIS_CLIENT_IP_MAX_TRUSTED_PROXIES 16u
 #define VECTIS_AUTOBLOCK_MAX_ENTRIES 65536u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
@@ -108,6 +109,13 @@ typedef struct vectis_ssh_sftp_dir vectis_ssh_sftp_dir;
 typedef struct vectis_mqtt vectis_mqtt;
 typedef struct vectis_request vectis_request;
 typedef struct vectis_response vectis_response;
+
+/*
+ * Every public stateful receiver reserves these tail slots for future Vectis
+ * method pointers. Applications must neither read nor write them. A future
+ * receiver method consumes one slot instead of extending the receiver layout.
+ */
+typedef void (*vectis_receiver_reserved_fn)(void);
 typedef struct vectis_websocket vectis_websocket;
 typedef struct vectis_json_response vectis_json_response;
 typedef struct vectis_dsv_rows vectis_dsv_rows;
@@ -2033,6 +2041,7 @@ struct vectis_app {
       vectis_consumer_service **out, vectis_error *error);
   void (*close)(vectis_app *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_managed_service {
@@ -2047,6 +2056,7 @@ struct vectis_managed_service {
                          vectis_error *error);
   void (*close)(vectis_managed_service *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_consumer_service {
@@ -2069,6 +2079,7 @@ struct vectis_consumer_service {
                          vectis_error *error);
   void (*close)(vectis_consumer_service *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_http_client {
@@ -2122,6 +2133,7 @@ struct vectis_http_client {
   /* Shallow effective config copy used by the methods above. */
   vectis_http_client_config config;
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_sftp {
@@ -2134,6 +2146,7 @@ struct vectis_sftp {
   /* Shallow effective config copy used by the methods above. */
   vectis_sftp_config config;
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_ssh {
@@ -2171,6 +2184,7 @@ struct vectis_ssh {
   /* Shallow effective config copy used by the methods above. */
   vectis_ssh_config config;
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_ssh_sftp_session {
@@ -2199,6 +2213,7 @@ struct vectis_ssh_sftp_session {
   /* Shallow effective config copy used by the methods above. */
   vectis_ssh_config config;
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_ssh_sftp_file {
@@ -2211,6 +2226,7 @@ struct vectis_ssh_sftp_file {
                         vectis_error *error);
   void (*close)(vectis_ssh_sftp_file *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_ssh_sftp_dir {
@@ -2218,6 +2234,7 @@ struct vectis_ssh_sftp_dir {
                         vectis_ssh_sftp_dir_entry *entry, vectis_error *error);
   void (*close)(vectis_ssh_sftp_dir *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 struct vectis_mqtt {
@@ -2232,6 +2249,7 @@ struct vectis_mqtt {
   /* Shallow effective config copy used by the methods above. */
   vectis_mqtt_config config;
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 /* Bounded FIFO for in-process service handoff. Methods are thread-safe. */
@@ -2268,6 +2286,7 @@ struct vectis_mailbox {
   void (*close)(vectis_mailbox *self);
   void (*destroy)(vectis_mailbox *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 /*
@@ -2292,6 +2311,7 @@ struct vectis_mailbox_broker {
   void (*close)(vectis_mailbox_broker *self);
   void (*destroy)(vectis_mailbox_broker *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 /*
@@ -2309,6 +2329,7 @@ struct vectis_opcua_monitor_mailbox {
                          vectis_error *error);
   void (*destroy)(vectis_opcua_monitor_mailbox *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 void vectis_error_clear(vectis_error *error);

@@ -22,6 +22,8 @@ Core conventions:
 - Public status values are named by `vectis_status_string()`.
 - Config structs have `*_init()` helpers.
 - Owned output structs have cleanup/destroy/close helpers where required.
+- Stateful receiver handles reserve eight private method slots, so compatible
+  future receiver methods can consume a slot without extending the layout.
 
 Major groups:
 

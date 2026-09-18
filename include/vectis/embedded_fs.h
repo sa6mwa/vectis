@@ -116,6 +116,7 @@ struct vectis_embedded_fs {
    */
   void (*close)(vectis_embedded_fs *self);
   void *impl;
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 
 /* Initialize config defaults. */

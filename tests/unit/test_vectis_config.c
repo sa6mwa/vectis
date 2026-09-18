@@ -51,6 +51,7 @@ int main(void) {
   vectis_json_typed_route_config typed_json_route;
   vectis_route_config param_route;
   vectis_status status;
+  size_t i;
   const char *bad_endpoints[1];
   const char *acme_domains[3];
   const char *bad_acme_domains[2];
@@ -185,6 +186,9 @@ int main(void) {
   assert(config.server.autoblock.enabled == 1);
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  for (i = 0u; i < VECTIS_RECEIVER_RESERVED_SLOTS; ++i) {
+    assert(app->reserved[i] == NULL);
+  }
   app->close(app);
 
   vectis_app_config_init(&config);
