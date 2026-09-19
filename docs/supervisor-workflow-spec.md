@@ -339,6 +339,13 @@ worker. Route workers use their own post-fork producer clients and commit
 transactions concurrently. The supervisor owns a separate post-fork client and
 one `lc_workflow` handle.
 
+An application declares that workflow once. Vectis derives the route-side
+producer configuration and supervisor-side dispatcher configuration from that
+single declaration. They must name the same Lockd root, namespace, outbox
+identity, validation policy, and retry policy; a route must not independently
+construct a superficially similar workflow configuration. Separate post-fork
+clients are an isolation and ownership choice, not separate workflow domains.
+
 The dispatcher claims only up to its lane capacity. It renews a claim while a
 long foreign operation is in progress. A successful effect completes the job;
 a transient failure returns it to `retry_wait`; a permanent, diagnosed failure
@@ -384,6 +391,12 @@ acceptance, commit, and rollback. It does not own a dispatcher thread, claim
 jobs, expose `next()`, or run recovery. Its configuration shares namespace,
 transaction, validation, and retry policy types with `lc_workflow` where those
 values are meaningful.
+
+The producer has an explicit close operation and may be retained for the
+lifetime of its owning request-worker client. Destroying it rolls back any
+uncommitted transaction; no producer action may invoke an effect handler or
+foreign side effect. A receipt is returned only after the transaction commits:
+failed or rolled-back transactions expose no wakeable `outbox_key`.
 
 The existing `lc_client_new_workflow()` remains the thread-owning persistent
 dispatcher constructor. A producer receipt contains the committed `outbox_key`;
@@ -459,6 +472,13 @@ assert(dispatcher:run())
 when the host otherwise permits its Lockd client operation. It never creates
 liblockdc dispatcher threads. `new_workflow()` and `workflow:dispatcher()` are
 long-lived worker constructs, not request constructs.
+
+The producer facade supplies transactional operations and close/garbage-
+collection cleanup only. It deliberately accepts no `handlers` table and has no
+`run`, `pump`, `next`, claim, retry, or terminal-job methods. Conversely, the
+dispatcher facade consumes jobs but does not expose route-side transaction
+production as a shortcut. The two APIs make ownership and latency boundaries
+obvious in Lua as well as C.
 
 The direct Lua API wraps a persistent workflow with an owner-state dispatch
 loop:
