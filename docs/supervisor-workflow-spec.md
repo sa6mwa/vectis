@@ -317,6 +317,14 @@ kind)` pair. Registering the same pair twice, including through different
 logical supervisors, fails at declaration time; different kinds from one
 workflow may use different logical supervisors.
 
+The one native dispatcher is a source router, not a Lua lane. It maps each
+claimed job's registered `kind` to its logical supervisor and enqueues it only
+when that supervisor's selected lane has capacity. Vectis's high-level
+`tx:append_outbox()` rejects an unregistered kind before commit, so it cannot
+create an orphaned Vectis job with no terminal-outcome owner. Raw liblockdc
+remains available for deliberately decoupled producers that need another
+unhandled-job policy.
+
 `job:payload_source()` is a handler-scoped streaming source. A convenience
 `job:json()` may exist for intentionally materialized small payloads, but it
 must document its memory limit and must not be the only payload API.
@@ -408,9 +416,20 @@ int lc_workflow_dispatcher_get_or_start(
     lc_workflow_dispatcher **out,
     lc_error *error);
 
+int lc_workflow_dispatcher_next(lc_workflow_dispatcher *dispatcher,
+                                long timeout_ms,
+                                lc_outbox_job **out,
+                                lc_error *error);
 int lc_workflow_dispatcher_stop(lc_workflow_dispatcher *dispatcher,
                                 long deadline_ms,
                                 lc_error *error);
+int lc_workflow_dispatcher_wait(lc_workflow_dispatcher *dispatcher,
+                                long deadline_ms,
+                                lc_error *error);
+int lc_workflow_dispatcher_get_stats(
+    lc_workflow_dispatcher *dispatcher,
+    lc_workflow_dispatcher_stats *out,
+    lc_error *error);
 void lc_workflow_dispatcher_close(lc_workflow_dispatcher *dispatcher);
 ```
 
@@ -436,12 +455,13 @@ dispatch only when its caller explicitly acquires a dispatcher. The Lua form is:
 local workflow = client:new_workflow(config, { dispatcher = dispatcher })
 ```
 
+Attachment requires the same client and compatible workflow identity.
 Acquisition and attachment retain the dispatcher. Closing a workflow releases
 only its attachment; it must not stop a shared dispatcher. A dispatcher has its
 own explicit stop/close lifecycle and remains alive while acquired, until its
 owning client closes, or until its host stops it. Client close stops registered
-dispatchers before releasing its registry; outstanding dispatcher handles become
-closed handles and never retain a usable client pointer.
+dispatchers before releasing its registry; outstanding workflow and dispatcher
+handles become closed handles and never retain a usable client pointer.
 
 Acquisition may start the dispatcher's private notification and recovery
 infrastructure, but it must not claim or deliver a user effect until a single
@@ -480,10 +500,10 @@ The function is safe to call only in the process that owns `dispatcher`.
 Vectis delivers the key to that process through its local IPC signal. The
 operation does not execute a foreign effect and does not call user code.
 
-Capacity overflow is visible through `lc_workflow_dispatcher_stats`, increments
-a durable repair counter, and schedules indexed reconciliation. It never makes
-a committed effect disappear. Startup reconciliation and claim-expiry recovery
-remain mandatory.
+Capacity overflow is visible through `lc_workflow_dispatcher_get_stats()`,
+increments a durable repair counter, and schedules indexed reconciliation. It
+never makes a committed effect disappear. Startup reconciliation and claim-
+expiry recovery remain mandatory.
 
 ### Cross-host notification
 
@@ -525,7 +545,8 @@ assert(dispatcher:run({ handlers = handlers }))
 host otherwise permits its Lockd client operation. It never creates liblockdc
 dispatcher threads. `workflow:dispatcher()` is the explicit acquire-or-start
 operation; it returns the compatible dispatcher already registered for that
-client or starts one lazily.
+client or starts one lazily. Its optional argument configures dispatcher
+operation only; it cannot contain Lua handlers or override workflow identity.
 
 The workflow facade supplies transactional operations and close/garbage-
 collection cleanup. It has no `run`, `pump`, `next`, claim, retry, or terminal-
@@ -611,7 +632,10 @@ the optional distributed notification path above.
 - Multiple Kore workers concurrently append effects to one workflow; one
   supervisor claims and dispatches each effect exactly once while live.
 - Duplicate `(workflow, kind)` handler declarations fail before runtime; distinct
-  kinds may be assigned to independent logical supervisors.
+  kinds may be assigned to independent logical supervisors and are routed only
+  to their selected lane when it has capacity.
+- An unregistered Vectis outbox kind is rejected before commit and creates no
+  durable job.
 - The request path performs no effect I/O and does not wait for dispatcher
   scheduling, handler execution, or reconciliation.
 - A route-to-supervisor signal reaches a ready handler without periodic timer
