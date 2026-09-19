@@ -570,8 +570,9 @@ OPC UA has three valid ownership modes:
 Managed OPC UA services must be descriptor-backed and materialized in the
 supervisor domain for T2. Monitor callbacks may publish copied payloads into a
 mailbox in their runtime domain. A future public runtime bus may also be a
-target after it is deliberately specified. Monitor callbacks may not enter Lua
-directly.
+target after [Supervisor and Workflow
+Dispatch](supervisor-workflow-spec.md) is implemented. Monitor callbacks may
+not enter Lua directly.
 
 The existing OPC UA mailbox adapter remains valid as a C-side adapter. A future
 OPC UA service declaration should compose that adapter rather than duplicating
@@ -640,8 +641,10 @@ When audio/SUS work is triggered by HTTP, the preferred production pattern is:
 
 1. Kore route validates and accepts work.
 2. Route sends a copied request to a supervisor worker through a lockdc queue or
-   pouch-backed storage today. A future public runtime request/reply bus may
-   cover this path only after it is deliberately specified for C and Lua.
+   pouch-backed storage today. [Supervisor and Workflow
+   Dispatch](supervisor-workflow-spec.md) specifies the future public runtime
+   request/reply bus for C and Lua; it does not alter this current behavior
+   until implemented.
 3. Supervisor worker owns the audio/SUS handle and returns a result through the
    selected reply path.
 
@@ -712,7 +715,8 @@ This means a Lua route callback and a Lua service callback are not the same
 callback surface in T2. They communicate through copied messages, lockdc, the
 mailbox pump in the same runtime domain, or explicit persistent storage. Across
 the T2 Kore-child/supervisor process boundary, use lockdc queues or pouch-backed
-storage until a public runtime request/reply bus exists.
+storage until the public runtime request/reply bus specified by [Supervisor and
+Workflow Dispatch](supervisor-workflow-spec.md) is implemented.
 
 ## Communication Between Domains
 
@@ -754,10 +758,11 @@ materialize unbounded "streaming" payloads.
 The public application request/reply default is not the private control bus.
 Within a single runtime domain, use `vectis_mailbox` and
 `vectis_mailbox_broker`. Across the T2 Kore-child/supervisor process boundary,
-use lockdc queues or pouch-backed storage today. A future public runtime
-request/reply bus must be introduced deliberately for both C and Lua, with
-bounded copied payloads, explicit timeout semantics, and no borrowed in-process
-pointers.
+use lockdc queues or pouch-backed storage today. [Supervisor and Workflow
+Dispatch](supervisor-workflow-spec.md) defines the future public request/reply
+contract for both C and Lua: bounded copied payloads, explicit timeout
+semantics, and no borrowed in-process pointers. It remains future-facing until
+that API is implemented.
 
 ## Quiescence Guard
 
@@ -1113,5 +1118,6 @@ later service families:
 - The supervisor control channel remains internal lifecycle machinery, not a
   public app request/reply API.
 - Route-to-supervisor application request/reply uses lockdc queues or
-  pouch-backed storage by default until a public runtime bus is deliberately
-  specified and implemented for both C and Lua.
+  pouch-backed storage by default until the public runtime bus specified by
+  [Supervisor and Workflow Dispatch](supervisor-workflow-spec.md) is
+  implemented for both C and Lua.

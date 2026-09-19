@@ -321,9 +321,10 @@ The one native dispatcher is a source router, not a Lua lane. It maps each
 claimed job's registered `kind` to its logical supervisor and enqueues it only
 when that supervisor's selected lane has capacity. Vectis's high-level
 `tx:append_outbox()` rejects an unregistered kind before commit, so it cannot
-create an orphaned Vectis job with no terminal-outcome owner. Raw liblockdc
-remains available for deliberately decoupled producers that need another
-unhandled-job policy.
+create an orphaned Vectis job with no terminal-outcome owner; that rejection
+marks the enclosing transaction failed, making commit impossible and rolling
+back all of its staged state. Raw liblockdc remains available for deliberately
+decoupled producers that need another unhandled-job policy.
 
 `job:payload_source()` is a handler-scoped streaming source. A convenience
 `job:json()` may exist for intentionally materialized small payloads, but it
@@ -373,6 +374,14 @@ the active dispatcher is guarded by a Lockd leader lease. A replacement gains
 leadership only after the prior lease expires or is released. This is an
 availability optimization and does not weaken per-job claims or idempotency.
 
+During shutdown, the dispatcher first stops accepting new IPC wakes and claims,
+then either reaches a terminal outcome for each active job within the shared
+shutdown deadline or releases it for liblockdc claim-expiry recovery. A route
+transaction admitted before Kore ingress closes remains a successful durable
+commit even if its wake is no longer accepted; it is reconciled after restart.
+Shutdown never reports such a committed effect as failed merely because it was
+not dispatched before the deadline.
+
 ## liblockdc requirements
 
 liblockdc already owns the durable parts: workflow transactions, immutable
@@ -397,6 +406,9 @@ Dispatcher acquisition is a separate operation, named here for discussion:
 
 ```c
 typedef struct lc_workflow_dispatcher lc_workflow_dispatcher;
+
+void lc_workflow_dispatcher_config_init(
+    lc_workflow_dispatcher_config *config);
 
 int lc_client_new_workflow(lc_client *client,
                            const lc_workflow_config *config,
@@ -429,6 +441,12 @@ int lc_workflow_dispatcher_wait(lc_workflow_dispatcher *dispatcher,
 int lc_workflow_dispatcher_get_stats(
     lc_workflow_dispatcher *dispatcher,
     lc_workflow_dispatcher_stats *out,
+    lc_error *error);
+int lc_workflow_dispatcher_reconcile(lc_workflow_dispatcher *dispatcher,
+                                     lc_error *error);
+int lc_workflow_dispatcher_replay_dead_letter(
+    lc_workflow_dispatcher *dispatcher,
+    const char *outbox_key,
     lc_error *error);
 void lc_workflow_dispatcher_close(lc_workflow_dispatcher *dispatcher);
 ```
@@ -552,9 +570,9 @@ The workflow facade supplies transactional operations and close/garbage-
 collection cleanup. It has no `run`, `pump`, `next`, claim, retry, or terminal-
 job methods. Its optional `dispatcher()` acquisition method does not itself
 accept a Lua handler. The dispatcher facade alone accepts `handlers` and
-consumes jobs; it does not expose route-side transaction production as a
-shortcut. The two handles make ownership and latency boundaries obvious in Lua
-as well as C.
+consumes jobs, reconciles, and replays dead letters; it does not expose route-
+side transaction production as a shortcut. The two handles make ownership and
+latency boundaries obvious in Lua as well as C.
 
 The direct Lua API wraps a dispatcher acquired from a workflow with an
 owner-state dispatch loop:
@@ -583,11 +601,11 @@ assert(dispatcher:run({
 })) -- blocking; owns this Lua state and handles retries
 ```
 
-The facade also offers bounded `pump(opts)`, `stop()`, `wait()`, and `stats()`.
-`pump()` integrates with a host that already owns an event loop; `run()` is the
-simplest correct choice for a dedicated worker process. It calls Lua only on
-the calling owner state. It must never invoke a handler on liblockdc's private
-dispatcher thread.
+The facade also offers bounded `pump(opts)`, `stop()`, `wait()`, `stats()`,
+`reconcile()`, and `replay_dead_letter(outbox_key)`. `pump()` integrates with a
+host that already owns an event loop; `run()` is the simplest correct choice for
+a dedicated worker process. It calls Lua only on the calling owner state. It
+must never invoke a handler on liblockdc's private dispatcher thread.
 
 #### Lua host-placement contract
 
@@ -635,7 +653,7 @@ the optional distributed notification path above.
   kinds may be assigned to independent logical supervisors and are routed only
   to their selected lane when it has capacity.
 - An unregistered Vectis outbox kind is rejected before commit and creates no
-  durable job.
+  durable job or staged state change.
 - The request path performs no effect I/O and does not wait for dispatcher
   scheduling, handler execution, or reconciliation.
 - A route-to-supervisor signal reaches a ready handler without periodic timer
@@ -659,6 +677,8 @@ the optional distributed notification path above.
   returns one dispatcher; a configuration mismatch is rejected.
 - Closing a workflow neither stops an acquired dispatcher nor loses a committed
   receipt, while a destroyed uncommitted workflow rolls back its transaction.
+- Passive workflow handles reject consume, reconciliation, and dead-letter
+  replay; their dispatcher equivalents perform those operations.
 - Dispatcher stop, replacement after registry cleanup, and client close leave
   no live dispatcher with a dangling client or a stale Lua handler sink.
 - `dispatcher_notify_outbox_key` dispatches a committed key without a namespace
