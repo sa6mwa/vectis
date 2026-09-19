@@ -228,8 +228,9 @@ route worker commits transaction + outbox effect
 ```
 
 The route responds after the transaction commit; it never waits for any later
-arrow. A failed or full signal changes latency only. The durable workflow's
-startup and overflow reconciliation repair correctness.
+arrow. A failed or full signal changes neither the committed result nor the
+response outcome. It is observed and repaired by durable workflow startup and
+overflow reconciliation.
 
 ### Lua surface
 
@@ -311,6 +312,11 @@ outcomes. They do not directly perform the terminal workflow mutation; Vectis
 does that after the handler returns. A handler exception, cancellation, or
 deadline becomes a retry unless the adapter's policy says otherwise.
 
+One dispatcher owns exactly one handler registration for each `(workflow,
+kind)` pair. Registering the same pair twice, including through different
+logical supervisors, fails at declaration time; different kinds from one
+workflow may use different logical supervisors.
+
 `job:payload_source()` is a handler-scoped streaming source. A convenience
 `job:json()` may exist for intentionally materialized small payloads, but it
 must document its memory limit and must not be the only payload API.
@@ -375,26 +381,37 @@ handlers, or run recovery. A route can therefore use an ordinary workflow
 handle to atomically mutate domain state and append an outbox effect without
 starting, retaining, or repeatedly creating a dispatcher thread.
 
+This is a clean pre-1.0 semantic cutover: liblockdc does not retain an implicit
+thread-owning workflow mode or a parallel legacy constructor. Existing hosts
+that need consumption explicitly acquire a dispatcher.
+
 Dispatcher acquisition is a separate operation, named here for discussion:
 
 ```c
 typedef struct lc_workflow_dispatcher lc_workflow_dispatcher;
 
-typedef struct lc_workflow_open_options {
-    lc_workflow_dispatcher *dispatcher; /* optional compatible attachment */
-} lc_workflow_open_options;
-
 int lc_client_new_workflow(lc_client *client,
                            const lc_workflow_config *config,
-                           const lc_workflow_open_options *options,
                            lc_workflow **out,
                            lc_error *error);
+
+int lc_client_new_workflow_with_dispatcher(
+    lc_client *client,
+    const lc_workflow_config *config,
+    lc_workflow_dispatcher *dispatcher,
+    lc_workflow **out,
+    lc_error *error);
 
 int lc_workflow_dispatcher_get_or_start(
     lc_workflow *workflow,
     const lc_workflow_dispatcher_config *config,
     lc_workflow_dispatcher **out,
     lc_error *error);
+
+int lc_workflow_dispatcher_stop(lc_workflow_dispatcher *dispatcher,
+                                long deadline_ms,
+                                lc_error *error);
+void lc_workflow_dispatcher_close(lc_workflow_dispatcher *dispatcher);
 ```
 
 `get_or_start()` resolves the process-local dispatcher registry for the calling
@@ -406,6 +423,10 @@ a dispatcher with different durable semantics. Different `lc_client` instances
 do not share a dispatcher because they may have different connection, identity,
 or ownership properties.
 
+A stopped or failed dispatcher is never returned as running. After its shutdown
+and registry cleanup complete, a later acquisition creates a replacement; it
+does not revive a partially stopped dispatcher or reuse its old handler sink.
+
 An existing compatible dispatcher may be supplied as an optional workflow-open
 attachment. That is a convenience for a worker that already owns the dispatcher;
 it is not required for transactional production. Otherwise a workflow resolves
@@ -415,9 +436,12 @@ dispatch only when its caller explicitly acquires a dispatcher. The Lua form is:
 local workflow = client:new_workflow(config, { dispatcher = dispatcher })
 ```
 
-A dispatcher has its own explicit stop/close lifecycle and remains alive while
-acquired, until its owning client closes, or until its host stops it. Closing an
-arbitrary workflow handle must not stop a shared dispatcher.
+Acquisition and attachment retain the dispatcher. Closing a workflow releases
+only its attachment; it must not stop a shared dispatcher. A dispatcher has its
+own explicit stop/close lifecycle and remains alive while acquired, until its
+owning client closes, or until its host stops it. Client close stops registered
+dispatchers before releasing its registry; outstanding dispatcher handles become
+closed handles and never retain a usable client pointer.
 
 Acquisition may start the dispatcher's private notification and recovery
 infrastructure, but it must not claim or deliver a user effect until a single
@@ -511,8 +535,8 @@ consumes jobs; it does not expose route-side transaction production as a
 shortcut. The two handles make ownership and latency boundaries obvious in Lua
 as well as C.
 
-The direct Lua API wraps a persistent workflow with an owner-state dispatch
-loop:
+The direct Lua API wraps a dispatcher acquired from a workflow with an
+owner-state dispatch loop:
 
 ```lua
 -- worker.lua: run as a dedicated process under the application's service manager
@@ -554,7 +578,7 @@ This distinction must be explicit in liblockdc documentation and examples:
 - `dispatcher:pump()` runs handler code synchronously on the calling Lua state.
   A zero-timeout call is Lua-thread-safe inside a route callback, but it is not
   an acceptable route-dispatch architecture: it performs foreign effects on
-  request latency and still requires the thread-owning workflow object.
+  request latency and still requires the thread-owning dispatcher object.
 - liblockdc does not know whether a generic Lua host is Kore, Vectis, nginx, or
   a custom event loop. It must not attempt to infer host topology or enter a
   Lua closure from its dispatcher thread.
@@ -586,6 +610,8 @@ the optional distributed notification path above.
 
 - Multiple Kore workers concurrently append effects to one workflow; one
   supervisor claims and dispatches each effect exactly once while live.
+- Duplicate `(workflow, kind)` handler declarations fail before runtime; distinct
+  kinds may be assigned to independent logical supervisors.
 - The request path performs no effect I/O and does not wait for dispatcher
   scheduling, handler execution, or reconciliation.
 - A route-to-supervisor signal reaches a ready handler without periodic timer
@@ -609,6 +635,8 @@ the optional distributed notification path above.
   returns one dispatcher; a configuration mismatch is rejected.
 - Closing a workflow neither stops an acquired dispatcher nor loses a committed
   receipt, while a destroyed uncommitted workflow rolls back its transaction.
+- Dispatcher stop, replacement after registry cleanup, and client close leave
+  no live dispatcher with a dangling client or a stale Lua handler sink.
 - `dispatcher_notify_outbox_key` dispatches a committed key without a namespace
   scan and never calls a user handler.
 - Duplicate notifications are coalesced; bounded overflow repairs through
