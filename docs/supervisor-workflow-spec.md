@@ -135,6 +135,9 @@ typedef struct vectis_supervisor vectis_supervisor;
 typedef struct vectis_supervisor_channel vectis_supervisor_channel;
 
 void vectis_supervisor_config_init(vectis_supervisor_config *config);
+vectis_status vectis_app_supervisor_host(vectis_app *app,
+                                         vectis_supervisor_host **out,
+                                         vectis_error *error);
 vectis_status vectis_supervisor_new(vectis_app *app,
                                     const vectis_supervisor_config *config,
                                     vectis_supervisor **out,
@@ -147,6 +150,19 @@ vectis_status vectis_supervisor_stop(vectis_supervisor *self,
 vectis_status vectis_supervisor_wait(vectis_supervisor *self,
                                      long deadline_ms,
                                      vectis_error *error);
+vectis_status vectis_supervisor_channel_get(vectis_supervisor *self,
+                                            vectis_supervisor_channel **out,
+                                            vectis_error *error);
+vectis_status vectis_supervisor_channel_send(
+    vectis_supervisor_channel *channel,
+    uint32_t kind,
+    const void *payload,
+    size_t payload_size,
+    vectis_error *error);
+vectis_status vectis_supervisor_channel_signal(
+    vectis_supervisor_channel *channel,
+    uint32_t kind,
+    vectis_error *error);
 void vectis_supervisor_close(vectis_supervisor *self);
 ```
 
@@ -155,6 +171,14 @@ route-backed app, `start()` before `app->start()` records the requested start;
 it does not materialize threads or clients before the fork boundary. Runtime
 startup materializes the supervisor after Kore readiness. A running supervisor
 may start another already-declared logical supervisor in the host domain.
+
+`vectis_app_supervisor_host()` returns the app-owned host and never transfers
+ownership. Each logical supervisor has one declared inbox channel;
+`vectis_supervisor_channel_get()` returns that borrowed endpoint. Its channel
+configuration, including frame capacity and allowed signal kinds, belongs to the
+supervisor declaration and cannot change after the fork boundary. The C config
+uses immutable `uint32_t` signal-kind values; omission declares no application
+signal kinds.
 
 The receiver shell provides `start`, `stop`, `wait`, `state`, `channel`, and
 typed source-registration operations with the same contract. Its public method
@@ -197,49 +221,74 @@ reserved and are never visible to application handlers.
 
 Channels are declared before fork and assigned an immutable numeric id. Their
 endpoints are inherited by the Kore child and supervisor host. A channel has a
-fixed maximum frame size and bounded message capacity. A frame contains only:
+fixed maximum frame size, bounded message capacity, and a finite declared set
+of signal kinds. A frame contains only:
 
 ```text
 channel id, kind, correlation id, flags, copied byte payload
 ```
+
+Channel descriptors are created close-on-exec and are inherited only across the
+intentional T2 fork. Each post-fork domain closes endpoints it does not own; no
+spawned helper, application `exec`, or unrelated child receives an IPC endpoint.
 
 The initial API has two deliberately different paths:
 
 - `send()`: reliable only within its bounded capacity; it returns an explicit
   full/closed/error status and never blocks an HTTP route indefinitely.
 - `signal()`: a coalescing advisory wake. It may collapse repeated signals and
-  is appropriate only when durable state or another authority can repair a lost
-  wake.
+  carries no authoritative per-event payload. One pending wake is retained per
+  `(channel, kind)` without consuming the channel's data-frame capacity; it is
+  appropriate only when durable state or another authority can repair a lost
+  wake. Undeclared signal kinds are rejected, keeping pending signal state
+  bounded.
 
-Optional request/reply is correlation-id based. It has an explicit deadline and
-removes its reply slot on success, timeout, send failure, or close. IPC payloads
-are copied bytes. Lua table convenience helpers may encode/decode JSON, but
-their materialization is explicit. There are no implicit pointers, closures,
-userdata, or streaming claims across the process boundary.
+A later request/reply extension must be correlation-id based and have its own
+bounded pending-reply capacity. The runtime must allocate opaque correlation ids
+and reject a new request when that capacity is full. It must remove a reply slot
+on success, timeout, send failure, or close; a late or unknown reply is dropped.
+IPC payloads are copied bytes. Lua table convenience helpers may encode/decode
+JSON, but their materialization is explicit. There are no implicit pointers,
+closures, userdata, or streaming claims across the process boundary.
 
 The normal outbox fast path is therefore:
 
 ```text
 route worker commits transaction + outbox effect
-  → nonblocking signal containing durable outbox key
-  → one supervisor process accepts the signal
+  → nonblocking channel send containing durable outbox key
+  → or, if full, coalesced signal(OUTBOX_RECONCILE)
+  → one supervisor process receives the key or reconcile wake
   → liblockdc workflow receives direct-key notification and claims the job
   → supervisor Lua lane runs the handler
 ```
 
 The route responds after the transaction commit; it never waits for any later
-arrow. A failed or full signal changes neither the committed result nor the
-response outcome. It is observed and repaired by durable workflow startup and
-overflow reconciliation.
+arrow. A full send changes neither the committed result nor the response
+outcome: the route emits the payload-free `OUTBOX_RECONCILE` signal, and the
+supervisor schedules indexed reconciliation. A closed send or signal is
+repaired by durable startup recovery. Generic coalesced signals are not used
+for per-outbox-key delivery.
 
 ### Lua surface
 
 `app:supervisor(opts)` declares a logical supervisor and returns a scope. The
 scope does not create a process at declaration time.
 
+`scope:channel()` returns its declared bounded inbox channel.
+`channel:send(kind, bytes)` and `channel:signal(kind)` are nonblocking and
+return `true` or `nil, status`, including `"full"` and `"closed"`. `send()`
+accepts bytes only; a `send_json()` convenience may encode explicitly, subject
+to the same frame bound. `signal()` accepts no payload and only declared signal
+kinds. Lua declares signal-kind labels as strings; Vectis maps those labels to
+immutable numeric ids before fork. Duplicate labels or C numeric values are
+rejected during declaration.
+
 ```lua
 local delivery = app:supervisor({ name = "delivery" })
-local maintenance = app:supervisor({ name = "maintenance" })
+local maintenance = app:supervisor({
+  name = "maintenance",
+  channel = { signal_kinds = { "reindex" } },
+})
 
 delivery:outbox({
   workflow = orders,
@@ -354,12 +403,26 @@ worker. Route workers use their own post-fork workflow clients for transaction
 production and commit transactions concurrently. The supervisor owns a
 separate post-fork client and one workflow dispatcher.
 
-An application declares that workflow once. Vectis derives the route-side
-workflow configuration and supervisor-side dispatcher configuration from that
-single declaration. They must name the same Lockd root, namespace, outbox
-identity, validation policy, and retry policy; a route must not independently
-construct a superficially similar workflow configuration. Separate post-fork
-clients are an isolation and ownership choice, not separate workflow domains.
+Each declared `app:workflow()` also owns one host-level worker-to-dispatcher key
+channel. It is created before fork from the same bounded IPC primitive, but it
+is not a logical supervisor's public inbox: it carries only committed outbox
+keys or the payload-free `OUTBOX_RECONCILE` wake, its sole declared signal kind.
+This lets one native dispatcher route different kinds to several logical
+supervisors without coupling the fast path to any one of their channels.
+
+After a successful high-level transaction commit, Vectis sends every committed
+outbox receipt key to that workflow channel. On the first full send it emits one
+`OUTBOX_RECONCILE` wake instead of attempting to queue more keys; durable
+reconciliation covers the whole committed set. Application route code never
+manually sends workflow receipt keys.
+
+An application declares that workflow once. Vectis derives both route-side
+workflow handles and the supervisor-side dispatcher from that one canonical
+workflow configuration. They must name the same Lockd root, namespace, owner,
+claim and recovery policy, notification capacity, and retry policy; a route must
+not independently construct a superficially similar workflow configuration.
+Separate post-fork clients are an isolation and ownership choice, not separate
+workflow domains.
 
 The dispatcher claims only up to its lane capacity. It renews a claim while a
 long foreign operation is in progress. A successful effect completes the job;
@@ -373,6 +436,9 @@ For multiple Vectis runtimes that deliberately share one app/outbox identity,
 the active dispatcher is guarded by a Lockd leader lease. A replacement gains
 leadership only after the prior lease expires or is released. This is an
 availability optimization and does not weaken per-job claims or idempotency.
+Every such runtime must use the same canonical workflow configuration;
+configuration mismatch fails before leader election rather than allowing two
+processes to apply different dispatch policy to one durable namespace.
 
 During shutdown, the dispatcher first stops accepting new IPC wakes and claims,
 then either reaches a terminal outcome for each active job within the shared
@@ -407,9 +473,6 @@ Dispatcher acquisition is a separate operation, named here for discussion:
 ```c
 typedef struct lc_workflow_dispatcher lc_workflow_dispatcher;
 
-void lc_workflow_dispatcher_config_init(
-    lc_workflow_dispatcher_config *config);
-
 int lc_client_new_workflow(lc_client *client,
                            const lc_workflow_config *config,
                            lc_workflow **out,
@@ -424,7 +487,6 @@ int lc_client_new_workflow_with_dispatcher(
 
 int lc_workflow_dispatcher_get_or_start(
     lc_workflow *workflow,
-    const lc_workflow_dispatcher_config *config,
     lc_workflow_dispatcher **out,
     lc_error *error);
 
@@ -440,7 +502,7 @@ int lc_workflow_dispatcher_wait(lc_workflow_dispatcher *dispatcher,
                                 lc_error *error);
 int lc_workflow_dispatcher_get_stats(
     lc_workflow_dispatcher *dispatcher,
-    lc_workflow_dispatcher_stats *out,
+    lc_workflow_stats *out,
     lc_error *error);
 int lc_workflow_dispatcher_reconcile(lc_workflow_dispatcher *dispatcher,
                                      lc_error *error);
@@ -453,12 +515,23 @@ void lc_workflow_dispatcher_close(lc_workflow_dispatcher *dispatcher);
 
 `get_or_start()` resolves the process-local dispatcher registry for the calling
 client. It returns an already-running compatible dispatcher, or creates and
-starts exactly one lazily. Compatibility requires the same immutable workflow
-identity: client/root, namespace, outbox identity, validation policy, and retry
-policy. A mismatch fails explicitly; it must not silently attach a workflow to
-a dispatcher with different durable semantics. Different `lc_client` instances
-do not share a dispatcher because they may have different connection, identity,
-or ownership properties.
+starts exactly one lazily. Compatibility requires the same client/root and the
+same canonical `lc_workflow_config`, including its namespace, owner, claim and
+recovery policy, notification capacity, timeout, and retry policy. A mismatch
+fails explicitly; it must not silently attach a workflow to a dispatcher with
+different durable semantics. Different `lc_client` instances do not share a
+dispatcher because they may have different connection, identity, or ownership
+properties.
+
+Workflow construction validates, canonicalizes, and retains this configuration
+snapshot; registry comparison never depends on caller-owned config pointers or
+string storage after `new_workflow()` returns.
+
+Acquisition is linearizable with dispatcher stop: concurrent compatible
+acquirers receive the same live dispatcher, while an acquirer racing shutdown
+receives a closed/busy result until registry cleanup permits one replacement.
+It must never transiently create two dispatchers for one client and canonical
+workflow configuration.
 
 A stopped or failed dispatcher is never returned as running. After its shutdown
 and registry cleanup complete, a later acquisition creates a replacement; it
@@ -518,10 +591,10 @@ The function is safe to call only in the process that owns `dispatcher`.
 Vectis delivers the key to that process through its local IPC signal. The
 operation does not execute a foreign effect and does not call user code.
 
-Capacity overflow is visible through `lc_workflow_dispatcher_get_stats()`,
-increments a durable repair counter, and schedules indexed reconciliation. It
-never makes a committed effect disappear. Startup reconciliation and claim-
-expiry recovery remain mandatory.
+Dispatcher direct-notification capacity overflow is visible through
+`lc_workflow_dispatcher_get_stats()`. It increments a durable repair counter
+and schedules indexed reconciliation; it never makes a committed effect
+disappear. Startup reconciliation and claim-expiry recovery remain mandatory.
 
 ### Cross-host notification
 
@@ -563,8 +636,8 @@ assert(dispatcher:run({ handlers = handlers }))
 host otherwise permits its Lockd client operation. It never creates liblockdc
 dispatcher threads. `workflow:dispatcher()` is the explicit acquire-or-start
 operation; it returns the compatible dispatcher already registered for that
-client or starts one lazily. Its optional argument configures dispatcher
-operation only; it cannot contain Lua handlers or override workflow identity.
+client or starts one lazily. It takes no configuration argument: all dispatch
+policy comes from the workflow's canonical `lc_workflow_config`.
 
 The workflow facade supplies transactional operations and close/garbage-
 collection cleanup. It has no `run`, `pump`, `next`, claim, retry, or terminal-
@@ -656,16 +729,23 @@ the optional distributed notification path above.
   durable job or staged state change.
 - The request path performs no effect I/O and does not wait for dispatcher
   scheduling, handler execution, or reconciliation.
-- A route-to-supervisor signal reaches a ready handler without periodic timer
-  polling; signal overflow, supervisor death, and restart recover all effects.
+- A route-to-supervisor key send reaches a ready handler without periodic timer
+  polling; channel overflow, supervisor death, and restart recover all effects.
+- A full outbox-key channel emits `OUTBOX_RECONCILE`, drops no durable state,
+  and schedules reconciliation without requiring a per-key signal payload.
+- A transaction committing several effects sends its returned receipt keys until
+  full, then one reconcile wake recovers every remaining key.
 - Inline Lua closures execute only in the supervisor Lua state; no worker or
   native background thread enters that state.
 - Two logical supervisors run independently in one host process, including
   independent stop/failure policies and channel capacity handling.
 - Isolated Lua lanes reject closure registration and accept only module/entry
   declarations; no one state is entered concurrently.
-- IPC rejects oversized frames, reports full/closed endpoints, cleans timed-out
-  replies, and cannot carry borrowed pointers.
+- IPC rejects oversized frames, reports full/closed endpoints, rejects
+  undeclared signal kinds, and cannot carry borrowed pointers. The later
+  request/reply extension cleans timed-out and late replies.
+- IPC endpoints reach only their declared post-fork domains, are close-on-exec,
+  and do not keep a channel or runtime alive through an unrelated child process.
 - Graceful shutdown stops ingress, stops claims, completes or releases active
   work according to deadline, joins services, and closes every client after the
   fork-safe lifecycle order.
@@ -675,6 +755,10 @@ the optional distributed notification path above.
 - `new_workflow()` performs transactional production without creating a thread.
 - Repeated dispatcher acquisition on compatible workflows from one client
   returns one dispatcher; a configuration mismatch is rejected.
+- Concurrent acquisition and stop never produce two live dispatchers for one
+  canonical workflow configuration.
+- Runtimes sharing one app/outbox identity reject a canonical workflow
+  configuration mismatch before attempting leader election.
 - Closing a workflow neither stops an acquired dispatcher nor loses a committed
   receipt, while a destroyed uncommitted workflow rolls back its transaction.
 - Passive workflow handles reject consume, reconciliation, and dead-letter
