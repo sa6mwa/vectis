@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <openssl/pem.h>
@@ -94,6 +95,72 @@ static void assert_generated_key_is_parseable(const char *path) {
   assert(EVP_PKEY_base_id(key) == EVP_PKEY_RSA);
   fclose(fp);
   EVP_PKEY_free(key);
+}
+
+static void assert_secret_file_mode(const char *path) {
+  struct stat st;
+
+  assert(stat(path, &st) == 0);
+  assert((st.st_mode & 0777) == 0600);
+}
+
+static X509 *read_certificate(const char *path) {
+  FILE *fp;
+  X509 *cert;
+
+  fp = fopen(path, "rb");
+  assert(fp != NULL);
+  cert = PEM_read_X509(fp, NULL, NULL, NULL);
+  assert(fclose(fp) == 0);
+  assert(cert != NULL);
+  return cert;
+}
+
+static void assert_distinct_bundle_serials(const char *const *paths,
+                                           size_t path_count) {
+  X509 *certificates[8];
+  size_t i;
+  size_t j;
+
+  assert(path_count <= sizeof(certificates) / sizeof(certificates[0]));
+  for (i = 0u; i < path_count; ++i) {
+    BIGNUM *serial;
+
+    certificates[i] = read_certificate(paths[i]);
+    serial = ASN1_INTEGER_to_BN(X509_get_serialNumber(certificates[i]), NULL);
+    assert(serial != NULL);
+    assert(!BN_is_negative(serial));
+    assert(!BN_is_zero(serial));
+    BN_free(serial);
+  }
+  for (i = 0u; i < path_count; ++i) {
+    for (j = 0u; j < i; ++j) {
+      assert(ASN1_INTEGER_cmp(X509_get_serialNumber(certificates[i]),
+                              X509_get_serialNumber(certificates[j])) != 0);
+    }
+  }
+  for (i = 0u; i < path_count; ++i) {
+    X509_free(certificates[i]);
+  }
+}
+
+static void append_certificate_from_bundle(const char *bundle_path,
+                                           const char *output_path,
+                                           const char *mode) {
+  FILE *bundle;
+  FILE *output;
+  X509 *cert;
+
+  bundle = fopen(bundle_path, "rb");
+  assert(bundle != NULL);
+  cert = PEM_read_X509(bundle, NULL, NULL, NULL);
+  assert(cert != NULL);
+  assert(fclose(bundle) == 0);
+  output = fopen(output_path, mode);
+  assert(output != NULL);
+  assert(PEM_write_X509(output, cert) == 1);
+  assert(fclose(output) == 0);
+  X509_free(cert);
 }
 
 static void assert_generated_csr_is_parseable(const char *csr_path,
@@ -215,7 +282,8 @@ static void write_text_file(const char *path, const char *text) {
   assert(fclose(fp) == 0);
 }
 
-static void write_expired_bundle(const char *path) {
+static void write_test_bundle_with_validity(const char *path,
+                                            int malformed_time) {
   EVP_PKEY_CTX *key_ctx;
   EVP_PKEY *key;
   X509 *cert;
@@ -237,6 +305,10 @@ static void write_expired_bundle(const char *path) {
          NULL);
   assert(X509_gmtime_adj(X509_get_notAfter(cert), -1L * 24L * 60L * 60L) !=
          NULL);
+  if (malformed_time) {
+    assert(ASN1_STRING_set(X509_getm_notBefore(cert), "991301000000Z", 13) ==
+           1);
+  }
   assert(X509_set_pubkey(cert, key) == 1);
   name = X509_get_subject_name(cert);
   assert(name != NULL);
@@ -255,6 +327,14 @@ static void write_expired_bundle(const char *path) {
   X509_free(cert);
   EVP_PKEY_free(key);
   EVP_PKEY_CTX_free(key_ctx);
+}
+
+static void write_expired_bundle(const char *path) {
+  write_test_bundle_with_validity(path, 0);
+}
+
+static void write_invalid_time_bundle(const char *path) {
+  write_test_bundle_with_validity(path, 1);
 }
 
 int main(void) {
@@ -278,6 +358,16 @@ int main(void) {
   char csr_path[128];
   char malformed_path[128];
   char expired_path[128];
+  char invalid_time_path[128];
+  char serial_paths[5][128];
+  const char *serial_path_refs[5];
+  char second_ca_bundle_path[128];
+  char combined_ca_bundle_path[128];
+  char second_signed_bundle_path[128];
+  char intermediate_ca_bundle_path[128];
+  char chained_leaf_bundle_path[128];
+  char chained_certificate_path[128];
+  size_t i;
 
   vectis_error_clear(&error);
   vectis_cert_info_init(&info);
@@ -291,11 +381,14 @@ int main(void) {
   assert(strstr(error.message, "output_key_path") != NULL);
 
   make_temp_path(csr_key_path, sizeof(csr_key_path), "csr-key");
+  write_text_file(csr_key_path, "old private key");
+  assert(chmod(csr_key_path, 0644) == 0);
   key_config.output_key_path = csr_key_path;
   key_config.key_bits = 0u;
   status = vectis_cert_generate_private_key(&key_config, &error);
   assert(status == VECTIS_OK);
   assert_generated_key_is_parseable(csr_key_path);
+  assert_secret_file_mode(csr_key_path);
 
   status = vectis_cert_generate_csr(NULL, &error);
   assert(status == VECTIS_ERR_INVALID);
@@ -354,6 +447,8 @@ int main(void) {
 
   vectis_cert_bundle_config_init(&config);
   make_temp_path(bundle_path, sizeof(bundle_path), "cert-bundle");
+  write_text_file(bundle_path, "old certificate bundle");
+  assert(chmod(bundle_path, 0644) == 0);
   config.subject.common_name = "api.local";
   config.subject.organization = "Vectis";
   config.dns_names = "api.local, api.internal";
@@ -365,6 +460,7 @@ int main(void) {
   assert(status == VECTIS_OK);
   assert(error.code == VECTIS_OK);
   assert_generated_bundle_is_parseable(bundle_path);
+  assert_secret_file_mode(bundle_path);
   source = vectis_source_from_path(bundle_path);
   status = vectis_cert_validate_bundle(&source, &error);
   assert(status == VECTIS_OK);
@@ -415,6 +511,14 @@ int main(void) {
   assert(strstr(error.message, "expired") != NULL);
   remove(expired_path);
 
+  make_temp_path(invalid_time_path, sizeof(invalid_time_path), "invalid-time");
+  write_invalid_time_bundle(invalid_time_path);
+  source = vectis_source_from_path(invalid_time_path);
+  status = vectis_cert_validate_bundle(&source, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "validity timestamp") != NULL);
+  remove(invalid_time_path);
+
   vectis_cert_bundle_config_init(&ca_config);
   vectis_cert_bundle_config_init(&config);
   make_temp_path(ca_bundle_path, sizeof(ca_bundle_path), "ca-bundle");
@@ -438,6 +542,8 @@ int main(void) {
   config.valid_days = 30L;
   status = vectis_cert_generate_bundle(&config, &error);
   assert(status == VECTIS_OK);
+  assert_secret_file_mode(signed_bundle_path);
+  assert_secret_file_mode(signed_key_path);
   assert_bundle_is_signed_by(signed_bundle_path, ca_bundle_path,
                              "Vectis Test CA");
   source = vectis_source_from_path(signed_bundle_path);
@@ -449,10 +555,105 @@ int main(void) {
   status =
       vectis_cert_validate_pair(&cert_source, &key_source, &ca_source, &error);
   assert(status == VECTIS_OK);
-  remove(ca_bundle_path);
+
+  /* Certificate sources can carry the leaf followed by untrusted
+   * intermediates; the supplied CA bundle remains the trust anchor. */
+  make_temp_path(intermediate_ca_bundle_path,
+                 sizeof(intermediate_ca_bundle_path), "intermediate-ca");
+  make_temp_path(chained_leaf_bundle_path, sizeof(chained_leaf_bundle_path),
+                 "chained-leaf");
+  make_temp_path(chained_certificate_path, sizeof(chained_certificate_path),
+                 "chained-certificate");
+  vectis_cert_bundle_config_init(&ca_config);
+  ca_config.subject.common_name = "Vectis Intermediate CA";
+  ca_config.output_bundle_path = intermediate_ca_bundle_path;
+  ca_config.ca_cert_path = ca_bundle_path;
+  ca_config.ca_key_path = ca_bundle_path;
+  ca_config.is_ca = 1;
+  ca_config.key_bits = 1024u;
+  ca_config.valid_days = 30L;
+  status = vectis_cert_generate_bundle(&ca_config, &error);
+  assert(status == VECTIS_OK);
+  vectis_cert_bundle_config_init(&config);
+  config.subject.common_name = "chained-client.local";
+  config.output_bundle_path = chained_leaf_bundle_path;
+  config.ca_cert_path = intermediate_ca_bundle_path;
+  config.ca_key_path = intermediate_ca_bundle_path;
+  config.key_bits = 1024u;
+  config.valid_days = 30L;
+  status = vectis_cert_generate_bundle(&config, &error);
+  assert(status == VECTIS_OK);
+  append_certificate_from_bundle(chained_leaf_bundle_path,
+                                 chained_certificate_path, "wb");
+  append_certificate_from_bundle(intermediate_ca_bundle_path,
+                                 chained_certificate_path, "ab");
+  cert_source = vectis_source_from_path(chained_certificate_path);
+  key_source = vectis_source_from_path(chained_leaf_bundle_path);
+  ca_source = vectis_source_from_path(ca_bundle_path);
+  status =
+      vectis_cert_validate_pair(&cert_source, &key_source, &ca_source, &error);
+  assert(status == VECTIS_OK);
+  remove(intermediate_ca_bundle_path);
+  remove(chained_leaf_bundle_path);
+  remove(chained_certificate_path);
   remove(signed_bundle_path);
   remove(signed_cert_path);
   remove(signed_key_path);
+
+  /* Serial values must remain unique even when multiple issuances land in one
+   * wall-clock second. */
+  vectis_cert_bundle_config_init(&config);
+  config.subject.common_name = "serial.local";
+  config.key_bits = 1024u;
+  for (i = 0u; i < sizeof(serial_paths) / sizeof(serial_paths[0]); ++i) {
+    make_temp_path(serial_paths[i], sizeof(serial_paths[i]), "cert-serial");
+    serial_path_refs[i] = serial_paths[i];
+    config.output_bundle_path = serial_paths[i];
+    status = vectis_cert_generate_bundle(&config, &error);
+    assert(status == VECTIS_OK);
+  }
+  assert_distinct_bundle_serials(
+      serial_path_refs, sizeof(serial_path_refs) / sizeof(serial_path_refs[0]));
+  for (i = 0u; i < sizeof(serial_paths) / sizeof(serial_paths[0]); ++i) {
+    remove(serial_paths[i]);
+  }
+
+  /* A CA bundle is a trust set: validation must consider every certificate,
+   * not merely the first PEM object. */
+  make_temp_path(second_ca_bundle_path, sizeof(second_ca_bundle_path),
+                 "second-ca-bundle");
+  make_temp_path(combined_ca_bundle_path, sizeof(combined_ca_bundle_path),
+                 "combined-ca-bundle");
+  make_temp_path(second_signed_bundle_path, sizeof(second_signed_bundle_path),
+                 "second-signed-bundle");
+  vectis_cert_bundle_config_init(&ca_config);
+  ca_config.subject.common_name = "Vectis Second Test CA";
+  ca_config.output_bundle_path = second_ca_bundle_path;
+  ca_config.is_ca = 1;
+  ca_config.key_bits = 1024u;
+  status = vectis_cert_generate_bundle(&ca_config, &error);
+  assert(status == VECTIS_OK);
+  append_certificate_from_bundle(ca_bundle_path, combined_ca_bundle_path, "wb");
+  append_certificate_from_bundle(second_ca_bundle_path, combined_ca_bundle_path,
+                                 "ab");
+  vectis_cert_bundle_config_init(&config);
+  config.subject.common_name = "second-ca-client.local";
+  config.output_bundle_path = second_signed_bundle_path;
+  config.ca_cert_path = second_ca_bundle_path;
+  config.ca_key_path = second_ca_bundle_path;
+  config.key_bits = 1024u;
+  status = vectis_cert_generate_bundle(&config, &error);
+  assert(status == VECTIS_OK);
+  cert_source = vectis_source_from_path(second_signed_bundle_path);
+  key_source = vectis_source_from_path(second_signed_bundle_path);
+  ca_source = vectis_source_from_path(combined_ca_bundle_path);
+  status =
+      vectis_cert_validate_pair(&cert_source, &key_source, &ca_source, &error);
+  assert(status == VECTIS_OK);
+  remove(second_ca_bundle_path);
+  remove(combined_ca_bundle_path);
+  remove(second_signed_bundle_path);
+  remove(ca_bundle_path);
   vectis_cert_info_cleanup(&info);
   return 0;
 }

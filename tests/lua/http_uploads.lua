@@ -48,6 +48,14 @@ for _, method in ipairs({"POST", "PUT", "PATCH"}) do
         assert(result.status == 200 and result.body == "GET", kind .. " redirect " .. code)
       end
     else
+      for _, code in ipairs({301, 302}) do
+        opts.url = base .. "/" .. kind .. "/" .. code
+        opts.follow_redirects = true
+        result = kind == "json" and curl.stream_json(opts) or curl.perform(opts)
+        assert(result.ok, result.error)
+        assert(result.status == 200 and result.body == method,
+            kind .. " " .. method .. " redirect " .. code)
+      end
       opts.url = base .. "/" .. kind .. "/303"
       opts.follow_redirects = true
       result = kind == "json" and curl.stream_json(opts) or curl.perform(opts)

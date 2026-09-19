@@ -131,7 +131,8 @@ local function add_option(owner, spec, flag)
   if type(key) ~= "string" or key == "" then
     fail("option '" .. spec.long .. "' has an invalid key")
   end
-  if owner._long[spec.long] or (spec.short and owner._short[spec.short]) then
+  if owner._long[spec.long] or (spec.short and owner._short[spec.short]) or
+      owner._keys[key] then
     fail("option '" .. spec.long .. "' conflicts with an existing option")
   end
   spec = copy(spec)
@@ -141,6 +142,7 @@ local function add_option(owner, spec, flag)
     spec.default = false
   end
   owner._long[spec.long] = spec
+  owner._keys[key] = spec
   if spec.short then
     owner._short[spec.short] = spec
   end
@@ -152,6 +154,7 @@ local function new_option_owner()
   return {
     _long = {},
     _short = {},
+    _keys = {},
     _options = {},
   }
 end
@@ -276,7 +279,8 @@ end
 
 local function check_required(options, result)
   for _, spec in ipairs(options) do
-    if spec.required and (result.options[spec.key] == nil or
+    if spec.required and ((spec.flag and result.options[spec.key] ~= true) or
+        result.options[spec.key] == nil or
         (spec.repeatable and #result.options[spec.key] == 0)) then
       return nil, "option --" .. spec.long .. " is required"
     end
@@ -307,11 +311,31 @@ function M.new(opts)
   return cli
 end
 
+local function global_option_conflicts(cli, spec)
+  if type(spec) ~= "table" then
+    return false
+  end
+  for _, command in ipairs(cli._command_order) do
+    if command._long[spec.long] or
+        (spec.short and command._short[spec.short]) or
+        command._keys[option_key(spec)] then
+      return true
+    end
+  end
+  return false
+end
+
 function Cli:flag(spec)
+  if global_option_conflicts(self, spec) then
+    fail("global option conflicts with a command option")
+  end
   return add_option(self, spec, true)
 end
 
 function Cli:option(spec)
+  if global_option_conflicts(self, spec) then
+    fail("global option conflicts with a command option")
+  end
   return add_option(self, spec, false)
 end
 
@@ -345,7 +369,8 @@ end
 function Command:flag(spec)
   if type(spec) == "table" and
       (self.cli._long[spec.long] or
-          (spec.short and self.cli._short[spec.short])) then
+          (spec.short and self.cli._short[spec.short]) or
+          self.cli._keys[option_key(spec)]) then
     fail("command option conflicts with a global option")
   end
   return add_option(self, spec, true)
@@ -354,7 +379,8 @@ end
 function Command:option(spec)
   if type(spec) == "table" and
       (self.cli._long[spec.long] or
-          (spec.short and self.cli._short[spec.short])) then
+          (spec.short and self.cli._short[spec.short]) or
+          self.cli._keys[option_key(spec)]) then
     fail("command option conflicts with a global option")
   end
   return add_option(self, spec, false)
@@ -435,6 +461,11 @@ function Cli:parse(argv)
       offset = 1
       while offset <= #short do
         name = short:sub(offset, offset)
+        if name == "h" then
+          result.help = true
+          result.command = command and command.name or nil
+          return result
+        end
         if command == nil then
           local default = resolve_default_command(self)
           if default and default._short[name] then

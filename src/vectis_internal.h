@@ -292,4 +292,9 @@ const char *
 vectis_internal_response_header_value(const vectis_response *response,
                                       size_t index);
 
+char *vectis_internal_sftp_remote_path_url(const char *path,
+                                           vectis_error *error);
+char *vectis_internal_mqtt_topic_url(const char *broker_url, const char *topic,
+                                     vectis_error *error);
+
 #endif

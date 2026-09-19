@@ -1,0 +1,4 @@
+# libssh2 1.11.1 leaks Curve25519 shared-secret allocations when a session
+# transitions through its EAGAIN key-exchange path.  Keep this restricted to
+# the upstream frame so LeakSanitizer still rejects every Vectis allocation.
+leak:kex_method_curve25519_key_exchange

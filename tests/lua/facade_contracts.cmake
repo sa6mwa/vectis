@@ -159,6 +159,13 @@ local verified = assert(vectis.auth.verify({
 assert(verified.authenticated == true)
 assert(verified.auth_mode == "basic")
 assert(verified.client_id == webdav_key.client_id)
+local invalid_mode_ok, invalid_mode_error = pcall(vectis.auth.verify, {
+  app = auth_app,
+  authorization = authorization,
+  allowed_modes = {"basci"},
+})
+assert(invalid_mode_ok == false)
+assert(tostring(invalid_mode_error):find("unsupported auth mode: basci", 1, true))
 
 local native_provider = assert(vectis.auth.provider_native({
   app = auth_app,
@@ -226,6 +233,12 @@ assert(flow_provider.realm == "facade-flow")
 assert(flow_provider.browser_session.mode == "m2m_and_browser")
 assert(flow_provider.browser_session.cookie_name == "facade_session")
 assert(flow_provider.browser_login_path == "/_vectis/auth/login")
+local default_browser_workflow = assert(vectis.auth.workflow({
+  app = auth_app,
+  browser_session = {mode = "m2m_and_browser"},
+}))
+assert(default_browser_workflow:provider().browser_login_path ==
+    "/_vectis/auth/login")
 for index, session in ipairs({false, {}, {mode = "m2m_only"}}) do
   local flow = vectis.auth.workflow({
     app = auth_app, path_prefix = "/auth", browser_session = session or nil,
@@ -754,6 +767,22 @@ local timeout_http = http.normalize({
 assert(timeout_http.error.kind == "transport")
 assert_status_error(timeout_http.error, vectis.ERR_TIMEOUT, "timeout")
 
+local json_decode_http = http.normalize({
+  ok = false,
+  code = 0,
+  error = "invalid JSON response",
+  json_error = "expected JSON value",
+  attempts = 1,
+})
+assert(json_decode_http.ok == false)
+assert(json_decode_http.transport_ok == true)
+assert(json_decode_http.error.kind == "json_decode")
+assert_status_error(json_decode_http.error, vectis.ERR_INVALID,
+                    "expected JSON value")
+assert(json_decode_http.error.source == "lonejson")
+assert(json_decode_http.error.source_code == vectis.ERROR_SOURCE_LONEJSON)
+assert(json_decode_http.error_message == "invalid JSON response")
+
 local status_http = http.normalize({
   ok = true,
   status = 404,
@@ -768,6 +797,12 @@ assert_status_error(status_http.error, vectis.ERR_STATE,
 assert(status_http.error.http_status == 404)
 assert(status_http.error.source == "curl")
 assert(status_http.error.body == "missing")
+assert(http.error_for(status_http) == status_http.error)
+assert(webdav.error_for(status_http) == status_http.error)
+local normalized_http = http.normalize(status_http)
+assert(normalized_http == status_http)
+assert(normalized_http.transport_ok == true)
+assert(normalized_http.error.kind == "http_status")
 
 local rest_response = assert(rest.json({
   ok = true,
@@ -1009,7 +1044,11 @@ do
     return {ok = true, status = 200, body = ""}
   end
   for _, string_form in ipairs({false, true}) do
-    local headers = {Accept = "text/plain", Depth = "original"}
+    local headers = {
+      Accept = "text/plain", authorization = "old authorization",
+      depth = "original", destination = "https://old.test/target",
+      overwrite = "T",
+    }
     local opts = {
       headers = headers, authorization = "Bearer test-only-secret",
       depth = 0, destination = "https://first.test/target", overwrite = "F",
@@ -1025,13 +1064,18 @@ do
     assert(sent.headers.Depth == "0")
     assert(sent.headers.Destination == opts.destination)
     assert(sent.headers.Overwrite == "F")
-    assert(headers.Depth == "original")
+    assert(sent.headers.authorization == nil and sent.headers.depth == nil)
+    assert(sent.headers.destination == nil and sent.headers.overwrite == nil)
+    assert(headers.depth == "original")
+    assert(headers.authorization == "old authorization")
+    assert(headers.destination == "https://old.test/target")
+    assert(headers.overwrite == "T")
     assert(headers.Authorization == nil and headers.Destination == nil)
     assert(headers.Overwrite == nil and headers.Accept == "text/plain")
     webdav.get("https://second.test/source", {headers = headers})
     assert(sent.url == "https://second.test/source")
     assert(sent.headers.Authorization == nil and sent.headers.Destination == nil)
-    assert(sent.headers.Overwrite == nil and sent.headers.Depth == "original")
+    assert(sent.headers.Overwrite == nil and sent.headers.depth == "original")
   end
   curl.perform = perform
 end

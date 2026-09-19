@@ -324,6 +324,7 @@ int main(void) {
   char directory_temp[] = "/tmp/vectis-embedded-fs-dir.XXXXXX";
   char verify_temp[] = "/tmp/vectis-embedded-fs-verify.XXXXXX";
   char verify_directory_temp[] = "/tmp/vectis-embedded-fs-verify-dir.XXXXXX";
+  char uppercase_temp[] = "/tmp/vectis-embedded-fs-uppercase.XXXXXX";
   char extracted[512];
   char extracted_app[512];
   char user_file[512];
@@ -365,7 +366,7 @@ int main(void) {
       "{\"format\":\"vectis-pack\",\"extract_mode\":\"repair\",\"assets\":["
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
       "\"sha256\":"
-      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
+      "\"5891B5B522D5DF086D0FF0B110FBD9D21BB4FC7163AF34D08286A2E846F6BE03\"}]}";
   static const char invalid_extract_mode_manifest[] =
       "{\"format\":\"vectis-pack\",\"extract_mode\":\"invalid\",\"assets\":["
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
@@ -532,6 +533,18 @@ int main(void) {
   extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
   status = vectis_embedded_fs_extract(fs, &extract, &error);
   expect(status == VECTIS_OK, "verify extract policy accepts matching files");
+  expect(chmod(extracted_app, 0600) == 0,
+         "changes matching file permissions for verify fixture");
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify extract policy rejects mismatched file permissions");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_OK,
+         "repair extract policy restores mismatched file permissions");
+  expect(stat(extracted_app, &st) == 0 && (st.st_mode & 0777u) == 0644u,
+         "repair restores the manifest file permissions");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
   write_file(extracted_app, "mutated\n");
   status = vectis_embedded_fs_extract(fs, &extract, &error);
   expect(status == VECTIS_ERR_CONFLICT,
@@ -767,6 +780,18 @@ int main(void) {
   expect(status == VECTIS_OK, "overwrite explicit directory succeeds");
   expect(stat(directory_path, &st) == 0 && (st.st_mode & 0777u) == 0755u,
          "overwrite still applies manifest directory permissions");
+  expect(chmod(directory_path, 0700) == 0,
+         "changes matching directory permissions for verify fixture");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify extract policy rejects mismatched directory permissions");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
+  expect(status == VECTIS_OK,
+         "repair extract policy restores mismatched directory permissions");
+  expect(stat(directory_path, &st) == 0 && (st.st_mode & 0777u) == 0755u,
+         "repair restores the manifest directory permissions");
   remove_tree(directory_temp);
   vectis_embedded_fs_close(directory_fs);
 
@@ -810,6 +835,20 @@ int main(void) {
   expect(status == VECTIS_ERR_INVALID && fs == NULL,
          "rejects out-of-bounds embedded assets");
 
+  error.code = VECTIS_ERR_CONFLICT;
+  (void)snprintf(error.message, sizeof(error.message), "stale error");
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = "{";
+  config.manifest_json_size = 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL &&
+             error.code == VECTIS_ERR_INVALID &&
+             strcmp(error.message, "stale error") != 0,
+         "malformed manifests replace stale errors with their parse failure");
+
   vectis_embedded_fs_config_init(&config);
   config.payload = "hello\n";
   config.payload_size = 6u;
@@ -821,6 +860,17 @@ int main(void) {
              vectis_embedded_fs_default_extract_policy(fs) ==
                  VECTIS_EMBEDDED_FS_EXTRACT_REPAIR,
          "reads manifest default extract policy");
+  expect(mkdtemp(uppercase_temp) != NULL,
+         "creates uppercase digest verification temp directory");
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = uppercase_temp;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_OK, "extracts an uppercase digest manifest");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_OK,
+         "verify accepts an uppercase digest manifest after extraction");
+  remove_tree(uppercase_temp);
   vectis_embedded_fs_close(fs);
 
   vectis_embedded_fs_config_init(&config);

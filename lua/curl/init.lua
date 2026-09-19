@@ -44,11 +44,15 @@ function M.json(opts)
   end
 
   local result = core.perform(opts)
-  if result.body and result.body ~= "" then
+  if result.ok == true and result.body and result.body ~= "" then
     local ok, value = pcall(lonejson.decode_value, result.body)
     if ok then
       result.json = value
       result.response_json = value
+    else
+      result.ok = false
+      result.json_error = tostring(value)
+      result.error = result.json_error
     end
   end
   return result

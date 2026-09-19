@@ -3075,6 +3075,11 @@ const char *vectis_request_ip(vectis_request *request);
 const char *vectis_request_path_param(vectis_request *request,
                                       const char *name);
 const char *vectis_request_query(vectis_request *request, const char *name);
+/* Return the number of parsed query parameters, preserving request order. */
+size_t vectis_request_query_count(const vectis_request *request);
+/* Return a parsed query parameter by index. Either output may be NULL. */
+int vectis_request_query_at(const vectis_request *request, size_t index,
+                            const char **name, const char **value);
 const char *vectis_request_header(vectis_request *request, const char *name);
 struct http_request *vectis_request_kore(vectis_request *request);
 struct lc_source *vectis_request_body_reader(vectis_request *request);

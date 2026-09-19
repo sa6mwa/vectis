@@ -248,6 +248,21 @@ assert(protected_redirect.status == 303)
 assert(protected_redirect.headers:lower():find(
     "location: /redirect-flow/login?return=/.stats", 1, true),
     protected_redirect.headers)
+local protected_query_redirect = request("/.stats?view=detail&tag=x", "GET", nil, {
+  ["Accept"] = "text/html",
+})
+assert(protected_query_redirect.ok == true, protected_query_redirect.error)
+assert(protected_query_redirect.status == 303)
+assert(protected_query_redirect.headers:lower():find(
+    "location: /redirect-flow/login?return=/.stats%3f%2576%2569%2565%2577%3d%2564%2565%2574%2561%2569%256c%26%2574%2561%2567%3d%2578", 1, true),
+    protected_query_redirect.headers)
+local escaped_query_redirect = request("/.stats?tag=a%26b%23c%2Bd", "GET", nil, {
+  ["Accept"] = "text/html",
+})
+assert(escaped_query_redirect.status == 303)
+assert(escaped_query_redirect.headers:lower():find(
+    "return=/.stats%3f%2574%2561%2567%3d%2561%2526%2562%2523%2563%252b%2564", 1, true),
+    escaped_query_redirect.headers)
 local redirect_complete = request("/redirect-flow/continue", "POST",
     "username=lua-session-user&password=lua-session-password&return=/.stats",
     navigation_headers)

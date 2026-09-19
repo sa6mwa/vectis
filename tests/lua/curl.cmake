@@ -64,6 +64,20 @@ local plain = curl.perform({
 assert(plain.ok == true, plain.error)
 assert(plain.body == "plain curl body\n")
 
+for _, headers in ipairs({
+  { ["X-Test"] = "safe\r\nX-Injected: yes" },
+  { ["Invalid Header"] = "safe" },
+  { ["X-Test"] = "safe\0truncated" },
+}) do
+  local ok, err = pcall(curl.perform, {
+    url = body_url,
+    protocols = "file",
+    headers = headers,
+  })
+  assert(ok == false)
+  assert(tostring(err):find("curl header", 1, true))
+end
+
 local decoded = curl.json({
   url = json_url,
   protocols = "file",

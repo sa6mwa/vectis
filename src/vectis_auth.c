@@ -408,6 +408,11 @@ static int vectis_auth_modes_to_lonejson(unsigned modes) {
   return out;
 }
 
+static int vectis_auth_modes_allow_m2m(unsigned modes) {
+  return modes == VECTIS_AUTH_MODE_DEFAULT ||
+         (modes & (VECTIS_AUTH_MODE_BASIC | VECTIS_AUTH_MODE_BEARER)) != 0u;
+}
+
 static unsigned vectis_auth_mode_from_lonejson(unsigned mode) {
   if ((mode & LONEJSON_M2M_AUTH_BASIC) != 0u) {
     return VECTIS_AUTH_MODE_BASIC;
@@ -4912,6 +4917,11 @@ vectis_auth_issue_credential(const vectis_auth_store_config *store_config,
                      "auth credential subject is required");
     return VECTIS_ERR_INVALID;
   }
+  if (!vectis_auth_modes_allow_m2m(issue_config->auth_modes)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "M2M credentials require Basic or Bearer auth mode");
+    return VECTIS_ERR_INVALID;
+  }
   vectis_auth_issued_credential_init(out);
   runtime = NULL;
   memset(&lock, 0, sizeof(lock));
@@ -7799,6 +7809,10 @@ vectis_status vectis_auth_verify_authorization(
     return VECTIS_ERR_INVALID;
   }
   vectis_auth_result_init(out);
+  if (!vectis_auth_modes_allow_m2m(allowed_auth_modes)) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
   status = vectis_auth_lock_open(store_config, &lock, error);
   if (status != VECTIS_OK) {
     return status;
@@ -8054,7 +8068,10 @@ static int vectis_auth_native_provider_login_redirect(
     vectis_auth_provider_response *response) {
   static const char hex[] = "0123456789ABCDEF";
   const char *resource;
+  const char *query_name;
+  const char *query_value;
   size_t used;
+  size_t query_index;
   const unsigned char *cursor;
 
   if (config == NULL || response == NULL ||
@@ -8089,6 +8106,47 @@ static int vectis_auth_native_provider_login_redirect(
         return 0;
       }
       response->redirect_location[used++] = '%';
+      response->redirect_location[used++] = hex[*cursor >> 4u];
+      response->redirect_location[used++] = hex[*cursor & 0x0fu];
+    }
+  }
+  for (query_index = 0u;
+       query_index < vectis_request_query_count(request->request);
+       ++query_index) {
+    if (!vectis_request_query_at(request->request, query_index, &query_name,
+                                 &query_value)) {
+      return 0;
+    }
+    for (cursor = (const unsigned char *)(query_index == 0u ? "?" : "&");
+         *cursor != '\0'; ++cursor) {
+      if (used + 3u >= sizeof(response->redirect_location))
+        return 0;
+      response->redirect_location[used++] = '%';
+      response->redirect_location[used++] = hex[*cursor >> 4u];
+      response->redirect_location[used++] = hex[*cursor & 0x0fu];
+    }
+    for (cursor = (const unsigned char *)query_name; *cursor != '\0';
+         ++cursor) {
+      if (used + 5u >= sizeof(response->redirect_location))
+        return 0;
+      response->redirect_location[used++] = '%';
+      response->redirect_location[used++] = '2';
+      response->redirect_location[used++] = '5';
+      response->redirect_location[used++] = hex[*cursor >> 4u];
+      response->redirect_location[used++] = hex[*cursor & 0x0fu];
+    }
+    if (used + 3u >= sizeof(response->redirect_location))
+      return 0;
+    response->redirect_location[used++] = '%';
+    response->redirect_location[used++] = '3';
+    response->redirect_location[used++] = 'D';
+    for (cursor = (const unsigned char *)query_value; *cursor != '\0';
+         ++cursor) {
+      if (used + 5u >= sizeof(response->redirect_location))
+        return 0;
+      response->redirect_location[used++] = '%';
+      response->redirect_location[used++] = '2';
+      response->redirect_location[used++] = '5';
       response->redirect_location[used++] = hex[*cursor >> 4u];
       response->redirect_location[used++] = hex[*cursor & 0x0fu];
     }

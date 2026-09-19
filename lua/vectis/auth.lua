@@ -1,6 +1,7 @@
 local core = require("vectis.auth.core")
 
 local M = {}
+local default_path_prefix = "/_vectis/auth"
 
 for key, value in pairs(core) do
   M[key] = value
@@ -85,10 +86,9 @@ end
 function workflow:provider(opts)
   local config = merge_tables(self.config, opts)
   local provider = select_keys(config, provider_keys)
-  local path_prefix = config.path_prefix or config.prefix
+  local path_prefix = config.path_prefix or config.prefix or default_path_prefix
 
-  if provider.browser_login_path == nil and path_prefix ~= nil and
-      type(config.browser_session) == "table" and
+  if provider.browser_login_path == nil and type(config.browser_session) == "table" and
       config.browser_session.mode == "m2m_and_browser" then
     path_prefix = path_prefix:gsub("/+$", "")
     provider.browser_login_path =

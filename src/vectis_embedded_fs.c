@@ -249,9 +249,8 @@ static int vectis_embedded_hex_value(char ch) {
   return -1;
 }
 
-static int vectis_embedded_sha256_matches(const unsigned char *data,
-                                          size_t size, const char *hex) {
-  unsigned char actual[SHA256_DIGEST_LENGTH];
+static int vectis_embedded_sha256_hex_matches(
+    const unsigned char actual[SHA256_DIGEST_LENGTH], const char *hex) {
   unsigned char expected[SHA256_DIGEST_LENGTH];
   size_t i;
   int hi;
@@ -268,8 +267,15 @@ static int vectis_embedded_sha256_matches(const unsigned char *data,
     }
     expected[i] = (unsigned char)((hi << 4) | lo);
   }
-  SHA256(data, size, actual);
   return memcmp(actual, expected, SHA256_DIGEST_LENGTH) == 0;
+}
+
+static int vectis_embedded_sha256_matches(const unsigned char *data,
+                                          size_t size, const char *hex) {
+  unsigned char actual[SHA256_DIGEST_LENGTH];
+
+  SHA256(data, size, actual);
+  return vectis_embedded_sha256_hex_matches(actual, hex);
 }
 
 static int vectis_embedded_sha256_hex_valid(const char *hex) {
@@ -284,19 +290,6 @@ static int vectis_embedded_sha256_hex_valid(const char *hex) {
     }
   }
   return 1;
-}
-
-static void
-vectis_embedded_sha256_hex(const unsigned char sha[SHA256_DIGEST_LENGTH],
-                           char out[SHA256_DIGEST_LENGTH * 2u + 1u]) {
-  static const char hex[] = "0123456789abcdef";
-  size_t i;
-
-  for (i = 0u; i < SHA256_DIGEST_LENGTH; ++i) {
-    out[i * 2u] = hex[(sha[i] >> 4) & 0x0f];
-    out[i * 2u + 1u] = hex[sha[i] & 0x0f];
-  }
-  out[SHA256_DIGEST_LENGTH * 2u] = '\0';
 }
 
 const char *vectis_embedded_fs_extract_policy_string(
@@ -1155,7 +1148,6 @@ static vectis_status vectis_embedded_file_matches_entry_at(
   struct stat st;
   unsigned char buffer[64u * 1024u];
   unsigned char digest[SHA256_DIGEST_LENGTH];
-  char digest_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
   unsigned int digest_size;
   ssize_t nread;
   int fd;
@@ -1224,8 +1216,9 @@ static vectis_status vectis_embedded_file_matches_entry_at(
                                asset_path);
     return VECTIS_ERR_INVALID;
   }
-  vectis_embedded_sha256_hex(digest, digest_hex);
-  *matches = strcmp(digest_hex, entry->sha256) == 0;
+  *matches =
+      (st.st_mode & 0777u) == vectis_embedded_extract_mode(entry->mode) &&
+      vectis_embedded_sha256_hex_matches(digest, entry->sha256);
   return VECTIS_OK;
 }
 
@@ -1275,11 +1268,25 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
           parent_fd, leaf, impl->entries[i].path, create_missing, &directory_fd,
           &directory_created, error);
       if (status == VECTIS_OK &&
-          config->policy != VECTIS_EMBEDDED_FS_EXTRACT_VERIFY &&
-          (directory_created ||
-           config->policy != VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING) &&
-          fchmod(directory_fd,
-                 vectis_embedded_extract_mode(impl->entries[i].mode)) != 0) {
+          config->policy == VECTIS_EMBEDDED_FS_EXTRACT_VERIFY) {
+        if (fstat(directory_fd, &st) != 0) {
+          vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                     "failed to verify embedded directory: %s",
+                                     impl->entries[i].path);
+          status = VECTIS_ERR_INVALID;
+        } else if ((st.st_mode & 0777u) !=
+                   vectis_embedded_extract_mode(impl->entries[i].mode)) {
+          vectis_embedded_set_errorf(
+              error, VECTIS_ERR_CONFLICT,
+              "embedded directory verification failed: %s",
+              impl->entries[i].path);
+          status = VECTIS_ERR_CONFLICT;
+        }
+      } else if (status == VECTIS_OK &&
+                 (directory_created ||
+                  config->policy != VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING) &&
+                 fchmod(directory_fd, vectis_embedded_extract_mode(
+                                          impl->entries[i].mode)) != 0) {
         vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                    "failed to set embedded directory mode: %s",
                                    impl->entries[i].path);
@@ -1412,6 +1419,7 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
   size_t j;
   size_t previous_path_size;
 
+  vectis_error_clear(error);
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "embedded fs output handle is required");

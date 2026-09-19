@@ -114,6 +114,9 @@ def serve(listener, key, errors, mode):
                 channel.sendall(b"before")
                 time.sleep(0.2)
                 channel.sendall_stderr(b"after")
+            elif server.mode == "stdin-eof":
+                assert channel.recv(1) == b""
+                channel.sendall(b"eof")
             elif server.mode in ("idle", "completion-timeout"):
                 if server.mode == "completion-timeout":
                     channel.shutdown_write()
@@ -140,9 +143,9 @@ def main():
     script = pathlib.Path(__file__).parent / "lua" / "ssh_output.lua"
     key = paramiko.RSAKey.generate(2048)
     fingerprint = hashlib.sha256(key.asbytes()).hexdigest()
-    for mode in ("stderr", "mixed", "delayed", "empty", "idle", "late-status",
-                 "completion-timeout", "sftp-close-failure", "sftp-ok",
-                 "scp-close-failure"):
+    for mode in ("stderr", "mixed", "delayed", "stdin-eof", "empty", "idle",
+                 "late-status", "completion-timeout", "sftp-ok",
+                 "sftp-close-failure", "scp-close-failure"):
         errors = []
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))

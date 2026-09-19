@@ -740,6 +740,7 @@ int main(void) {
   vectis_auth_issue_config issue;
   vectis_auth_issued_credential bearer;
   vectis_auth_issued_credential basic;
+  vectis_auth_issued_credential browser_only;
   vectis_auth_issued_credential webdav_key;
   vectis_auth_issued_credential oauth_webdav_key;
   vectis_auth_result result;
@@ -789,6 +790,7 @@ int main(void) {
   vectis_auth_oidc_token_exchange_init(&oidc_exchange);
   vectis_auth_issued_credential_init(&bearer);
   vectis_auth_issued_credential_init(&basic);
+  vectis_auth_issued_credential_init(&browser_only);
   vectis_auth_issued_credential_init(&webdav_key);
   vectis_auth_issued_credential_init(&oauth_webdav_key);
   vectis_auth_result_init(&result);
@@ -1590,6 +1592,21 @@ int main(void) {
          "reports WebDAV purpose");
   vectis_auth_result_cleanup(&result);
 
+  status = vectis_auth_verify_authorization(
+      &store, basic_header, VECTIS_AUTH_MODE_BROWSER_SESSION, &result, &error);
+  expect_ok(status, &error, "rejects M2M credentials for browser-only policy");
+  expect(!result.authenticated,
+         "browser-only policy does not accept Basic credentials");
+  vectis_auth_result_cleanup(&result);
+
+  vectis_auth_issue_config_init(&issue);
+  issue.subject = "browser-only@example.com";
+  issue.auth_modes = VECTIS_AUTH_MODE_BROWSER_SESSION;
+  status = vectis_auth_issue_credential(&store, &issue, &browser_only, &error);
+  expect(status == VECTIS_ERR_INVALID && browser_only.client_id == NULL,
+         "rejects browser-only M2M credential issuance");
+  vectis_auth_issued_credential_cleanup(&browser_only);
+
   vectis_auth_login_config_init(&login);
   login.username = "dav-user@example.com";
   login.password = "correct horse battery staple";
@@ -2098,6 +2115,7 @@ int main(void) {
   vectis_auth_email_token_cleanup(&email_token);
   vectis_auth_issued_credential_cleanup(&oauth_webdav_key);
   vectis_auth_issued_credential_cleanup(&webdav_key);
+  vectis_auth_issued_credential_cleanup(&browser_only);
   vectis_auth_issued_credential_cleanup(&basic);
   vectis_auth_issued_credential_cleanup(&bearer);
   vectis_mutable_bytes_cleanup(&basic_authorization);

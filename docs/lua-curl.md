@@ -37,8 +37,9 @@ libcurl into `lonejson_curl_write_callback()`.
 - `method`: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`,
   `PROPFIND`, `MKCOL`, `COPY`, or `MOVE` for HTTP-oriented transfers,
   including WebDAV.
-- `headers`: table of protocol headers. String keys produce `name: value`;
-  array values are passed as raw header lines.
+- `headers`: table of protocol headers. String keys must be valid HTTP tokens
+  and produce `name: value`; array values are passed as raw header lines.
+  Values and raw lines cannot contain CR, LF, or NUL bytes.
 - `body`: request, upload, SMTP, or publish payload string.
 - `upload`: boolean enabling libcurl upload mode with `body`, useful for
   FTP/file and SFTP/SCP style transfers.

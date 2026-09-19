@@ -396,6 +396,7 @@ if(TARGET vectis_bin)
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/ssh_sftp.cmake")
   set_tests_properties(vectis_lua_ssh_sftp PROPERTIES
     LABELS "lua;smoke;local"
+    ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan/libssh2.supp"
     TIMEOUT 30)
   add_test(NAME vectis_lua_audio_sus
            COMMAND "${CMAKE_COMMAND}"

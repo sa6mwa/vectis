@@ -97,12 +97,13 @@ def main():
             for method in ("POST", "PUT", "PATCH"):
                 for kind in ("file", "multipart", "raw", "json", "buffered"):
                     assert (method, "/" + kind) in server.requests
-                    assert server.requests.count((method, "/" + kind + "/received")) == 2
+                    expected = 2 if method == "POST" else 4
+                    assert server.requests.count((method, "/" + kind + "/received")) == expected
                 assert server.requests.count((method, "/json/retry")) == 2
             for kind in ("file", "multipart", "raw", "json", "buffered"):
                 assert server.requests.count(("GET", "/" + kind + "/received")) == 5
-            assert len(server.requests) == 132, server.requests
-            print("Passed 64 uploads, including 55 redirects and 3 retries (132 requests)")
+            assert len(server.requests) == 172, server.requests
+            print("Passed 64 uploads, including 75 redirects and 3 retries (172 requests)")
 
 
 if __name__ == "__main__":

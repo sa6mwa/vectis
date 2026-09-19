@@ -1,4 +1,5 @@
 set(json_file "${WORK_DIR}/vectis-http-response.json")
+set(invalid_json_file "${WORK_DIR}/vectis-http-invalid-response.json")
 set(download_source "${WORK_DIR}/vectis-http-download-source.txt")
 set(download_target "${WORK_DIR}/vectis-http-download-target.txt")
 set(upload_source "${WORK_DIR}/vectis-http-upload-source.txt")
@@ -10,6 +11,7 @@ set(static_dir "${WORK_DIR}/vectis-http-static")
 set(script "${WORK_DIR}/vectis-http-smoke.lua")
 
 file(WRITE "${json_file}" "{\"ok\":true,\"message\":\"vectis-http\"}\n")
+file(WRITE "${invalid_json_file}" "{bad json\n")
 file(WRITE "${download_source}" "downloaded through curl file sink\n")
 file(WRITE "${upload_source}" "uploaded through curl file source\n")
 file(MAKE_DIRECTORY "${static_dir}/assets")
@@ -68,6 +70,7 @@ local auth_client_id = assert(arg[7])
 local auth_client_secret = assert(arg[8])
 local static_dir = assert(arg[9])
 local metrics_storage_dir = assert(arg[10])
+local invalid_json_url = "file://" .. assert(arg[11])
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function base64(data)
@@ -121,6 +124,10 @@ assert(vectis.http.form_encode({
   tag = {"a+b", "c/d"},
   empty = "",
 }) == "empty=&q=hello%20world&tag=a%2Bb&tag=c%2Fd")
+assert(vectis.http.form_encode({
+  step = {"validate", "deploy"},
+  target = {"first", "second"},
+}) == "step=validate&step=deploy&target=first&target=second")
 
 local decoded = vectis.http.get_json({
   url = json_url,
@@ -130,6 +137,14 @@ assert(decoded.ok == true, decoded.error and decoded.error.message)
 assert(decoded.transport_ok == true)
 assert(decoded.json.message == "vectis-http")
 assert(decoded.error == nil)
+local malformed = vectis.http.get_json({
+  url = invalid_json_url,
+  protocols = "file",
+})
+assert(malformed.ok == false)
+assert(malformed.transport_ok == true)
+assert(malformed.error.kind == "json_decode")
+assert(malformed.error.source == "lonejson")
 
 local file_client = vectis.http.client({
   protocols = "file",
@@ -1575,7 +1590,7 @@ execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${json_file}"
                         "${upload_source}" "${upload_target}"
                         "${auth_lockd_endpoint}" "${auth_client_id}"
                         "${auth_client_secret}" "${static_dir}"
-                        "${metrics_storage_dir}"
+                        "${metrics_storage_dir}" "${invalid_json_file}"
                 RESULT_VARIABLE http_result
                 OUTPUT_VARIABLE http_stdout
                 ERROR_VARIABLE http_stderr)

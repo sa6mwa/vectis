@@ -53,6 +53,9 @@ else
   elseif mode == "delayed" then
     assert(result.stdout == "before")
     assert(result.stderr == "after")
+  elseif mode == "stdin-eof" then
+    assert(result.stdout == "eof")
+    assert(result.stderr == "")
   else
     assert(result.stdout == "" and result.stderr == "")
   end

@@ -127,7 +127,11 @@ function M.error_for(result)
       source_code = vstatus.ERROR_SOURCE_VECTIS,
     })
   end
-  if result.ok ~= true then
+  if result.transport_ok ~= nil and result.ok == false and
+      type(result.error) == "table" then
+    return result.error
+  end
+  if result.ok ~= true and not (result.code == 0 and result.json_error ~= nil) then
     return vstatus.error({
       kind = "transport",
       code = result.code,
@@ -151,11 +155,24 @@ function M.error_for(result)
       http_status = result.status,
     })
   end
+  if result.code == 0 and result.json_error ~= nil then
+    return vstatus.error({
+      kind = "json_decode",
+      message = tostring(result.json_error),
+      attempts = result.attempts,
+      status = vstatus.ERR_INVALID,
+      source_code = vstatus.ERROR_SOURCE_LONEJSON,
+    })
+  end
   return nil
 end
 
 function M.normalize(result)
-  local transport_ok = type(result) == "table" and result.ok == true
+  local transport_ok = type(result) == "table" and result.transport_ok
+  if type(transport_ok) ~= "boolean" then
+    transport_ok = type(result) == "table" and
+        (result.ok == true or (result.code == 0 and result.json_error ~= nil))
+  end
   local error_info = M.error_for(result)
 
   if type(result) ~= "table" then
@@ -280,10 +297,27 @@ end
 
 function M.form_encode(form)
   local out = {}
+  local fields = {}
   if type(form) ~= "table" then
     error("vectis.http.form_encode requires a table", 2)
   end
   for key, value in pairs(form) do
+    if value ~= nil then
+      fields[#fields + 1] = {
+        key = key,
+        encoded_key = percent_encode(key),
+      }
+    end
+  end
+  table.sort(fields, function(left, right)
+    if left.encoded_key == right.encoded_key then
+      return type(left.key) < type(right.key)
+    end
+    return left.encoded_key < right.encoded_key
+  end)
+  for _, field in ipairs(fields) do
+    local key = field.key
+    local value = form[key]
     if type(value) == "table" then
       for _, item in ipairs(value) do
         append_form_pair(out, key, item)
@@ -292,7 +326,6 @@ function M.form_encode(form)
       append_form_pair(out, key, value)
     end
   end
-  table.sort(out)
   return table.concat(out, "&")
 end
 

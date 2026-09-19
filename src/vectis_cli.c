@@ -15878,12 +15878,50 @@ static int vectis_lua_curl_append_header(lua_State *lua,
   return 0;
 }
 
+static int vectis_lua_curl_header_name_valid(const char *name, size_t size) {
+  size_t i;
+
+  if (name == NULL || size == 0u) {
+    return 0;
+  }
+  for (i = 0u; i < size; ++i) {
+    unsigned char byte;
+
+    byte = (unsigned char)name[i];
+    if (!((byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
+          (byte >= '0' && byte <= '9') || byte == '!' || byte == '#' ||
+          byte == '$' || byte == '%' || byte == '&' || byte == '\'' ||
+          byte == '*' || byte == '+' || byte == '-' || byte == '.' ||
+          byte == '^' || byte == '_' || byte == '`' || byte == '|' ||
+          byte == '~')) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int vectis_lua_curl_header_value_valid(const char *value, size_t size) {
+  size_t i;
+
+  if (value == NULL) {
+    return 0;
+  }
+  for (i = 0u; i < size; ++i) {
+    if (value[i] == '\0' || value[i] == '\r' || value[i] == '\n') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 /* With curl == NULL, validate without acquiring native transfer resources. */
 static int vectis_lua_curl_apply_headers(lua_State *lua, CURL *curl,
                                          int option_index,
                                          struct curl_slist **headers) {
   const char *key;
   const char *value;
+  size_t key_size;
+  size_t value_size;
 
   lua_getfield(lua, option_index, "headers");
   if (lua_isnil(lua, -1)) {
@@ -15895,11 +15933,25 @@ static int vectis_lua_curl_apply_headers(lua_State *lua, CURL *curl,
   }
   lua_pushnil(lua);
   while (lua_next(lua, -2) != 0) {
-    if (!lua_isstring(lua, -1)) {
+    if (lua_type(lua, -1) != LUA_TSTRING) {
       return luaL_error(lua, "curl header values must be strings");
     }
-    value = lua_tostring(lua, -1);
-    key = lua_type(lua, -2) == LUA_TSTRING ? lua_tostring(lua, -2) : NULL;
+    value = lua_tolstring(lua, -1, &value_size);
+    if (!vectis_lua_curl_header_value_valid(value, value_size)) {
+      return luaL_error(lua,
+                        "curl header values must not contain CR, LF, or NUL "
+                        "bytes");
+    }
+    key = NULL;
+    if (lua_type(lua, -2) == LUA_TSTRING) {
+      key = lua_tolstring(lua, -2, &key_size);
+      if (!vectis_lua_curl_header_name_valid(key, key_size)) {
+        return luaL_error(lua, "curl header names must be valid HTTP tokens");
+      }
+    } else if (lua_type(lua, -2) != LUA_TNUMBER) {
+      return luaL_error(lua,
+                        "curl header names must be strings or array indexes");
+    }
     if (curl != NULL)
       vectis_lua_curl_append_header(lua, headers, key, value);
     lua_pop(lua, 1);
@@ -16395,6 +16447,29 @@ static int vectis_lua_curl_rewind_buffer(void *userdata, curl_off_t offset,
   return CURL_SEEKFUNC_OK;
 }
 
+static int vectis_lua_curl_prepare_nonpost_body(lua_State *lua,
+                                                int option_index,
+                                                const char *method,
+                                                vectis_lua_curl_buffer *body) {
+  const char *value;
+  size_t size;
+  int ok;
+
+  if (method == NULL || strcmp(method, "POST") == 0 ||
+      strcmp(method, "GET") == 0 || strcmp(method, "HEAD") == 0) {
+    return 1;
+  }
+  lua_getfield(lua, option_index, "body");
+  value = lua_tolstring(lua, -1, &size);
+  if (value == NULL) {
+    lua_pop(lua, 1);
+    return 1;
+  }
+  ok = vectis_lua_curl_buffer_append(body, value, size);
+  lua_pop(lua, 1);
+  return ok;
+}
+
 static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
                                         int option_index,
                                         vectis_lua_curl_buffer *upload,
@@ -16451,7 +16526,8 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
                                         int is_smtp, int has_streaming_upload,
                                         int has_raw_upload, int has_multipart,
                                         lonejson_curl_upload *json_upload,
-                                        curl_off_t raw_upload_size) {
+                                        curl_off_t raw_upload_size,
+                                        vectis_lua_curl_buffer *body_upload) {
   const char *body;
   size_t body_size;
 
@@ -16508,6 +16584,10 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
     (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
     if (has_multipart || has_raw_upload) {
       /* MIME or upload callbacks already own the request body. */
+      if (has_multipart) {
+        (void)curl_easy_setopt(curl, CURLOPT_POSTREDIR,
+                               CURL_REDIR_POST_301 | CURL_REDIR_POST_302);
+      }
     } else if (has_streaming_upload) {
       (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
       (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
@@ -16516,9 +16596,14 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
       (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
                              lonejson_curl_upload_size(json_upload));
     } else if (body != NULL) {
-      (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-      (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
-                             (curl_off_t)body_size);
+      (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+      (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_lua_curl_read);
+      (void)curl_easy_setopt(curl, CURLOPT_READDATA, body_upload);
+      (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
+                             vectis_lua_curl_rewind_buffer);
+      (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, body_upload);
+      (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
+                             (curl_off_t)body_upload->size);
     }
   } else if (strcmp(method, "HEAD") == 0) {
     (void)curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
@@ -17077,6 +17162,13 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   has_streaming_response = vectis_lua_curl_prepare_schema(
       lua, 0, &response_schema_index, &response_record_index, &response_schema,
       &response_record);
+  if (!has_multipart && upload_path == NULL && !has_streaming_upload &&
+      !vectis_lua_curl_has_table_field(lua, 1, "smtp") &&
+      !vectis_lua_table_bool(lua, 1, "upload", 0) &&
+      !vectis_lua_curl_prepare_nonpost_body(lua, 1, method, &body)) {
+    vectis_lua_curl_buffer_free(&body);
+    return luaL_error(lua, "curl upload body allocation failed");
+  }
   if (upload_path == NULL) {
     (void)vectis_lua_curl_apply_upload(
         lua, NULL, 1, NULL, vectis_lua_curl_has_table_field(lua, 1, "smtp"),
@@ -17268,7 +17360,8 @@ static int vectis_lua_curl_perform(lua_State *lua) {
       lua, curl, 1, method, is_smtp, has_streaming_upload,
       is_upload && !has_streaming_upload && !has_multipart, has_multipart,
       &json_upload,
-      file_upload.file != NULL ? file_upload.size : (curl_off_t)body.size);
+      file_upload.file != NULL ? file_upload.size : (curl_off_t)body.size,
+      &body);
 
   retry_delay_ms = retry_config.initial_delay_ms;
   if (retry_config.max_delay_ms > 0L &&
@@ -17442,7 +17535,7 @@ static int64_t vectis_lua_table_i64(lua_State *lua, int index,
   return value;
 }
 
-static unsigned vectis_lua_auth_mode_value(const char *mode) {
+static unsigned vectis_lua_auth_mode_value(lua_State *lua, const char *mode) {
   if (mode == NULL || strcmp(mode, "default") == 0) {
     return VECTIS_AUTH_MODE_DEFAULT;
   }
@@ -17452,6 +17545,7 @@ static unsigned vectis_lua_auth_mode_value(const char *mode) {
   if (strcmp(mode, "bearer") == 0) {
     return VECTIS_AUTH_MODE_BEARER;
   }
+  (void)luaL_error(lua, "unsupported auth mode: %s", mode);
   return VECTIS_AUTH_MODE_DEFAULT;
 }
 
@@ -17472,7 +17566,7 @@ static unsigned vectis_lua_auth_modes_at(lua_State *lua, int index,
       if (lua_isnumber(lua, -1)) {
         modes |= (unsigned)lua_tointeger(lua, -1);
       } else {
-        modes |= vectis_lua_auth_mode_value(luaL_checkstring(lua, -1));
+        modes |= vectis_lua_auth_mode_value(lua, luaL_checkstring(lua, -1));
       }
       lua_pop(lua, 1);
     }
@@ -17481,7 +17575,7 @@ static unsigned vectis_lua_auth_modes_at(lua_State *lua, int index,
   if (lua_isnumber(lua, index)) {
     return (unsigned)lua_tointeger(lua, index);
   }
-  return vectis_lua_auth_mode_value(luaL_checkstring(lua, index));
+  return vectis_lua_auth_mode_value(lua, luaL_checkstring(lua, index));
 }
 
 static unsigned vectis_lua_auth_modes_field(lua_State *lua, int index,

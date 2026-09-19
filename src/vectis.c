@@ -4705,6 +4705,91 @@ static char *vectis_join_url(const char *base_url, const char *url,
   return joined;
 }
 
+static int vectis_sftp_remote_path_valid(const char *path) {
+  const unsigned char *cursor;
+
+  if (path == NULL || path[0] == '\0' || vectis_has_url_scheme(path) ||
+      (path[0] == '/' && path[1] == '/')) {
+    return 0;
+  }
+  for (cursor = (const unsigned char *)path; *cursor != '\0'; ++cursor) {
+    if (*cursor < 0x20u || *cursor == 0x7fu || *cursor == '\\') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+/* Encode remote SFTP path bytes for a curl URL while retaining separators. */
+char *vectis_internal_sftp_remote_path_url(const char *path,
+                                           vectis_error *error) {
+  static const char hex[] = "0123456789ABCDEF";
+  const unsigned char *input;
+  size_t input_size;
+  size_t i;
+  size_t output_size;
+  char *output;
+  char *cursor;
+
+  input_size = strlen(path);
+  if (input_size > (SIZE_MAX - 1u) / 3u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "SFTP remote_path is too large to encode");
+    return NULL;
+  }
+  output_size = input_size * 3u + 1u;
+  output = (char *)malloc(output_size);
+  if (output == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to encode SFTP remote_path");
+    return NULL;
+  }
+  cursor = output;
+  input = (const unsigned char *)path;
+  for (i = 0u; i < input_size; ++i) {
+    unsigned char byte;
+
+    byte = input[i];
+    if ((byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
+        (byte >= '0' && byte <= '9') || byte == '-' || byte == '.' ||
+        byte == '_' || byte == '~' || byte == '/') {
+      *cursor++ = (char)byte;
+    } else {
+      *cursor++ = '%';
+      *cursor++ = hex[byte >> 4u];
+      *cursor++ = hex[byte & 0x0fu];
+    }
+  }
+  *cursor = '\0';
+  return output;
+}
+
+char *vectis_internal_mqtt_topic_url(const char *broker_url, const char *topic,
+                                     vectis_error *error) {
+  char *escaped;
+  char *url;
+
+  if (topic == NULL || strlen(topic) > (size_t)INT_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT topic is invalid");
+    return NULL;
+  }
+  /* Curl normalizes a literal dot-only path, but these are valid MQTT names. */
+  if (strcmp(topic, ".") == 0) {
+    return vectis_join_url(broker_url, "%2E", error);
+  }
+  if (strcmp(topic, "..") == 0) {
+    return vectis_join_url(broker_url, "%2E%2E", error);
+  }
+  escaped = curl_easy_escape(NULL, topic, (int)strlen(topic));
+  if (escaped == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to encode MQTT topic");
+    return NULL;
+  }
+  url = vectis_join_url(broker_url, escaped, error);
+  curl_free(escaped);
+  return url;
+}
+
 static vectis_status vectis_copy_bytes(const void *bytes, size_t size,
                                        void **out, size_t *out_size,
                                        const char *label, vectis_error *error) {
@@ -19683,7 +19768,7 @@ vectis_auth_resolve_browser_template(const vectis_auth_routes_config *config,
       return VECTIS_ERR_NOMEM;
     }
     nread = fread(*out, 1u, (size_t)size, file);
-    if (nread != (size_t)size || fclose(file) != 0) {
+    if (fclose(file) != 0 || nread != (size_t)size) {
       free(*out);
       *out = NULL;
       vectis_set_error(error, VECTIS_ERR_STATE,
@@ -36625,6 +36710,24 @@ const char *vectis_request_query(vectis_request *request, const char *name) {
   return vectis_kv_find(request->query, request->query_count, name);
 }
 
+size_t vectis_request_query_count(const vectis_request *request) {
+  return request != NULL ? request->query_count : 0u;
+}
+
+int vectis_request_query_at(const vectis_request *request, size_t index,
+                            const char **name, const char **value) {
+  if (request == NULL || index >= request->query_count) {
+    return 0;
+  }
+  if (name != NULL) {
+    *name = request->query[index].name;
+  }
+  if (value != NULL) {
+    *value = request->query[index].value;
+  }
+  return 1;
+}
+
 const char *vectis_request_header(vectis_request *request, const char *name) {
   size_t i;
 
@@ -40397,6 +40500,7 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
   CURLcode curl_code;
   FILE *file;
   long file_size;
+  char *encoded_remote_path;
   char *url;
   char curl_error[CURL_ERROR_SIZE];
   vectis_sftp_config effective;
@@ -40418,19 +40522,32 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
                      "SFTP upload requires local_path and remote_path");
     return VECTIS_ERR_INVALID;
   }
+  if (!vectis_sftp_remote_path_valid(remote_path)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SFTP remote_path must be a relative or absolute path");
+    return VECTIS_ERR_INVALID;
+  }
+  encoded_remote_path =
+      vectis_internal_sftp_remote_path_url(remote_path, error);
+  if (encoded_remote_path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
   effective = vectis_effective_sftp_config(config);
   memset(curl_error, 0, sizeof(curl_error));
   file = fopen(local_path, "rb");
   if (file == NULL) {
+    free(encoded_remote_path);
     vectis_set_errorf(error, VECTIS_ERR_INVALID,
                       "failed to open SFTP upload file: %s", local_path);
     return VECTIS_ERR_INVALID;
   }
   if (vectis_file_size(file, &file_size, error) != VECTIS_OK) {
     (void)fclose(file);
+    free(encoded_remote_path);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
-  url = vectis_join_url(config->url, remote_path, error);
+  url = vectis_join_url(config->url, encoded_remote_path, error);
+  free(encoded_remote_path);
   if (url == NULL) {
     (void)fclose(file);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
@@ -40483,6 +40600,7 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
   CURL *curl;
   CURLcode curl_code;
   FILE *file;
+  char *encoded_remote_path;
   char *url;
   char curl_error[CURL_ERROR_SIZE];
   vectis_sftp_config effective;
@@ -40504,9 +40622,20 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
                      "SFTP download requires remote_path and local_path");
     return VECTIS_ERR_INVALID;
   }
+  if (!vectis_sftp_remote_path_valid(remote_path)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SFTP remote_path must be a relative or absolute path");
+    return VECTIS_ERR_INVALID;
+  }
+  encoded_remote_path =
+      vectis_internal_sftp_remote_path_url(remote_path, error);
+  if (encoded_remote_path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
   effective = vectis_effective_sftp_config(config);
   memset(curl_error, 0, sizeof(curl_error));
-  url = vectis_join_url(config->url, remote_path, error);
+  url = vectis_join_url(config->url, encoded_remote_path, error);
+  free(encoded_remote_path);
   if (url == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -41304,6 +41433,20 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
     libssh2_session_free(session);
     (void)close(fd);
     vectis_set_error(error, VECTIS_ERR_STATE, "failed to execute SSH command");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  rc = libssh2_channel_send_eof(channel);
+  if (rc != 0) {
+    libssh2_channel_free(channel);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to close SSH command input");
     if (error != NULL) {
       error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
       error->dependency_code = (long)rc;
@@ -43251,11 +43394,11 @@ vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
   }
   effective = vectis_effective_mqtt_config(config);
   memset(curl_error, 0, sizeof(curl_error));
-  url = vectis_join_url(effective.broker_url, topic, error);
+  (void)pthread_once(&vectis_curl_once, vectis_curl_global_init_once);
+  url = vectis_internal_mqtt_topic_url(effective.broker_url, topic, error);
   if (url == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
-  (void)pthread_once(&vectis_curl_once, vectis_curl_global_init_once);
   curl = curl_easy_init();
   if (curl == NULL) {
     free(url);
@@ -43589,18 +43732,66 @@ static EVP_PKEY *vectis_cert_generate_rsa_key(unsigned key_bits,
   return key;
 }
 
+/* Creates or replaces secret output without depending on the process umask. */
+static vectis_status vectis_cert_open_secret_output(const char *path,
+                                                    const char *label,
+                                                    FILE **out,
+                                                    vectis_error *error) {
+  int fd;
+  int saved_errno;
+
+  if (path == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "secret certificate output path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  fd = open(path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+  if (fd == -1) {
+    saved_errno = errno;
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "failed to open %s output '%s': %s", label, path,
+                      strerror(saved_errno));
+    return VECTIS_ERR_INVALID;
+  }
+  if (fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+    saved_errno = errno;
+    (void)close(fd);
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to restrict %s output '%s': %s", label, path,
+                      strerror(saved_errno));
+    return VECTIS_ERR_STATE;
+  }
+  if (ftruncate(fd, 0) != 0) {
+    saved_errno = errno;
+    (void)close(fd);
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to truncate %s output '%s': %s", label, path,
+                      strerror(saved_errno));
+    return VECTIS_ERR_STATE;
+  }
+  *out = fdopen(fd, "wb");
+  if (*out == NULL) {
+    saved_errno = errno;
+    (void)close(fd);
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to open %s output stream '%s': %s", label, path,
+                      strerror(saved_errno));
+    return VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status
 vectis_cert_write_outputs(const vectis_cert_bundle_config *config,
                           EVP_PKEY *key, X509 *cert, vectis_error *error) {
   FILE *fp;
 
   if (config->output_bundle_path != NULL) {
-    fp = fopen(config->output_bundle_path, "wb");
-    if (fp == NULL) {
-      vectis_set_errorf(error, VECTIS_ERR_INVALID,
-                        "failed to open certificate bundle output: %s",
-                        config->output_bundle_path);
-      return VECTIS_ERR_INVALID;
+    if (vectis_cert_open_secret_output(config->output_bundle_path,
+                                       "certificate bundle", &fp,
+                                       error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
     if (PEM_write_X509(fp, cert) != 1 ||
         PEM_write_PrivateKey(fp, key, NULL, NULL, 0, NULL, NULL) != 1) {
@@ -43634,12 +43825,9 @@ vectis_cert_write_outputs(const vectis_cert_bundle_config *config,
     }
   }
   if (config->output_key_path != NULL) {
-    fp = fopen(config->output_key_path, "wb");
-    if (fp == NULL) {
-      vectis_set_errorf(error, VECTIS_ERR_INVALID,
-                        "failed to open private key output: %s",
-                        config->output_key_path);
-      return VECTIS_ERR_INVALID;
+    if (vectis_cert_open_secret_output(config->output_key_path, "private key",
+                                       &fp, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
     if (PEM_write_PrivateKey(fp, key, NULL, NULL, 0, NULL, NULL) != 1) {
       (void)fclose(fp);
@@ -43876,6 +44064,61 @@ static EVP_PKEY *vectis_cert_read_key(const void *pem, size_t pem_size) {
   key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
   BIO_free(bio);
   return key;
+}
+
+/* Parse every certificate after the leaf as untrusted chain material. The
+ * caller owns the returned stack and its certificate copies. */
+static STACK_OF(X509) *
+    vectis_cert_read_untrusted_chain(const void *pem, size_t pem_size) {
+  STACK_OF(X509_INFO) * infos;
+  STACK_OF(X509) * chain;
+  X509_INFO *info;
+  X509 *copy;
+  BIO *bio;
+  int found_leaf;
+  int i;
+
+  if (pem == NULL || pem_size == 0u || pem_size > (size_t)INT_MAX) {
+    return NULL;
+  }
+  bio = BIO_new_mem_buf(pem, (int)pem_size);
+  if (bio == NULL) {
+    return NULL;
+  }
+  infos = PEM_X509_INFO_read_bio(bio, NULL, NULL, NULL);
+  BIO_free(bio);
+  if (infos == NULL) {
+    return NULL;
+  }
+  chain = sk_X509_new_null();
+  if (chain == NULL) {
+    sk_X509_INFO_pop_free(infos, X509_INFO_free);
+    return NULL;
+  }
+  found_leaf = 0;
+  for (i = 0; i < sk_X509_INFO_num(infos); ++i) {
+    info = sk_X509_INFO_value(infos, i);
+    if (info == NULL || info->x509 == NULL) {
+      continue;
+    }
+    if (!found_leaf) {
+      found_leaf = 1;
+      continue;
+    }
+    copy = X509_dup(info->x509);
+    if (copy == NULL || sk_X509_push(chain, copy) <= 0) {
+      X509_free(copy);
+      sk_X509_pop_free(chain, X509_free);
+      sk_X509_INFO_pop_free(infos, X509_INFO_free);
+      return NULL;
+    }
+  }
+  sk_X509_INFO_pop_free(infos, X509_INFO_free);
+  if (!found_leaf) {
+    sk_X509_pop_free(chain, X509_free);
+    return NULL;
+  }
+  return chain;
 }
 
 static vectis_status vectis_cert_copy_name_field(X509_NAME *name, int nid,
@@ -44223,11 +44466,9 @@ static vectis_status vectis_cert_write_private_key(const char *path,
                                                    vectis_error *error) {
   FILE *fp;
 
-  fp = fopen(path, "wb");
-  if (fp == NULL) {
-    vectis_set_errorf(error, VECTIS_ERR_INVALID,
-                      "failed to open private key output: %s", path);
-    return VECTIS_ERR_INVALID;
+  if (vectis_cert_open_secret_output(path, "private key", &fp, error) !=
+      VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (PEM_write_PrivateKey(fp, key, NULL, NULL, 0, NULL, NULL) != 1) {
     (void)fclose(fp);
@@ -44291,34 +44532,166 @@ static vectis_status vectis_cert_add_csr_extension(X509_REQ *request, int nid,
 
 static vectis_status vectis_cert_validate_time(X509 *cert,
                                                vectis_error *error) {
-  if (X509_cmp_current_time(X509_get0_notBefore(cert)) > 0) {
+  const ASN1_TIME *not_after;
+  const ASN1_TIME *not_before;
+  ASN1_TIME *now;
+  int comparison;
+
+  if (cert == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate is required");
+    return VECTIS_ERR_INVALID;
+  }
+  not_before = X509_get0_notBefore(cert);
+  not_after = X509_get0_notAfter(cert);
+  if (not_before == NULL || not_after == NULL ||
+      ASN1_TIME_check(not_before) != 1 || ASN1_TIME_check(not_after) != 1) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "certificate validity timestamp is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  now = ASN1_TIME_set(NULL, time(NULL));
+  if (now == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to evaluate certificate validity");
+    return VECTIS_ERR_STATE;
+  }
+  comparison = ASN1_TIME_compare(not_before, now);
+  if (comparison == -2) {
+    ASN1_TIME_free(now);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "certificate validity timestamp is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (comparison > 0) {
+    ASN1_TIME_free(now);
     vectis_set_error(error, VECTIS_ERR_INVALID, "certificate is not valid yet");
     return VECTIS_ERR_INVALID;
   }
-  if (X509_cmp_current_time(X509_get0_notAfter(cert)) < 0) {
+  comparison = ASN1_TIME_compare(not_after, now);
+  ASN1_TIME_free(now);
+  if (comparison == -2) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "certificate validity timestamp is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (comparison < 0) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "certificate is expired");
     return VECTIS_ERR_INVALID;
   }
   return VECTIS_OK;
 }
 
-static vectis_status vectis_cert_verify_ca(X509 *cert, X509 *ca_cert,
-                                           vectis_error *error) {
+/* RFC 5280 limits certificate serials to 20 octets and requires a positive
+ * nonzero integer. A random value avoids same-second issuance collisions. */
+static vectis_status vectis_cert_set_random_serial(X509 *cert,
+                                                   vectis_error *error) {
+  unsigned char bytes[20];
+  BIGNUM *serial;
+  ASN1_INTEGER *value;
+  size_t i;
+  int all_zero;
+
+  if (cert == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (RAND_bytes(bytes, (int)sizeof(bytes)) != 1) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to generate certificate serial number");
+    return VECTIS_ERR_STATE;
+  }
+  bytes[0] &= 0x7fu;
+  all_zero = 1;
+  for (i = 0u; i < sizeof(bytes); ++i) {
+    if (bytes[i] != 0u) {
+      all_zero = 0;
+      break;
+    }
+  }
+  if (all_zero) {
+    bytes[sizeof(bytes) - 1u] = 1u;
+  }
+  serial = BN_bin2bn(bytes, (int)sizeof(bytes), NULL);
+  if (serial == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate certificate serial number");
+    return VECTIS_ERR_NOMEM;
+  }
+  value = BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(cert));
+  BN_free(serial);
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to set certificate serial number");
+    return VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_cert_verify_ca_bundle(X509 *cert, STACK_OF(X509) * untrusted_chain,
+                             const void *pem, size_t pem_size,
+                             vectis_error *error) {
   X509_STORE *store;
   X509_STORE_CTX *ctx;
+  STACK_OF(X509_INFO) * certificates;
+  X509_INFO *certificate;
+  BIO *bio;
+  int certificate_count;
+  int i;
   int ok;
 
+  bio = NULL;
+  certificates = NULL;
+  ctx = NULL;
+  store = NULL;
+  certificate_count = 0;
+  if (pem == NULL || pem_size == 0u || pem_size > (size_t)INT_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CA bundle is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  bio = BIO_new_mem_buf(pem, (int)pem_size);
+  if (bio == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate CA bundle reader");
+    return VECTIS_ERR_NOMEM;
+  }
+  certificates = PEM_X509_INFO_read_bio(bio, NULL, NULL, NULL);
+  if (certificates == NULL) {
+    BIO_free(bio);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "failed to parse CA certificate bundle");
+    return VECTIS_ERR_INVALID;
+  }
   store = X509_STORE_new();
   if (store == NULL) {
+    sk_X509_INFO_pop_free(certificates, X509_INFO_free);
+    BIO_free(bio);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate certificate store");
     return VECTIS_ERR_NOMEM;
   }
-  if (X509_STORE_add_cert(store, ca_cert) != 1) {
+  for (i = 0; i < sk_X509_INFO_num(certificates); ++i) {
+    certificate = sk_X509_INFO_value(certificates, i);
+    if (certificate == NULL || certificate->x509 == NULL) {
+      continue;
+    }
+    if (X509_STORE_add_cert(store, certificate->x509) != 1) {
+      X509_STORE_free(store);
+      sk_X509_INFO_pop_free(certificates, X509_INFO_free);
+      BIO_free(bio);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to add CA certificate to store");
+      return VECTIS_ERR_STATE;
+    }
+    certificate_count++;
+  }
+  sk_X509_INFO_pop_free(certificates, X509_INFO_free);
+  BIO_free(bio);
+  if (certificate_count == 0) {
     X509_STORE_free(store);
-    vectis_set_error(error, VECTIS_ERR_STATE,
-                     "failed to add CA certificate to store");
-    return VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CA bundle does not contain a certificate");
+    return VECTIS_ERR_INVALID;
   }
   ctx = X509_STORE_CTX_new();
   if (ctx == NULL) {
@@ -44327,7 +44700,7 @@ static vectis_status vectis_cert_verify_ca(X509 *cert, X509 *ca_cert,
                      "failed to allocate certificate verify context");
     return VECTIS_ERR_NOMEM;
   }
-  if (X509_STORE_CTX_init(ctx, store, cert, NULL) != 1) {
+  if (X509_STORE_CTX_init(ctx, store, cert, untrusted_chain) != 1) {
     X509_STORE_CTX_free(ctx);
     X509_STORE_free(store);
     vectis_set_error(error, VECTIS_ERR_STATE,
@@ -44403,8 +44776,8 @@ vectis_status vectis_cert_validate_pair(const vectis_source *certificate,
   size_t key_pem_size;
   size_t ca_pem_size;
   X509 *cert;
-  X509 *ca_cert;
   EVP_PKEY *key;
+  STACK_OF(X509) * untrusted_chain;
   vectis_status status;
 
   cert_pem = NULL;
@@ -44414,8 +44787,8 @@ vectis_status vectis_cert_validate_pair(const vectis_source *certificate,
   key_pem_size = 0u;
   ca_pem_size = 0u;
   cert = NULL;
-  ca_cert = NULL;
   key = NULL;
+  untrusted_chain = NULL;
 
   status = vectis_read_source_bytes(certificate, &cert_pem, &cert_pem_size,
                                     "certificate", error);
@@ -44455,14 +44828,15 @@ vectis_status vectis_cert_validate_pair(const vectis_source *certificate,
     if (status != VECTIS_OK) {
       goto done;
     }
-    ca_cert = vectis_cert_read_x509(ca_pem, ca_pem_size);
-    if (ca_cert == NULL) {
+    untrusted_chain = vectis_cert_read_untrusted_chain(cert_pem, cert_pem_size);
+    if (untrusted_chain == NULL) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "failed to parse CA certificate");
+                       "failed to parse certificate chain");
       status = VECTIS_ERR_INVALID;
       goto done;
     }
-    status = vectis_cert_verify_ca(cert, ca_cert, error);
+    status = vectis_cert_verify_ca_bundle(cert, untrusted_chain, ca_pem,
+                                          ca_pem_size, error);
     if (status != VECTIS_OK) {
       goto done;
     }
@@ -44471,7 +44845,9 @@ vectis_status vectis_cert_validate_pair(const vectis_source *certificate,
   status = VECTIS_OK;
 
 done:
-  X509_free(ca_cert);
+  if (untrusted_chain != NULL) {
+    sk_X509_pop_free(untrusted_chain, X509_free);
+  }
   EVP_PKEY_free(key);
   X509_free(cert);
   free(ca_pem);
@@ -44716,7 +45092,6 @@ vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
     goto done;
   }
   if (X509_set_version(cert, 2L) != 1 ||
-      ASN1_INTEGER_set(X509_get_serialNumber(cert), (long)time(NULL)) != 1 ||
       X509_gmtime_adj(X509_get_notBefore(cert), 0L) == NULL ||
       X509_gmtime_adj(X509_get_notAfter(cert), valid_days * 24L * 60L * 60L) ==
           NULL ||
@@ -44724,6 +45099,10 @@ vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
     status = VECTIS_ERR_STATE;
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "failed to initialize certificate");
+    goto done;
+  }
+  status = vectis_cert_set_random_serial(cert, error);
+  if (status != VECTIS_OK) {
     goto done;
   }
   status = vectis_cert_set_subject(cert, &config->subject, error);

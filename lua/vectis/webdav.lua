@@ -30,10 +30,20 @@ local function ensure_headers(opts)
 end
 
 local function set_header(opts, name, value)
+  local headers
+  local lower_name
+
   if value == nil then
     return
   end
-  ensure_headers(opts)[name] = tostring(value)
+  headers = ensure_headers(opts)
+  lower_name = name:lower()
+  for existing in pairs(headers) do
+    if type(existing) == "string" and existing:lower() == lower_name then
+      headers[existing] = nil
+    end
+  end
+  headers[name] = tostring(value)
 end
 
 local function default_protocols(opts)

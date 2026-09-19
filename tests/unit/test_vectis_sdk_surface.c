@@ -1307,6 +1307,35 @@ static void assert_io_surface(void) {
   lc_source_close(sftp_key_source);
   sftp_key_source = NULL;
   vectis_source_init(&sftp.private_key);
+  {
+    char *encoded_path;
+
+    encoded_path = vectis_internal_sftp_remote_path_url(
+        "/reports/report#final %2F.txt", &error);
+    assert(encoded_path != NULL);
+    assert(strcmp(encoded_path, "/reports/report%23final%20%252F.txt") == 0);
+    free(encoded_path);
+  }
+  {
+    char *mqtt_url;
+
+    mqtt_url = vectis_internal_mqtt_topic_url("mqtt://broker", ".", &error);
+    assert(mqtt_url != NULL);
+    assert(strcmp(mqtt_url, "mqtt://broker/%2E") == 0);
+    free(mqtt_url);
+    mqtt_url = vectis_internal_mqtt_topic_url("mqtt://broker", "..", &error);
+    assert(mqtt_url != NULL);
+    assert(strcmp(mqtt_url, "mqtt://broker/%2E%2E") == 0);
+    free(mqtt_url);
+  }
+  status = vectis_sftp_upload_file(&sftp, sftp_upload_path,
+                                   "file:///tmp/vectis-sftp-bypass", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "remote_path") != NULL);
+  status = vectis_sftp_download_file(&sftp, "https://example.test/sftp-bypass",
+                                     "/tmp/vectis-sftp-bypass", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "remote_path") != NULL);
   (void)remove(sftp_upload_path);
 
   vectis_ssh_config_init(&ssh);

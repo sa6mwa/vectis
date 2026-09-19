@@ -366,6 +366,36 @@ static vectis_status status_202_handler(vectis_app *app,
   return vectis_response_status(response, 202, error);
 }
 
+static vectis_status status_302_handler(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)userdata;
+  return vectis_response_status(response, 302, error);
+}
+
+static vectis_status status_418_handler(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)userdata;
+  return vectis_response_status(response, 418, error);
+}
+
+static vectis_status status_503_handler(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)userdata;
+  return vectis_response_status(response, 503, error);
+}
+
 static vectis_status kore_curl_config_handler(vectis_app *app,
                                               vectis_request *request,
                                               vectis_response *response,
@@ -1670,15 +1700,28 @@ static void assert_access_log_levels(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
-  config.server.access_log.status_level_rule_count = 1u;
+  config.server.access_log.status_level_rule_count = 2u;
   config.server.access_log.status_level_rules[0].status = 202u;
   config.server.access_log.status_level_rules[0].level = PSLOG_LEVEL_INFO;
+  config.server.access_log.status_level_rules[1].status = 404u;
+  config.server.access_log.status_level_rules[1].level = PSLOG_LEVEL_DISABLED;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/ok", sample_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/accepted", status_202_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/redirect", status_302_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/client-error", status_418_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/server-error", status_503_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   (void)close(reserved_fd);
@@ -1705,6 +1748,21 @@ static void assert_access_log_levels(void) {
   assert(status == VECTIS_OK && response.status_code == 202L);
   vectis_http_response_cleanup(&response);
   status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/redirect"),
+      &response, &error);
+  assert(status == VECTIS_OK && response.status_code == 302L);
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/client-error"),
+      &response, &error);
+  assert(status == VECTIS_OK && response.status_code == 418L);
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/server-error"),
+      &response, &error);
+  assert(status == VECTIS_OK && response.status_code == 503L);
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(
       &http, format_loopback_http_url(url, sizeof(url), port, "/missing"),
       &response, &error);
   assert(status == VECTIS_OK && response.status_code == 404L);
@@ -1718,8 +1776,13 @@ static void assert_access_log_levels(void) {
                                     "\"lvl\":\"trace\""));
   assert(runtime_file_line_contains(access_log_path, "\"path\":\"/accepted\"",
                                     "\"lvl\":\"info\""));
-  assert(runtime_file_line_contains(access_log_path, "\"path\":\"/missing\"",
-                                    "\"lvl\":\"warn\""));
+  assert(runtime_file_line_contains(access_log_path, "\"path\":\"/redirect\"",
+                                    "\"lvl\":\"trace\""));
+  assert(runtime_file_line_contains(
+      access_log_path, "\"path\":\"/client-error\"", "\"lvl\":\"warn\""));
+  assert(runtime_file_line_contains(
+      access_log_path, "\"path\":\"/server-error\"", "\"lvl\":\"error\""));
+  assert(!runtime_file_contains(access_log_path, "\"path\":\"/missing\""));
   (void)remove(access_log_path);
 }
 
