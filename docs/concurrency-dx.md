@@ -7,6 +7,8 @@ background-thread side effect.
 
 The process/thread lifecycle authority for combining Kore with background
 services is [Service Runtime Lifecycle](service-runtime-lifecycle-spec.md).
+The planned reusable supervisor and public IPC expansion is defined in
+[Supervisor and Workflow Dispatch](supervisor-workflow-spec.md).
 
 The DX layer provides a small mailbox primitive for cross-service handoff:
 

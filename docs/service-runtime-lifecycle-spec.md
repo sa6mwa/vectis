@@ -2,6 +2,13 @@
 
 Status: draft implementation authority.
 
+The planned reusable logical-supervisor, public bounded IPC, and workflow
+dispatch architecture is specified in
+[Supervisor and Workflow Dispatch](supervisor-workflow-spec.md). This lifecycle
+document remains authoritative for fork safety, topology selection, and current
+runtime behavior; the newer specification governs the deliberate expansion of
+the supervisor domain and public IPC surface.
+
 This document defines the production runtime model for Vectis applications that
 combine Kore HTTP/WebDAV/API serving with background services such as lockdc
 consumers, metrics snapshots, CAI/MCP helpers, OPC UA loops, curl-backed workers,

@@ -249,12 +249,15 @@ commits once. Duplicate operation identities must use liblockdc's durable
 receipt/outbox semantics; they must not regenerate a code or enqueue another
 delivery.
 
-The Vectis SMTP worker pulls owned `lc_outbox_job` values through
-`lc_workflow_next()`, streams the payload with `lc_outbox_job_write_payload()`,
-and records exactly one upstream terminal action: `complete`, `retry`, or
-`dead_letter`. Its component-owned liblockdc dispatcher, claims, recovery, and
-dead-letter lifecycle remain authoritative. Vectis never reads a workflow
-payload into a hidden full-message buffer or creates another durable queue.
+The Vectis SMTP worker is a workflow-outbox adapter attached to the persistent
+logical supervisor defined by [Supervisor and Workflow
+Dispatch](supervisor-workflow-spec.md). It pulls owned `lc_outbox_job` values
+through `lc_workflow_next()`, streams the payload with
+`lc_outbox_job_write_payload()`, and records exactly one upstream terminal
+action: `complete`, `retry`, or `dead_letter`. Its component-owned liblockdc
+dispatcher, claims, recovery, and dead-letter lifecycle remain authoritative.
+Vectis never reads a workflow payload into a hidden full-message buffer or
+creates another durable queue.
 
 An email token issuance transaction does all of the following atomically:
 
