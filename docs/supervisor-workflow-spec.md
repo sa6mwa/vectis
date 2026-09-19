@@ -335,12 +335,12 @@ implicit license to run one Lua state concurrently.
 
 For one app runtime and one workflow namespace, Vectis runs one persistent
 workflow dispatcher in the supervisor host, not one dispatcher per Kore route
-worker. Route workers use their own post-fork producer clients and commit
-transactions concurrently. The supervisor owns a separate post-fork client and
-one `lc_workflow` handle.
+worker. Route workers use their own post-fork workflow clients for transaction
+production and commit transactions concurrently. The supervisor owns a
+separate post-fork client and one workflow dispatcher.
 
 An application declares that workflow once. Vectis derives the route-side
-producer configuration and supervisor-side dispatcher configuration from that
+workflow configuration and supervisor-side dispatcher configuration from that
 single declaration. They must name the same Lockd root, namespace, outbox
 identity, validation policy, and retry policy; a route must not independently
 construct a superficially similar workflow configuration. Separate post-fork
@@ -365,44 +365,74 @@ liblockdc already owns the durable parts: workflow transactions, immutable
 outbox records and payloads, claims, retries, dead letters, a private dispatcher
 thread, and recovery. It must remain the sole authority for these semantics.
 
-### Separate workflow producers from dispatchers
+### Decouple workflow construction from dispatchers
 
-The current `lc_client_new_workflow()` contract creates a private dispatcher
-thread. That is correct for a long-lived worker, but it is wrong for an HTTP
-route worker that only needs to atomically mutate domain state and append an
-outbox effect. A route must not start, retain, or repeatedly create a dispatcher
-thread merely to produce work.
+`lc_client_new_workflow()` must construct a logical, threadless workflow. It
+owns workflow transaction and append/receipt operations, including `begin`,
+participant acquisition, `append_outbox`, inbox/command acceptance, commit,
+and rollback. It does not start a dispatcher thread, claim jobs, execute
+handlers, or run recovery. A route can therefore use an ordinary workflow
+handle to atomically mutate domain state and append an outbox effect without
+starting, retaining, or repeatedly creating a dispatcher thread.
 
-liblockdc must therefore expose a threadless transactional producer, named here
-for discussion:
+Dispatcher acquisition is a separate operation, named here for discussion:
 
 ```c
-typedef struct lc_workflow_producer lc_workflow_producer;
+typedef struct lc_workflow_dispatcher lc_workflow_dispatcher;
 
-int lc_client_new_workflow_producer(lc_client *client,
-                                    const lc_workflow_config *config,
-                                    lc_workflow_producer **out,
-                                    lc_error *error);
+typedef struct lc_workflow_open_options {
+    lc_workflow_dispatcher *dispatcher; /* optional compatible attachment */
+} lc_workflow_open_options;
+
+int lc_client_new_workflow(lc_client *client,
+                           const lc_workflow_config *config,
+                           const lc_workflow_open_options *options,
+                           lc_workflow **out,
+                           lc_error *error);
+
+int lc_workflow_dispatcher_get_or_start(
+    lc_workflow *workflow,
+    const lc_workflow_dispatcher_config *config,
+    lc_workflow_dispatcher **out,
+    lc_error *error);
 ```
 
-The producer owns the workflow transaction and append/receipt operations,
-including `begin`, participant acquisition, `append_outbox`, inbox/command
-acceptance, commit, and rollback. It does not own a dispatcher thread, claim
-jobs, expose `next()`, or run recovery. Its configuration shares namespace,
-transaction, validation, and retry policy types with `lc_workflow` where those
-values are meaningful.
+`get_or_start()` resolves the process-local dispatcher registry for the calling
+client. It returns an already-running compatible dispatcher, or creates and
+starts exactly one lazily. Compatibility requires the same immutable workflow
+identity: client/root, namespace, outbox identity, validation policy, and retry
+policy. A mismatch fails explicitly; it must not silently attach a workflow to
+a dispatcher with different durable semantics. Different `lc_client` instances
+do not share a dispatcher because they may have different connection, identity,
+or ownership properties.
 
-The producer has an explicit close operation and may be retained for the
-lifetime of its owning request-worker client. Destroying it rolls back any
-uncommitted transaction; no producer action may invoke an effect handler or
-foreign side effect. A receipt is returned only after the transaction commits:
-failed or rolled-back transactions expose no wakeable `outbox_key`.
+An existing compatible dispatcher may be supplied as an optional workflow-open
+attachment. That is a convenience for a worker that already owns the dispatcher;
+it is not required for transactional production. Otherwise a workflow resolves
+dispatch only when its caller explicitly acquires a dispatcher. The Lua form is:
 
-The existing `lc_client_new_workflow()` remains the thread-owning persistent
-dispatcher constructor. A producer receipt contains the committed `outbox_key`;
-the host may use that receipt for its optional local wake path only after commit
-succeeds. This separation is required for Vectis Kore routes and equally useful
-to any other web host using liblockdc directly.
+```lua
+local workflow = client:new_workflow(config, { dispatcher = dispatcher })
+```
+
+A dispatcher has its own explicit stop/close lifecycle and remains alive while
+acquired, until its owning client closes, or until its host stops it. Closing an
+arbitrary workflow handle must not stop a shared dispatcher.
+
+Acquisition may start the dispatcher's private notification and recovery
+infrastructure, but it must not claim or deliver a user effect until a single
+consumer sink is ready. In Lua, `dispatcher:run()` or `dispatcher:pump()` binds
+that owner-state sink and makes the dispatcher claim-ready. A second concurrent
+sink, a different Lua owner state, or an incompatible handler registration fails
+explicitly. Direct-key notifications received before readiness remain bounded
+wakes; durable reconciliation remains responsible for repair.
+
+Destroying a workflow rolls back any uncommitted transaction; no transaction or
+append operation may invoke an effect handler or foreign side effect. A receipt
+contains the committed `outbox_key` only after the transaction commits; failed
+or rolled-back transactions expose no wakeable key. This separation is required
+for Vectis Kore routes and equally useful to any other web host using liblockdc
+directly.
 
 ### Direct-key workflow notification
 
@@ -410,24 +440,26 @@ The required core addition is a public direct-key injection operation, named
 here for discussion:
 
 ```c
-int lc_workflow_notify_outbox_key(lc_workflow *workflow,
-                                  const char *outbox_key,
-                                  lc_error *error);
+int lc_workflow_dispatcher_notify_outbox_key(
+    lc_workflow_dispatcher *dispatcher,
+    const char *outbox_key,
+    lc_error *error);
 ```
 
 It accepts a known committed `lc_outbox_receipt.outbox_key`, deduplicates it in
-the workflow's existing bounded direct-notification queue, and wakes the private
-dispatcher. The dispatcher performs a targeted claim/read path for that key; it
-does not run a namespace scan merely because a Vectis route committed an effect.
+the dispatcher's existing bounded direct-notification queue, and wakes the
+private dispatcher. The dispatcher performs a targeted claim/read path for that
+key; it does not run a namespace scan merely because a Vectis route committed
+an effect.
 
-The function is safe to call only in the process that owns `workflow`. Vectis
-delivers the key to that process through its local IPC signal. The operation
-does not execute a foreign effect and does not call user code.
+The function is safe to call only in the process that owns `dispatcher`.
+Vectis delivers the key to that process through its local IPC signal. The
+operation does not execute a foreign effect and does not call user code.
 
-Capacity overflow is visible through `lc_workflow_stats`, increments a durable
-repair counter, and schedules indexed reconciliation. It never makes a committed
-effect disappear. Startup reconciliation and claim-expiry recovery remain
-mandatory.
+Capacity overflow is visible through `lc_workflow_dispatcher_stats`, increments
+a durable repair counter, and schedules indexed reconciliation. It never makes
+a committed effect disappear. Startup reconciliation and claim-expiry recovery
+remain mandatory.
 
 ### Cross-host notification
 
@@ -448,37 +480,36 @@ liblockdc's Lua module needs a safe workflow dispatcher facade, but it must not
 invent Vectis's generic service process, IPC router, or multi-source scope.
 liblockdc is the correct owner only of workflow dispatch.
 
-The Lua module mirrors the producer/dispatcher separation:
+The Lua module mirrors the workflow/dispatcher separation:
 
 ```lua
 -- Request or route domain: threadless transactional production only.
-local producer = assert(client:new_workflow_producer({
-  namespace_name = "myapp.orders",
-}))
-
-producer:transaction(function(tx)
-  tx:append_outbox(entry, payload_source)
-end)
-
--- Dedicated worker process: persistent dispatcher and Lua effect handlers.
 local workflow = assert(client:new_workflow({
   namespace_name = "myapp.orders",
 }))
-local dispatcher = workflow:dispatcher({ handlers = handlers })
-assert(dispatcher:run())
+
+workflow:transaction(function(tx)
+  tx:append_outbox(entry, payload_source)
+end)
+
+-- Dedicated worker/service domain: get the shared dispatcher or start it.
+local dispatcher = workflow:dispatcher()
+assert(dispatcher:run({ handlers = handlers }))
 ```
 
-`new_workflow_producer()` is safe for a host to use synchronously in a route
-when the host otherwise permits its Lockd client operation. It never creates
-liblockdc dispatcher threads. `new_workflow()` and `workflow:dispatcher()` are
-long-lived worker constructs, not request constructs.
+`new_workflow()` is safe for a host to use synchronously in a route when the
+host otherwise permits its Lockd client operation. It never creates liblockdc
+dispatcher threads. `workflow:dispatcher()` is the explicit acquire-or-start
+operation; it returns the compatible dispatcher already registered for that
+client or starts one lazily.
 
-The producer facade supplies transactional operations and close/garbage-
-collection cleanup only. It deliberately accepts no `handlers` table and has no
-`run`, `pump`, `next`, claim, retry, or terminal-job methods. Conversely, the
-dispatcher facade consumes jobs but does not expose route-side transaction
-production as a shortcut. The two APIs make ownership and latency boundaries
-obvious in Lua as well as C.
+The workflow facade supplies transactional operations and close/garbage-
+collection cleanup. It has no `run`, `pump`, `next`, claim, retry, or terminal-
+job methods. Its optional `dispatcher()` acquisition method does not itself
+accept a Lua handler. The dispatcher facade alone accepts `handlers` and
+consumes jobs; it does not expose route-side transaction production as a
+shortcut. The two handles make ownership and latency boundaries obvious in Lua
+as well as C.
 
 The direct Lua API wraps a persistent workflow with an owner-state dispatch
 loop:
@@ -493,7 +524,8 @@ local workflow = assert(client:new_workflow({
   max_attempts = 12,
 }))
 
-local dispatcher = workflow:dispatcher({
+local dispatcher = workflow:dispatcher()
+assert(dispatcher:run({
   handlers = {
     ["order.webhook"] = function(job)
       local ok, err = deliver(job)
@@ -503,16 +535,14 @@ local dispatcher = workflow:dispatcher({
       return job:complete()
     end,
   },
-})
-
-assert(dispatcher:run()) -- blocking; owns this Lua state and handles retries
+})) -- blocking; owns this Lua state and handles retries
 ```
 
-The facade also offers `start()`, bounded `pump(opts)`, `stop()`, `wait()`, and
-`stats()`. `pump()` integrates with a host that already owns an event loop;
-`run()` is the simplest correct choice for a dedicated worker process. It calls
-Lua only on the calling owner state. It must never invoke a handler on
-liblockdc's private dispatcher thread.
+The facade also offers bounded `pump(opts)`, `stop()`, `wait()`, and `stats()`.
+`pump()` integrates with a host that already owns an event loop; `run()` is the
+simplest correct choice for a dedicated worker process. It calls Lua only on
+the calling owner state. It must never invoke a handler on liblockdc's private
+dispatcher thread.
 
 #### Lua host-placement contract
 
@@ -528,9 +558,9 @@ This distinction must be explicit in liblockdc documentation and examples:
 - liblockdc does not know whether a generic Lua host is Kore, Vectis, nginx, or
   a custom event loop. It must not attempt to infer host topology or enter a
   Lua closure from its dispatcher thread.
-- Vectis owns the host-specific policy: its `app:workflow()` route producer
-  facade uses `new_workflow_producer()`, while `app:supervisor()` owns the sole
-  persistent `new_workflow()` dispatcher and its handler closure.
+- Vectis owns the host-specific policy: its `app:workflow()` route facade uses
+  an ordinary threadless `new_workflow()`, while `app:supervisor()` explicitly
+  acquires the sole persistent dispatcher and owns its handler closure.
 
 The direct `require("lockdc")` module remains intentionally available in a
 Vectis script. Its long-lived dispatcher use inside a route is documented as
@@ -538,7 +568,7 @@ unsupported; Vectis's owned workflow facade is the supported route path. The
 dependency-native module must not acquire a Vectis dependency merely to police
 that host rule.
 
-The facade keeps raw `workflow:next()` and raw job terminal operations available
+The facade keeps raw `dispatcher:next()` and job terminal operations available
 for advanced users. Its value is correct lifecycle, handler outcome mapping,
 claim renewal, error-to-retry policy, and safe Lua ownership without a manual
 `while next()` loop.
@@ -574,7 +604,13 @@ the optional distributed notification path above.
 
 ### liblockdc
 
-- `notify_outbox_key` dispatches a committed key without a namespace scan.
+- `new_workflow()` performs transactional production without creating a thread.
+- Repeated dispatcher acquisition on compatible workflows from one client
+  returns one dispatcher; a configuration mismatch is rejected.
+- Closing a workflow neither stops an acquired dispatcher nor loses a committed
+  receipt, while a destroyed uncommitted workflow rolls back its transaction.
+- `dispatcher_notify_outbox_key` dispatches a committed key without a namespace
+  scan and never calls a user handler.
 - Duplicate notifications are coalesced; bounded overflow repairs through
   indexed reconciliation.
 - A failed handler retries with the stable job identity and configured policy;
@@ -586,8 +622,9 @@ the optional distributed notification path above.
 
 ## Implementation order
 
-1. Add and test liblockdc direct-key notification plus the dependency-native
-   Lua workflow producer/dispatcher facades.
+1. Decouple liblockdc workflow construction from dispatcher acquisition; add
+   and test direct-key notification plus the dependency-native Lua
+   workflow/dispatcher facades.
 2. Promote a narrowly scoped, declared public IPC channel above Vectis's private
    lifecycle control bus without exposing control frames.
 3. Add the generic Vectis supervisor host/logical-supervisor C lifecycle and

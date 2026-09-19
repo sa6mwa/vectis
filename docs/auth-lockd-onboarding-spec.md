@@ -240,22 +240,23 @@ inbox/outbox operations. It must use that API directly; Vectis must not
 implement an equivalent queue, lease convention, polling format, or retry
 protocol on top of ordinary Lockd records.
 
-Each auth delivery workflow opens `lc_client_new_workflow()` for its selected
+Each auth issuance uses an ordinary, threadless `lc_workflow` for its selected
 auth state domain. A fresh issuance starts an `lc_workflow_transaction` through
 `lc_workflow_append_outbox()` or `lc_workflow_accept_command()`, acquires the
 affected typed auth records as transaction participants, stages their state,
 adds the immutable `lc_outbox_entry` with its streamed encrypted payload, and
-commits once. Duplicate operation identities must use liblockdc's durable
-receipt/outbox semantics; they must not regenerate a code or enqueue another
-delivery.
+commits once. This transaction path does not start a dispatcher. Duplicate
+operation identities must use liblockdc's durable receipt/outbox semantics;
+they must not regenerate a code or enqueue another delivery.
 
 The Vectis SMTP worker is a workflow-outbox adapter attached to the persistent
 logical supervisor defined by [Supervisor and Workflow
-Dispatch](supervisor-workflow-spec.md). It pulls owned `lc_outbox_job` values
-through `lc_workflow_next()`, streams the payload with
-`lc_outbox_job_write_payload()`, and records exactly one upstream terminal
-action: `complete`, `retry`, or `dead_letter`. Its component-owned liblockdc
-dispatcher, claims, recovery, and dead-letter lifecycle remain authoritative.
+Dispatch](supervisor-workflow-spec.md). The supervisor explicitly acquires its
+one compatible liblockdc dispatcher; its SMTP handler receives claimed
+`lc_outbox_job` values, streams the payload with `lc_outbox_job_write_payload()`,
+and records exactly one upstream terminal action: `complete`, `retry`, or
+`dead_letter`. The dispatcher, claims, recovery, and dead-letter lifecycle
+remain authoritative in liblockdc.
 Vectis never reads a workflow payload into a hidden full-message buffer or
 creates another durable queue.
 
