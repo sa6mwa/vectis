@@ -309,34 +309,6 @@ static void remove_tree(const char *path) {
   (void)rmdir(path);
 }
 
-static int file_contains(const char *path, const char *needle) {
-  struct stat st;
-  FILE *fp;
-  char *buffer;
-  size_t nread;
-  int found;
-
-  if (path == NULL || needle == NULL || stat(path, &st) != 0 ||
-      st.st_size < 0) {
-    return 0;
-  }
-  fp = fopen(path, "rb");
-  if (fp == NULL) {
-    return 0;
-  }
-  buffer = (char *)malloc((size_t)st.st_size + 1u);
-  if (buffer == NULL) {
-    (void)fclose(fp);
-    return 0;
-  }
-  nread = fread(buffer, 1u, (size_t)st.st_size, fp);
-  (void)fclose(fp);
-  buffer[nread] = '\0';
-  found = nread == (size_t)st.st_size && strstr(buffer, needle) != NULL;
-  free(buffer);
-  return found;
-}
-
 static char base64_digit(unsigned value) {
   static const char table[] =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -701,6 +673,14 @@ int main(void) {
   char oauth_basic_header[1500];
   char smtp_url[128];
   char totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
+  char mock_code[] = "code";
+  char mock_client[] = "client";
+  char mock_refresh[] = "refresh";
+  char mock_fail[] = "fail";
+  char mock_allow[] = "allow";
+  char mock_required[] = "required";
+  char mock_redirect[] = "redirect";
+  char mock_header[] = "header";
   vectis_app_config app_config;
   vectis_app *app;
   int written;
@@ -1181,7 +1161,7 @@ int main(void) {
 
   vectis_auth_oidc_token_exchange_config_init(&oidc_exchange_config);
   oidc_exchange_config.transport.request = oauth2_mock_transport;
-  oidc_exchange_config.transport.request_userdata = (void *)"code";
+  oidc_exchange_config.transport.request_userdata = mock_code;
   oidc_exchange_config.transport.user_agent = "vectis-unit";
   oidc_exchange_config.token_endpoint = "https://idp.example.test/token";
   oidc_exchange_config.client_id = "vectis-client";
@@ -1259,7 +1239,7 @@ int main(void) {
 
   vectis_auth_oauth2_client_credentials_config_init(&oauth2_client);
   oauth2_client.transport.request = oauth2_mock_transport;
-  oauth2_client.transport.request_userdata = (void *)"client";
+  oauth2_client.transport.request_userdata = mock_client;
   oauth2_client.transport.user_agent = "vectis-unit";
   oauth2_client.token_endpoint = "https://idp.example.test/token";
   oauth2_client.client_id = "vectis-client";
@@ -1289,7 +1269,7 @@ int main(void) {
          "allocates OAuth2 token flow fixture");
   vectis_auth_oauth2_token_flow_policy_init(&token_policy);
   token_policy.transport.request = oauth2_mock_transport;
-  token_policy.transport.request_userdata = (void *)"refresh";
+  token_policy.transport.request_userdata = mock_refresh;
   token_policy.transport.user_agent = "vectis-unit";
   token_policy.token_endpoint = "https://idp.example.test/token";
   token_policy.client_id = "vectis-client";
@@ -1321,8 +1301,7 @@ int main(void) {
       &oauth_webdav_config, &oauth_webdav_key, &error);
   expect(status == VECTIS_ERR_STATE,
          "OAuth2 WebDAV key rejects missing stored flow");
-  expect(error.message != NULL &&
-             strcmp(error.message, "OAuth2 token flow was not found") == 0,
+  expect(strcmp(error.message, "OAuth2 token flow was not found") == 0,
          "OAuth2 WebDAV key missing-flow error is diagnostic");
   expect(oauth_webdav_key.client_id == NULL &&
              oauth_webdav_key.client_secret == NULL,
@@ -1403,7 +1382,7 @@ int main(void) {
   stored_policy.store = store;
   stored_policy.flow_id = "oidc-flow-1";
   stored_policy.flow_policy.transport.request = oauth2_mock_transport;
-  stored_policy.flow_policy.transport.request_userdata = (void *)"fail";
+  stored_policy.flow_policy.transport.request_userdata = mock_fail;
   stored_policy.flow_policy.transport.user_agent = "vectis-unit";
   stored_policy.flow_policy.token_endpoint = "https://idp.example.test/token";
   stored_policy.flow_policy.client_id = "vectis-client";
@@ -1451,7 +1430,7 @@ int main(void) {
   stored_policy.store = store;
   stored_policy.flow_id = "oidc-flow-1";
   stored_policy.flow_policy.transport.request = oauth2_mock_transport;
-  stored_policy.flow_policy.transport.request_userdata = (void *)"fail";
+  stored_policy.flow_policy.transport.request_userdata = mock_fail;
   stored_policy.flow_policy.transport.user_agent = "vectis-unit";
   stored_policy.flow_policy.token_endpoint = "https://idp.example.test/token";
   stored_policy.flow_policy.client_id = "vectis-client";
@@ -2019,7 +1998,7 @@ int main(void) {
   }
 
   status = vectis_auth_provider_from_callback(
-      &custom_provider, sample_auth_provider, (void *)"allow", &error);
+      &custom_provider, sample_auth_provider, mock_allow, &error);
   expect_ok(status, &error, "creates callback auth provider");
   vectis_webdav_auth_provider_config_init(&webdav_auth_config);
   webdav_auth_config.provider = &custom_provider;
@@ -2036,7 +2015,7 @@ int main(void) {
          "WebDAV adapter copies provider principal");
 
   status = vectis_auth_provider_from_callback(
-      &custom_provider, sample_auth_provider, (void *)"required", &error);
+      &custom_provider, sample_auth_provider, mock_required, &error);
   expect_ok(status, &error, "creates required callback auth provider");
   status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
                                        &webdav_auth_config, &error);
@@ -2049,7 +2028,7 @@ int main(void) {
          "WebDAV adapter preserves auth challenge");
 
   status = vectis_auth_provider_from_callback(
-      &custom_provider, sample_auth_provider, (void *)"redirect", &error);
+      &custom_provider, sample_auth_provider, mock_redirect, &error);
   expect_ok(status, &error, "creates redirect callback auth provider");
   status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
                                        &webdav_auth_config, &error);
@@ -2070,7 +2049,7 @@ int main(void) {
          "WebDAV adapter preserves auth response body");
 
   status = vectis_auth_provider_from_callback(
-      &custom_provider, sample_auth_provider, (void *)"header", &error);
+      &custom_provider, sample_auth_provider, mock_header, &error);
   expect_ok(status, &error, "creates header callback auth provider");
   webdav_vectis_request = vectis_internal_request_new(&error);
   expect(webdav_vectis_request != NULL,

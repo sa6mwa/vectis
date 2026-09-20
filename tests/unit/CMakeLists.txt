@@ -86,6 +86,11 @@ if(VECTIS_WITH_KORE_RUNTIME)
     test_vectis_runtime.c)
   target_compile_definitions(vectis_unit_runtime_header_limit PRIVATE
     VECTIS_RUNTIME_HEADER_LIMIT_ONLY)
+  # This one-case executable shares the runtime test source; the other static
+  # cases are intentionally not linked from its reduced main function.
+  target_compile_options(vectis_unit_runtime_header_limit PRIVATE
+    -Wno-unused-function
+    -Wno-unused-variable)
   vectis_add_unit_test(vectis_unit_sdk_surface test_vectis_sdk_surface.c)
 else()
   message(STATUS "Kore runtime disabled; skipping Kore runtime unit tests")

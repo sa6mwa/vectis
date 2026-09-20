@@ -9,7 +9,7 @@ file(READ "${curl_doc}" curl_doc_text)
 file(READ "${readme_file}" readme_text)
 
 foreach(required_text IN ITEMS
-    "vectis_curl_lua_init.h"
+    "vectis_lua_register_resource_module(runtime, \"curl\", \"curl.init\")"
     "vectis_lua_curl_perform"
     "vectis_lua_curl_apply_headers"
     "vectis_lua_curl_apply_method"

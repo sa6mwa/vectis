@@ -1,4 +1,12 @@
 if(VECTIS_BUILD_TESTS)
+  add_test(NAME vectis_byte_array_generator
+    COMMAND "${CMAKE_COMMAND}"
+            "-DGENERATOR=${CMAKE_SOURCE_DIR}/cmake/vectis_generate_byte_array.cmake"
+            "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/byte-array-generator"
+            -P "${CMAKE_SOURCE_DIR}/tests/byte_array_generator.cmake")
+  set_tests_properties(vectis_byte_array_generator PROPERTIES
+    LABELS "unit;local"
+    TIMEOUT 30)
   if(VECTIS_TARGET_ID STREQUAL "x86_64-linux-gnu" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux"
       AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
     find_package(Python3 REQUIRED COMPONENTS Interpreter)

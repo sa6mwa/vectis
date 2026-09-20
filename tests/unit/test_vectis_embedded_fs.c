@@ -117,7 +117,7 @@ static vectis_status chunk_entry(const void *data, size_t size, void *userdata,
 
 static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
   static const unsigned char payload[] = "hello\napp\n";
-  static const char manifest[] =
+  static const char manifest_prefix[] =
       "{\"format\":\"vectis-pack\","
       "\"tree_sha256\":"
       "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
@@ -130,7 +130,8 @@ static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
       "\"\\\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\\"
       "\"\","
       "\"content_type\":\"text/html\"},"
-      "{\"path\":\"/assets/app.txt\",\"offset\":6,\"size\":4,"
+      "{\"path\":\"/assets/app.txt\",\"offset\":6,\"size\":4,";
+  static const char manifest_suffix[] =
       "\"kind\":\"file\",\"mode\":292,"
       "\"sha256\":"
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\","
@@ -138,12 +139,18 @@ static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
       "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\"
       "\"\","
       "\"content_type\":\"text/plain\"}]}";
+  static char manifest[1024];
   vectis_embedded_fs_config config;
   vectis_embedded_fs *fs;
+  int written;
+
+  written = snprintf(manifest, sizeof(manifest), "%s%s", manifest_prefix,
+                     manifest_suffix);
+  assert(written > 0 && (size_t)written < sizeof(manifest));
 
   vectis_embedded_fs_config_init(&config);
   config.manifest_json = manifest;
-  config.manifest_json_size = sizeof(manifest) - 1u;
+  config.manifest_json_size = (size_t)written;
   config.payload = payload;
   config.payload_size = sizeof(payload) - 1u;
   fs = NULL;
@@ -227,6 +234,7 @@ static void write_file(const char *path, const char *body) {
 #ifdef VECTIS_TEST_WRAP_FCHMOD
 static const char *competing_path;
 int __real_fchmod(int fd, mode_t mode);
+int __wrap_fchmod(int fd, mode_t mode);
 int __wrap_fchmod(int fd, mode_t mode) {
   if (competing_path != NULL) {
     write_file(competing_path, "competitor");

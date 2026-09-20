@@ -3578,41 +3578,6 @@ static int runtime_base64_encode(const char *input, char *out,
   return 1;
 }
 
-static int runtime_response_line_value(const void *body, size_t body_size,
-                                       const char *key, char *out,
-                                       size_t out_size) {
-  const unsigned char *bytes;
-  size_t key_size;
-  size_t start;
-  size_t end;
-  size_t value_size;
-
-  if (body == NULL || key == NULL || out == NULL || out_size == 0u) {
-    return 0;
-  }
-  bytes = (const unsigned char *)body;
-  key_size = strlen(key);
-  for (start = 0u; start + key_size < body_size; ++start) {
-    if ((start == 0u || bytes[start - 1u] == '\n') &&
-        memcmp(bytes + start, key, key_size) == 0 &&
-        bytes[start + key_size] == '=') {
-      start += key_size + 1u;
-      end = start;
-      while (end < body_size && bytes[end] != '\n') {
-        end++;
-      }
-      value_size = end - start;
-      if (value_size >= out_size) {
-        return 0;
-      }
-      memcpy(out, bytes + start, value_size);
-      out[value_size] = '\0';
-      return 1;
-    }
-  }
-  return 0;
-}
-
 static int runtime_json_string_value(const void *body, size_t body_size,
                                      const char *key, char *out,
                                      size_t out_size) {
@@ -4430,6 +4395,7 @@ static void assert_large_header_rejected(unsigned short port) {
   (void)close(fd);
 }
 
+#ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY
 static void assert_default_header_limit_accepts_64k(void) {
   vectis_app_config config;
   vectis_http_client_config http;
@@ -4523,6 +4489,7 @@ static void assert_default_header_limit_accepts_64k(void) {
   assert(status == VECTIS_OK);
   app->close(app);
 }
+#endif
 
 static void assert_keepalive_limit(unsigned short port) {
   const char *request;
@@ -4683,7 +4650,7 @@ static void assert_kore_smoke(void) {
   const char xml_upload_path[] = "/tmp/vectis-runtime-upload.xml";
   const char dsv_upload_path[] = "/tmp/vectis-runtime-upload.csv";
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
-  const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
+  char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char static_module_path[] = "/tmp/vectis-runtime-module.mjs";
   const char access_log_path[] = "/tmp/vectis-runtime-access.log";
   const char response_file_body[] = "file-response";
@@ -4706,19 +4673,6 @@ static void assert_kore_smoke(void) {
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
   const char *native_webdav_headers[1];
-  const char *browser_m2m_headers[] = {"Accept: text/html"};
-  const char *browser_non_document_headers[] = {"Accept: text/html",
-                                                "Sec-Fetch-Mode: navigate",
-                                                "Sec-Fetch-Dest: iframe"};
-  const char *browser_cross_site_headers[] = {
-      "Accept: text/html", "Sec-Fetch-Mode: navigate",
-      "Sec-Fetch-Dest: document", "Sec-Fetch-Site: cross-site"};
-  const char *browser_navigation_headers[] = {
-      "Accept: text/html", "Sec-Fetch-Mode: navigate",
-      "Sec-Fetch-Dest: document", "Sec-Fetch-Site: same-origin"};
-  const char *browser_cookie_headers[1];
-  const char *browser_cookie_authorization_headers[2];
-  const char *browser_tampered_cookie_headers[1];
   char browser_session_pouch_dir[] =
       "/tmp/vectis-runtime-browser-session.XXXXXX";
   char browser_session_endpoint[4096];
@@ -4729,10 +4683,8 @@ static void assert_kore_smoke(void) {
   vectis_status second_status;
   vectis_app *app;
   vectis_app *second_app;
-  vectis_app *browser_session_app;
   vectis_embedded_fs *embedded_fs;
   vectis_response *browser_expired_response;
-  vectis_auth_browser_session_result browser_session_result;
   FILE *fp;
   char *default_spooled_body;
   char *stream_body;
@@ -4744,12 +4696,9 @@ static void assert_kore_smoke(void) {
   char auth_clear[320];
   char auth_token[448];
   char auth_header[480];
-  char auth_pending_transaction_id[128];
   char auth_workflow_id[128];
   char auth_totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   char auth_totp_form[256];
-  char browser_cookie_header[512];
-  char browser_tampered_cookie_header[512];
   char url[512];
   unsigned short port;
   unsigned short second_port;
@@ -4762,10 +4711,7 @@ static void assert_kore_smoke(void) {
   size_t dsv_invalid_body_size;
   long long dsv_total;
   size_t dsv_active;
-  size_t browser_cookie_size;
   long stream_file_size;
-  const char *browser_set_cookie;
-  const char *browser_cookie_end;
   int attempt;
   int i;
   int overlap_live_upload;
@@ -4839,7 +4785,6 @@ static void assert_kore_smoke(void) {
   memset(&json_source_doc, 0, sizeof(json_source_doc));
   memset(&body_spool_expectation, 0, sizeof(body_spool_expectation));
   embedded_fs = NULL;
-  browser_session_app = NULL;
   browser_expired_response = NULL;
   vectis_auth_user_enrollment_init(&auth_enrollment);
   vectis_auth_provider_init(&native_auth_provider);
@@ -5079,8 +5024,8 @@ static void assert_kore_smoke(void) {
   stream_file_route.body.memory_buffer_limit_bytes = 8u;
   status = app->upload_file(app, &stream_file_route, &error);
   assert(status == VECTIS_OK);
-  file_route = vectis_route(VECTIS_HTTP_GET, "/file", file_handler,
-                            (void *)response_file_path);
+  file_route =
+      vectis_route(VECTIS_HTTP_GET, "/file", file_handler, response_file_path);
   status = vectis_register_route(app, &file_route, &error);
   assert(status == VECTIS_OK);
   vectis_static_file_config_init(&static_file_mount);

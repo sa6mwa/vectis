@@ -1,4 +1,4 @@
-@vectis_cli_resource_data_declaration@
+extern const unsigned char @vectis_cli_resource_symbol@_data[];
 
 static const vectis_cli_embedded_resource @vectis_cli_resource_symbol@[] = {
 @vectis_cli_resource_entries@};

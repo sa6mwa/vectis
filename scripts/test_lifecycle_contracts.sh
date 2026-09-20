@@ -52,10 +52,42 @@ assert_c89_cmake_contract() {
   fi
   assert_contains "$repo_root/CMakeLists.txt" \
     'function\(vectis_configure_c89_target target\)'
-  assert_contains "$repo_root/CMakeLists.txt" \
-    'target_compile_options\(\$\{target\} PRIVATE -std=c89\)'
-  assert_contains "$repo_root/examples/CMakeLists.txt" '-std=c89'
+  for c89_flag in \
+    '-std=c89' \
+    '-Wall' \
+    '-Wextra' \
+    '-Wpedantic' \
+    '-pedantic-errors' \
+    '-Wstrict-prototypes' \
+    '-Wmissing-prototypes' \
+    '-Wshadow' \
+    '-Wpointer-arith' \
+    '-Wcast-qual' \
+    '-Wwrite-strings' \
+    '-Wdeclaration-after-statement'; do
+    assert_contains "$repo_root/CMakeLists.txt" \
+      "^[[:space:]]*${c89_flag}$"
+    assert_contains "$repo_root/examples/CMakeLists.txt" \
+      "^[[:space:]]*${c89_flag}$"
+  done
+  assert_contains "$repo_root/CMakeLists.txt" '-Wno-long-long'
+  assert_contains "$repo_root/examples/CMakeLists.txt" '-Wno-long-long'
   assert_contains "$repo_root/tests/install/CMakeLists.txt" '-std=c89'
+  assert_contains "$repo_root/CMakeLists.txt" \
+    'cmake/vectis_generate_byte_array\.cmake'
+  assert_not_contains "$repo_root/CMakeLists.txt" 'xxd[[:space:]]+-i'
+  assert_contains "$repo_root/CMakeLists.txt" \
+    'add_library\(vectis_cli_resources OBJECT'
+  assert_contains "$repo_root/CMakeLists.txt" \
+    'vectis_configure_c89_target\(vectis_cli_resources\)'
+  assert_contains "$repo_root/cmake/vectis_generate_byte_array.cmake" \
+    'raw byte-array input must not be empty'
+  assert_contains "$repo_root/cmake/vectis_generate_byte_array.cmake" \
+    'file\(RENAME.*resource_rename_result\)'
+  assert_contains "$repo_root/tests/byte_array_generator.cmake" \
+    'byte-array output did not preserve exact input bytes'
+  assert_contains "$repo_root/tests/byte_array_generator.cmake" \
+    '72-column limit'
 }
 
 for state_namespace in auth profile metrics acme smith; do
@@ -377,8 +409,10 @@ assert_lockdc_lua_runtime_contract() {
   assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_lockdc_lua OBJECT'
   assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_lockdc_lua>'
   assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "lockdc\.core"'
-  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "lockdc", vectis_lockdc_lua_init'
-  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "vectis\.lockd", vectis_lockd_lua_init'
+  assert_contains "$repo_root/src/vectis_cli.c" \
+    'vectis_lua_register_resource_module\(runtime, "lockdc"'
+  assert_contains "$repo_root/src/vectis_cli.c" \
+    'vectis_lua_register_resource_module\(runtime, "vectis\.lockd"'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("lockdc"\)'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("vectis\.lockd"\)'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'lockdc\.version_string'
@@ -430,7 +464,8 @@ assert_lql_lua_runtime_contract() {
   assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_liblql_lua OBJECT'
   assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_liblql_lua>'
   assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "lql\.core"'
-  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "lql", vectis_liblql_lua_init'
+  assert_contains "$repo_root/src/vectis_cli.c" \
+    'vectis_lua_register_resource_module\(runtime, "lql"'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("lql"\)'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("lql\.core"\)'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'lql\.version'
@@ -1183,9 +1218,11 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.auth == auth'
   assert_contains "$repo_root/src/vectis_cli.c" 'lua_pushliteral\(lua, "vectis\.smtp"\)'
   assert_contains "$repo_root/src/vectis_cli.c" 'lua_setfield\(lua, -2, "smtp"\)'
-  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "vectis\.rest", vectis_rest_lua_init'
+  assert_contains "$repo_root/src/vectis_cli.c" \
+    'vectis_lua_register_resource_module\(runtime, "vectis\.rest"'
   assert_contains "$repo_root/src/vectis_cli.c" 'lua_setfield\(lua, -2, "rest"\)'
-  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "vectis\.terminal", vectis_terminal_lua_init'
+  assert_contains "$repo_root/src/vectis_cli.c" \
+    'vectis_lua_register_resource_module\(runtime, "vectis\.terminal"'
   assert_contains "$repo_root/src/vectis_cli.c" 'lua_setfield\(lua, -2, "terminal"\)'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.rest == rest'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.terminal == terminal'
@@ -1308,7 +1345,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/src/vectis_cli.c" 'basic_authorization'
   assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "vectis\.auth\.core"'
   assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_lua_module'
-  assert_contains "$repo_root/src/vectis_cli.c" 'vectis_auth_lua_init'
+  assert_contains "$repo_root/src/vectis_cli.c" \
+    'vectis_lua_register_resource_module\(runtime, "vectis\.auth"'
   assert_contains "$repo_root/lua/vectis/auth.lua" 'function M\.workflow'
   assert_contains "$repo_root/lua/vectis/auth.lua" 'function workflow:mount'
   assert_contains "$repo_root/vectis.rockspec.in" '\["vectis\.auth"\] = "lua/vectis/auth\.lua"'

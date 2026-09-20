@@ -155,14 +155,14 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   cai_agent_session_store const *callbacks;
   vectis_smith_store_config store_config;
   vectis_smith_store *store;
-  vectis_error vectis_error;
+  vectis_error error;
   cai_error caierr;
   lc_client_config client_config;
   lc_error lcerr;
   lc_client *client;
   cai_source *state;
   cai_source *loaded;
-  vectis_source vectis_source;
+  vectis_source source;
   char session_id[CAI_AGENT_SESSION_ID_MAX];
   unsigned long long watermark;
   char contents[64];
@@ -188,9 +188,8 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   store_config.client = client;
   store_config.owner = "vectis-smith-store-test";
   store = NULL;
-  vectis_error_clear(&vectis_error);
-  assert(vectis_smith_store_new(&store_config, &store, &vectis_error) ==
-         VECTIS_OK);
+  vectis_error_clear(&error);
+  assert(vectis_smith_store_new(&store_config, &store, &error) == VECTIS_OK);
   callbacks = vectis_smith_store_session_store(store);
   assert(callbacks != NULL);
   assert(callbacks->load_latest(callbacks->context, "workspace", session_id,
@@ -199,10 +198,8 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   assert(loaded == NULL);
 
   cai_error_init(&caierr);
-  vectis_source =
-      vectis_source_from_memory(checkpoint, sizeof(checkpoint) - 1u);
-  assert(vectis_cai_source_from_source(&vectis_source, &state, &vectis_error) ==
-         VECTIS_OK);
+  source = vectis_source_from_memory(checkpoint, sizeof(checkpoint) - 1u);
+  assert(vectis_cai_source_from_source(&source, &state, &error) == VECTIS_OK);
   assert(callbacks->checkpoint(callbacks->context, "workspace", "session-1",
                                state, 4u, &caierr) == CAI_OK);
   cai_source_close(state);
@@ -255,7 +252,7 @@ static void test_lockdc_store_checkpoint_and_events(void) {
       /* Reopen the store to verify persisted recovery state, not cached data.
        */
       vectis_smith_store_destroy(store);
-      assert(vectis_smith_store_new(&store_config, &store, &vectis_error) ==
+      assert(vectis_smith_store_new(&store_config, &store, &error) ==
              VECTIS_OK);
       callbacks = vectis_smith_store_session_store(store);
       assert(callbacks->load_latest(callbacks->context, "workspace", session_id,
@@ -285,10 +282,10 @@ static void test_lockdc_store_checkpoint_and_events(void) {
       /* A failed remote release leaves its server lease until expiry. Use
        * independent keys so each attempt reaches the buffer cleanup path. */
       snprintf(scope, sizeof(scope), "release-failure-%d", attempt);
-      vectis_source =
+      source =
           vectis_source_from_memory(large_checkpoint, sizeof(large_checkpoint));
-      assert(vectis_cai_source_from_source(&vectis_source, &state,
-                                           &vectis_error) == VECTIS_OK);
+      assert(vectis_cai_source_from_source(&source, &state, &error) ==
+             VECTIS_OK);
       assert(callbacks->checkpoint(callbacks->context, scope, "session-release",
                                    state, 4u, &caierr) == CAI_OK);
       cai_source_close(state);
@@ -307,9 +304,8 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   }
   /* Simulate a checkpoint interrupted after the session commit, before the
    * scope update. Bytes and watermark must still come from the same commit. */
-  vectis_source = vectis_source_from_memory("new checkpoint", 14u);
-  assert(vectis_cai_source_from_source(&vectis_source, &state, &vectis_error) ==
-         VECTIS_OK);
+  source = vectis_source_from_memory("new checkpoint", 14u);
+  assert(vectis_cai_source_from_source(&source, &state, &error) == VECTIS_OK);
   fail_scope_acquire = 1;
   assert(callbacks->checkpoint(callbacks->context, "workspace", "session-1",
                                state, 6u, &caierr) != CAI_OK);
@@ -362,24 +358,23 @@ static void test_lockdc_store_checkpoint_and_events(void) {
     config.runtime.disable_terminal = 1;
     config.runtime.session_id = "named-one";
     config.runtime.resume_latest = 1;
-    assert(vectis_smith_open(&config, &smith, &vectis_error) == VECTIS_OK);
+    assert(vectis_smith_open(&config, &smith, &error) == VECTIS_OK);
     assert(strcmp(vectis_smith_session_id(smith), "named-one") == 0);
     assert(vectis_smith_submit_queued(smith, "remember first conversation",
-                                      &vectis_error) == VECTIS_OK);
+                                      &error) == VECTIS_OK);
     settle_offline_turn(smith);
     vectis_smith_close(smith);
     config.runtime.session_id = "named-two";
-    assert(vectis_smith_open(&config, &smith, &vectis_error) == VECTIS_OK);
+    assert(vectis_smith_open(&config, &smith, &error) == VECTIS_OK);
     assert(strcmp(vectis_smith_session_id(smith), "named-two") == 0);
-    assert(vectis_smith_submit_queued(smith, "second conversation",
-                                      &vectis_error) == VECTIS_OK);
+    assert(vectis_smith_submit_queued(smith, "second conversation", &error) ==
+           VECTIS_OK);
     settle_offline_turn(smith);
     vectis_smith_close(smith);
     config.runtime.session_id = "named-one";
-    assert(vectis_smith_open(&config, &smith, &vectis_error) == VECTIS_OK);
+    assert(vectis_smith_open(&config, &smith, &error) == VECTIS_OK);
     assert(strcmp(vectis_smith_session_id(smith), "named-one") == 0);
-    assert(vectis_smith_submit_queued(smith, "followup", &vectis_error) ==
-           VECTIS_OK);
+    assert(vectis_smith_submit_queued(smith, "followup", &error) == VECTIS_OK);
     settle_offline_turn(smith);
     vectis_smith_close(smith);
     cai_error_init(&caierr);

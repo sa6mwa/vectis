@@ -1,2 +1,0 @@
-static const unsigned char @vectis_lua_init_symbol@[] = {
-@vectis_lua_init_c@};

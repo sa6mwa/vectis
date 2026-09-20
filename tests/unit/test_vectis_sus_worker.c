@@ -19,6 +19,13 @@ static int g_sus_transcribe_pcm_calls;
 static int g_sus_transcriber_destroy_calls;
 static int g_sus_string_free_calls;
 
+cpkt_sus_result __wrap_cpkt_sus_open_path(cpkt_sus **out,
+                                          const cpkt_sus_config *config);
+cpkt_sus_result
+__wrap_cpkt_sus_open_cached(cpkt_sus **out,
+                            const cpkt_sus_cache_config *config);
+void __wrap_cpkt_sus_string_free(char *value);
+
 static char *test_sus_strdup(const char *value) {
   size_t size;
   char *copy;
@@ -200,6 +207,7 @@ static void test_sus_worker_envelopes(void) {
   vectis_mailbox_event reply_event;
   vectis_error error;
   double frames[4];
+  char reply_kind[] = VECTIS_SUS_WORKER_REPLY_KIND;
   char reply_json[] =
       "{\"status\":0,\"source_code\":0,\"dependency_code\":0,"
       "\"operation\":\"transcribe_pcm\",\"text\":\"hello world\","
@@ -244,7 +252,7 @@ static void test_sus_worker_envelopes(void) {
 
   vectis_sus_worker_response_init(&response);
   vectis_mailbox_event_init(&reply_event);
-  reply_event.kind = VECTIS_SUS_WORKER_REPLY_KIND;
+  reply_event.kind = reply_kind;
   reply_event.payload = reply_json;
   reply_event.payload_size = sizeof(reply_json) - 1u;
   assert(vectis_sus_worker_response_decode(&reply_event, &response, &error) ==

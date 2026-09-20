@@ -282,6 +282,7 @@ static void test_worker_envelope(void) {
   vectis_cai_worker_response response;
   vectis_mailbox_event reply_event;
   vectis_error error;
+  char reply_kind[] = VECTIS_CAI_WORKER_REPLY_KIND;
   char reply_json[] = "{\"status\":0,\"dependency_code\":0,\"http_status\":0,"
                       "\"text\":\"worker ok\"}";
 
@@ -306,7 +307,7 @@ static void test_worker_envelope(void) {
 
   vectis_cai_worker_response_init(&response);
   vectis_mailbox_event_init(&reply_event);
-  reply_event.kind = VECTIS_CAI_WORKER_REPLY_KIND;
+  reply_event.kind = reply_kind;
   reply_event.payload = reply_json;
   reply_event.payload_size = sizeof(reply_json) - 1u;
   assert(vectis_cai_worker_response_decode(&reply_event, &response, &error) ==

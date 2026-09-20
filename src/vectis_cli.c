@@ -49,26 +49,7 @@
 #endif
 #include <zlib.h>
 
-#include "vectis_auth_lua_init.h"
-#include "vectis_cai_lua_init.h"
-#include "vectis_cli_lua_init.h"
-#include "vectis_curl_lua_init.h"
-#include "vectis_dsv_lua_init.h"
-#include "vectis_http_lua_init.h"
-#include "vectis_liblql_lua_init.h"
-#include "vectis_libmdf_lua_init.h"
-#include "vectis_lockd_lua_init.h"
-#include "vectis_lockdc_lua_init.h"
-#include "vectis_log_lua_init.h"
-#include "vectis_mqtt_lua_init.h"
 #include "vectis_opcua_lua.h"
-#include "vectis_pslog_lua_init.h"
-#include "vectis_rest_lua_init.h"
-#include "vectis_smith_lua_init.h"
-#include "vectis_smtp_lua_init.h"
-#include "vectis_status_lua_init.h"
-#include "vectis_terminal_lua_init.h"
-#include "vectis_webdav_lua_init.h"
 
 typedef struct vectis_cli_embedded_resource {
   const char *path;
@@ -89,7 +70,6 @@ typedef struct vectis_docs_pager_source {
 
 #include "vectis_cli_docs.h"
 #include "vectis_cli_lua_sources.h"
-#include "vectis_xml_lua_init.h"
 
 #define VECTIS_PACK_FOOTER_SIZE 256u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK"
@@ -674,61 +654,6 @@ static void *vectis_cli_memdup(const void *data, size_t size) {
   memcpy(copy, data, size);
   return copy;
 }
-
-static const char vectis_lonejson_lua_init[] =
-    "local core = require(\"lonejson.core\")\n"
-    "local M = {}\n"
-    "local function field(kind, opts)\n"
-    "  opts = opts or {}\n"
-    "  opts.kind = kind\n"
-    "  return opts\n"
-    "end\n"
-    "function M.field(name, spec)\n"
-    "  spec = spec or {}\n"
-    "  spec.name = name\n"
-    "  return spec\n"
-    "end\n"
-    "function M.string(opts) return field(\"string\", opts) end\n"
-    "function M.spooled_text(opts) return field(\"spooled_text\", opts) end\n"
-    "function M.spooled_bytes(opts) return field(\"spooled_bytes\", opts) end\n"
-    "function M.json_value(opts) return field(\"json_value\", opts) end\n"
-    "function M.i64(opts) return field(\"i64\", opts) end\n"
-    "function M.u64(opts) return field(\"u64\", opts) end\n"
-    "function M.f64(opts) return field(\"f64\", opts) end\n"
-    "function M.boolean(opts) return field(\"boolean\", opts) end\n"
-    "M.bool = M.boolean\n"
-    "function M.object(opts) return field(\"object\", opts) end\n"
-    "function M.string_array(opts) return field(\"string_array\", opts) end\n"
-    "function M.i64_array(opts) return field(\"i64_array\", opts) end\n"
-    "function M.u64_array(opts) return field(\"u64_array\", opts) end\n"
-    "function M.f64_array(opts) return field(\"f64_array\", opts) end\n"
-    "function M.boolean_array(opts) return field(\"boolean_array\", opts) end\n"
-    "function M.object_array(opts) return field(\"object_array\", opts) end\n"
-    "function M.json_array(value)\n"
-    "  value = value or {}\n"
-    "  return setmetatable(value, { __lonejson_json_kind = \"array\" })\n"
-    "end\n"
-    "function M.json_object(value)\n"
-    "  value = value or {}\n"
-    "  return setmetatable(value, { __lonejson_json_kind = \"object\" })\n"
-    "end\n"
-    "function M.schema(name, fields) return core.new():schema(name, fields) "
-    "end\n"
-    "function M.chunks(spool, chunk_size)\n"
-    "  spool:rewind()\n"
-    "  return function() return spool:read(chunk_size or 4096) end\n"
-    "end\n"
-    "M.array_rewrite_string = core.array_rewrite_string\n"
-    "M.array_rewrite_path = core.array_rewrite_path\n"
-    "M.encode_json = core.encode_json\n"
-    "M.encode_json_to_sink = core.encode_json_to_sink\n"
-    "M.encode_value = core.encode_json\n"
-    "M.encode_value_to_sink = core.encode_json_to_sink\n"
-    "M.decode_json = core.decode_json\n"
-    "M.decode_value = core.decode_json\n"
-    "M.core = core\n"
-    "M.json_null = core.json_null()\n"
-    "return M\n";
 
 static void vectis_cli_usage(FILE *stream) {
   fputs("Vectis runs Lua applications and manages packed applications, "
@@ -3661,6 +3586,34 @@ vectis_cli_resource_selected(const vectis_cli_embedded_resource *resource,
     }
   }
   return 0;
+}
+
+static const vectis_cli_embedded_resource *
+vectis_cli_lua_resource_find(const char *module) {
+  size_t i;
+
+  if (module == NULL) {
+    return NULL;
+  }
+  for (i = 0u; i < vectis_cli_lua_sources_count; ++i) {
+    if (strcmp(vectis_cli_lua_sources[i].module, module) == 0) {
+      return &vectis_cli_lua_sources[i];
+    }
+  }
+  return NULL;
+}
+
+static cpkt_lua_runtime_status vectis_lua_register_resource_module(
+    cpkt_lua_runtime *runtime, const char *module, const char *chunk_name) {
+  const vectis_cli_embedded_resource *resource;
+
+  resource = vectis_cli_lua_resource_find(module);
+  if (resource == NULL) {
+    return CPKT_LUA_RUNTIME_ERR_LOAD;
+  }
+  return cpkt_lua_runtime_register_lua_module(
+      runtime, module, vectis_cli_lua_sources_data + resource->offset,
+      resource->size, chunk_name);
 }
 
 static size_t vectis_docs_pager_read(void *userdata, char *dst, size_t cap,
@@ -23551,9 +23504,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.auth", vectis_auth_lua_init,
-      sizeof(vectis_auth_lua_init), "vectis.auth");
+  status = vectis_lua_register_resource_module(runtime, "vectis.auth",
+                                               "vectis.auth");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23612,9 +23564,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "lockdc", vectis_lockdc_lua_init, sizeof(vectis_lockdc_lua_init),
-      "lockdc.init");
+  status =
+      vectis_lua_register_resource_module(runtime, "lockdc", "lockdc.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23623,9 +23574,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "lonejson", (const unsigned char *)vectis_lonejson_lua_init,
-      sizeof(vectis_lonejson_lua_init) - 1u, "lonejson.init");
+  status =
+      vectis_lua_register_resource_module(runtime, "lonejson", "lonejson.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23634,9 +23584,7 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "curl", vectis_curl_lua_init, sizeof(vectis_curl_lua_init),
-      "curl.init");
+  status = vectis_lua_register_resource_module(runtime, "curl", "curl.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23650,75 +23598,63 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.status", vectis_status_lua_init,
-      sizeof(vectis_status_lua_init), "vectis.status");
+  status = vectis_lua_register_resource_module(runtime, "vectis.status",
+                                               "vectis.status");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.log", vectis_log_lua_init, sizeof(vectis_log_lua_init),
-      "vectis.log");
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.log", "vectis.log");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.http", vectis_http_lua_init,
-      sizeof(vectis_http_lua_init), "vectis.http");
+  status = vectis_lua_register_resource_module(runtime, "vectis.http",
+                                               "vectis.http");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.cai", vectis_cai_lua_init, sizeof(vectis_cai_lua_init),
-      "vectis.cai");
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.cai", "vectis.cai");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.cli", vectis_cli_lua_init, sizeof(vectis_cli_lua_init),
-      "vectis.cli");
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.cli", "vectis.cli");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.smith", vectis_smith_lua_init,
-      sizeof(vectis_smith_lua_init), "vectis.smith");
+  status = vectis_lua_register_resource_module(runtime, "vectis.smith",
+                                               "vectis.smith");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.rest", vectis_rest_lua_init,
-      sizeof(vectis_rest_lua_init), "vectis.rest");
+  status = vectis_lua_register_resource_module(runtime, "vectis.rest",
+                                               "vectis.rest");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.terminal", vectis_terminal_lua_init,
-      sizeof(vectis_terminal_lua_init), "vectis.terminal");
+  status = vectis_lua_register_resource_module(runtime, "vectis.terminal",
+                                               "vectis.terminal");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.webdav", vectis_webdav_lua_init,
-      sizeof(vectis_webdav_lua_init), "vectis.webdav");
+  status = vectis_lua_register_resource_module(runtime, "vectis.webdav",
+                                               "vectis.webdav");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.mqtt", vectis_mqtt_lua_init,
-      sizeof(vectis_mqtt_lua_init), "vectis.mqtt");
+  status = vectis_lua_register_resource_module(runtime, "vectis.mqtt",
+                                               "vectis.mqtt");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.smtp", vectis_smtp_lua_init,
-      sizeof(vectis_smtp_lua_init), "vectis.smtp");
+  status = vectis_lua_register_resource_module(runtime, "vectis.smtp",
+                                               "vectis.smtp");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.lockd", vectis_lockd_lua_init,
-      sizeof(vectis_lockd_lua_init), "vectis.lockd");
+  status = vectis_lua_register_resource_module(runtime, "vectis.lockd",
+                                               "vectis.lockd");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23727,9 +23663,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.dsv", vectis_dsv_lua_init, sizeof(vectis_dsv_lua_init),
-      "vectis.dsv");
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.dsv", "vectis.dsv");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23738,9 +23673,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "vectis.xml", vectis_xml_lua_init, sizeof(vectis_xml_lua_init),
-      "vectis.xml");
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.xml", "vectis.xml");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23754,9 +23688,7 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "lql", vectis_liblql_lua_init, sizeof(vectis_liblql_lua_init),
-      "lql.init");
+  status = vectis_lua_register_resource_module(runtime, "lql", "lql.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23765,9 +23697,7 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "pslog", vectis_pslog_lua_init, sizeof(vectis_pslog_lua_init),
-      "pslog.init");
+  status = vectis_lua_register_resource_module(runtime, "pslog", "pslog.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -23776,9 +23706,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_lua_module(
-      runtime, "libmdf", vectis_libmdf_lua_init, sizeof(vectis_libmdf_lua_init),
-      "libmdf.init");
+  status =
+      vectis_lua_register_resource_module(runtime, "libmdf", "libmdf.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

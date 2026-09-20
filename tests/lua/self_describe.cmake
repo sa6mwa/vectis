@@ -1,6 +1,8 @@
 set(source_output "${WORK_DIR}/vectis-source-output.lua")
+set(lonejson_source_output "${WORK_DIR}/lonejson-source-output.lua")
 set(source_dir "${WORK_DIR}/vectis-source-tree")
 file(REMOVE "${source_output}")
+file(REMOVE "${lonejson_source_output}")
 file(REMOVE_RECURSE "${source_dir}")
 
 execute_process(COMMAND "${VECTIS_BIN}" -h
@@ -190,6 +192,20 @@ file(READ "${source_output}" source_file_contents)
 file(READ "${VECTIS_SOURCE_DIR}/lua/vectis/lockd.lua" source_expected_contents)
 if(NOT source_file_contents STREQUAL source_expected_contents)
   message(FATAL_ERROR "source --output did not preserve raw Lua source")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module lonejson
+                        --output "${lonejson_source_output}"
+                RESULT_VARIABLE lonejson_source_file_result
+                OUTPUT_VARIABLE lonejson_source_file_stdout
+                ERROR_VARIABLE lonejson_source_file_stderr)
+if(NOT lonejson_source_file_result EQUAL 0)
+  message(FATAL_ERROR "lonejson source --output failed: ${lonejson_source_file_stdout}${lonejson_source_file_stderr}")
+endif()
+file(READ "${lonejson_source_output}" lonejson_source_file_contents)
+file(READ "${VECTIS_SOURCE_DIR}/lua/lonejson/init.lua" lonejson_source_expected_contents)
+if(NOT lonejson_source_file_contents STREQUAL lonejson_source_expected_contents)
+  message(FATAL_ERROR "lonejson source --output did not preserve the bundled facade")
 endif()
 
 file(WRITE "${source_output}" "conflicting output\n")

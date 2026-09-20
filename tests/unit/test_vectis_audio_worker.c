@@ -28,6 +28,14 @@ static void test_audio_worker_envelopes(void) {
   vectis_mailbox_event reply_event;
   vectis_error error;
   double frames[4];
+  char reply_kind[] = VECTIS_AUDIO_WORKER_REPLY_KIND;
+  char state_kind[] = VECTIS_AUDIO_WORKER_VOX_STATE_KIND;
+  char state_payload[] =
+      "{\"state\":1,\"segment_index\":7,\"threshold\":0.125}";
+  char segment_kind[] = VECTIS_AUDIO_WORKER_VOX_SEGMENT_KIND;
+  char segment_payload[] =
+      "{\"segment_index\":7,\"t0\":0,\"t1\":10,\"hard_cut\":0,"
+      "\"is_final\":1,\"frames\":[0.5,-0.5]}";
   char reply_json[] =
       "{\"status\":0,\"source_code\":0,\"dependency_code\":0,"
       "\"operation\":\"decode\",\"path\":\"input.wav\",\"sample_rate\":16000,"
@@ -75,7 +83,7 @@ static void test_audio_worker_envelopes(void) {
 
   vectis_audio_worker_response_init(&response);
   vectis_mailbox_event_init(&reply_event);
-  reply_event.kind = VECTIS_AUDIO_WORKER_REPLY_KIND;
+  reply_event.kind = reply_kind;
   reply_event.payload = reply_json;
   reply_event.payload_size = sizeof(reply_json) - 1u;
   assert(vectis_audio_worker_response_decode(&reply_event, &response, &error) ==
@@ -90,8 +98,8 @@ static void test_audio_worker_envelopes(void) {
 
   vectis_audio_worker_vox_state_init(&state);
   vectis_mailbox_event_init(&reply_event);
-  reply_event.kind = VECTIS_AUDIO_WORKER_VOX_STATE_KIND;
-  reply_event.payload = "{\"state\":1,\"segment_index\":7,\"threshold\":0.125}";
+  reply_event.kind = state_kind;
+  reply_event.payload = state_payload;
   reply_event.payload_size = strlen((const char *)reply_event.payload);
   assert(vectis_audio_worker_vox_state_decode(&reply_event, &state, &error) ==
          VECTIS_OK);
@@ -101,10 +109,8 @@ static void test_audio_worker_envelopes(void) {
 
   vectis_audio_worker_vox_segment_init(&segment);
   vectis_mailbox_event_init(&reply_event);
-  reply_event.kind = VECTIS_AUDIO_WORKER_VOX_SEGMENT_KIND;
-  reply_event.payload =
-      "{\"segment_index\":7,\"t0\":0,\"t1\":10,\"hard_cut\":0,"
-      "\"is_final\":1,\"frames\":[0.5,-0.5]}";
+  reply_event.kind = segment_kind;
+  reply_event.payload = segment_payload;
   reply_event.payload_size = strlen((const char *)reply_event.payload);
   assert(vectis_audio_worker_vox_segment_decode(&reply_event, &segment,
                                                 &error) == VECTIS_OK);

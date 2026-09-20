@@ -29,14 +29,21 @@ function(vectis_configure_example_warnings target_name)
       -std=c89
       -Wall
       -Wextra
-      -Werror
       -Wpedantic
+      -pedantic-errors
+    )
+    # Vectis's C89 facade deliberately retains long long for persisted
+    # 64-bit Lockd/CAI values; the remaining flags are project quality gates.
+    target_compile_options(${target_name} PRIVATE
+      -Werror
+      -Wno-long-long
       -Wstrict-prototypes
       -Wmissing-prototypes
       -Wshadow
       -Wpointer-arith
       -Wcast-qual
       -Wwrite-strings
+      -Wdeclaration-after-statement
     )
   endif()
 endfunction()
