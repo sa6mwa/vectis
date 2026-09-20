@@ -5,11 +5,7 @@ function(vectis_add_unit_test target_name)
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/src"
   )
-  set_target_properties(${target_name} PROPERTIES
-    C_STANDARD 90
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-  )
+  vectis_configure_c89_target(${target_name})
   if(VECTIS_ENABLE_COVERAGE)
     target_compile_options(${target_name} PRIVATE --coverage -O0 -g)
     target_link_options(${target_name} PRIVATE --coverage)

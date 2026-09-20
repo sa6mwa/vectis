@@ -42,12 +42,6 @@ endif()
 add_executable(vectis_install_consumer consumer.c)
 vectis_install_link_target(vectis_install_consumer)
 
-set_target_properties(vectis_install_consumer PROPERTIES
-  C_STANDARD 90
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-)
-
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(vectis_install_consumer PRIVATE
     -std=c89

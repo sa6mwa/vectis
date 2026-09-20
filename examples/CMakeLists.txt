@@ -26,6 +26,7 @@ endif()
 function(vectis_configure_example_warnings target_name)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target_name} PRIVATE
+      -std=c89
       -Wall
       -Wextra
       -Werror
@@ -46,11 +47,6 @@ function(vectis_add_example target_name source_file)
   if(DEFINED VECTIS_EXTERNAL_ROOT)
     target_include_directories(${target_name} PRIVATE "${VECTIS_EXTERNAL_ROOT}/include")
   endif()
-  set_target_properties(${target_name} PROPERTIES
-    C_STANDARD 90
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-  )
   if(UNIX OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_compile_definitions(${target_name} PRIVATE _POSIX_C_SOURCE=200809L)
   endif()

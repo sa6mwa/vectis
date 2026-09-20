@@ -347,16 +347,19 @@ function(vectis_apply_relocatable_paths target)
   endif()
 endfunction()
 
+function(vectis_configure_c89_target target)
+  # The lifecycle requires the explicit C89 spelling for every project-owned
+  # C89 target instead of CMake's built-in language-standard mapping.
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(${target} PRIVATE -std=c89)
+  endif()
+endfunction()
+
 function(vectis_configure_c_target target)
   get_target_property(target_type ${target} TYPE)
-  set_target_properties(${target} PROPERTIES
-    C_STANDARD 90
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-  )
+  vectis_configure_c89_target(${target})
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target} PRIVATE
-      -std=c89
       -Wall
       -Wextra
       -Werror

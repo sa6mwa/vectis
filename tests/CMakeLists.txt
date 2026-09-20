@@ -3,6 +3,7 @@ if(VECTIS_BUILD_TESTS)
       AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(vectis_runtime_probe helpers/vectis_runtime_probe.c)
+    vectis_configure_c89_target(vectis_runtime_probe)
     target_compile_options(vectis_runtime_probe PRIVATE -Wall -Wextra -Werror -Wpedantic)
   endif()
   add_subdirectory(unit)
@@ -16,11 +17,7 @@ if(NOT APPLE)
   add_executable(vectis_pack_smtp_harness
     helpers/vectis_pack_smtp_harness.c)
   target_link_libraries(vectis_pack_smtp_harness PRIVATE Threads::Threads)
-  set_target_properties(vectis_pack_smtp_harness PROPERTIES
-    C_STANDARD 90
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-  )
+  vectis_configure_c89_target(vectis_pack_smtp_harness)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vectis_pack_smtp_harness PRIVATE -UNDEBUG)
   endif()
@@ -29,31 +26,19 @@ endif()
 add_executable(vectis_acme_mock_provider
   helpers/vectis_acme_mock_provider.c)
 target_link_libraries(vectis_acme_mock_provider PRIVATE OpenSSL::Crypto)
-set_target_properties(vectis_acme_mock_provider PROPERTIES
-  C_STANDARD 90
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-)
+vectis_configure_c89_target(vectis_acme_mock_provider)
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(vectis_acme_mock_provider PRIVATE -UNDEBUG)
 endif()
 
 add_executable(vectis_pick_port
   helpers/vectis_pick_port.c)
-set_target_properties(vectis_pick_port PROPERTIES
-  C_STANDARD 90
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-)
+vectis_configure_c89_target(vectis_pick_port)
 
 add_executable(vectis_wait_signal_harness
   helpers/vectis_wait_signal_harness.c)
 target_link_libraries(vectis_wait_signal_harness PRIVATE ${vectis_test_link_target})
-set_target_properties(vectis_wait_signal_harness PROPERTIES
-  C_STANDARD 90
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-)
+vectis_configure_c89_target(vectis_wait_signal_harness)
 
 add_executable(vectis_ws_client
   helpers/vectis_ws_client.c)

@@ -40,9 +40,28 @@ assert_not_contains() {
   fi
 }
 
+assert_c89_cmake_contract() {
+  if grep -RInE --include='CMakeLists.txt' --include='*.cmake' \
+    'C_STANDARD[[:space:]]+90|-std=c90' \
+    "$repo_root/CMakeLists.txt" \
+    "$repo_root/cmake" \
+    "$repo_root/examples" \
+    "$repo_root/tests"; then
+    echo "project C89 targets must use the explicit -std=c89 override" >&2
+    exit 1
+  fi
+  assert_contains "$repo_root/CMakeLists.txt" \
+    'function\(vectis_configure_c89_target target\)'
+  assert_contains "$repo_root/CMakeLists.txt" \
+    'target_compile_options\(\$\{target\} PRIVATE -std=c89\)'
+  assert_contains "$repo_root/examples/CMakeLists.txt" '-std=c89'
+  assert_contains "$repo_root/tests/install/CMakeLists.txt" '-std=c89'
+}
+
 for state_namespace in auth profile metrics acme smith; do
   assert_contains "$repo_root/docker-compose.yaml" "\"vectis\\.${state_namespace}=rw\""
 done
+assert_c89_cmake_contract
 assert_contains "$repo_root/Makefile" '^perf-gate: build-debug'
 assert_contains "$repo_root/scripts/test-e2e.sh" 'tests/metrics_startup.py'
 
