@@ -4655,17 +4655,26 @@ static void assert_kore_smoke(void) {
   const char access_log_path[] = "/tmp/vectis-runtime-access.log";
   const char response_file_body[] = "file-response";
   const char static_module_body[] = "export const ok = true;\n";
-  static const unsigned char embedded_payload[] = "hello\napp\n";
-  static const char embedded_manifest[] =
+  static const unsigned char embedded_payload[] = "hello\napp\nnested\n";
+  static const char embedded_manifest_part_a[] =
       "{\"format\":\"vectis-pack\",\"assets\":["
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
-      "\"content_type\":\"text/html\"},"
+      "\"content_type\":\"text/html\"},";
+  static const char embedded_manifest_part_b[] =
+      "{\"path\":\"/assets\",\"kind\":\"directory\",\"mode\":365},"
       "{\"path\":\"/assets/app.txt\",\"offset\":6,\"size\":4,"
       "\"sha256\":"
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\","
-      "\"content_type\":\"text/plain\"}]}";
+      "\"content_type\":\"text/plain\"},";
+  static const char embedded_manifest_part_c[] =
+      "{\"path\":\"/vectis\",\"kind\":\"directory\",\"mode\":365},"
+      "{\"path\":\"/vectis/index.html\",\"offset\":10,\"size\":7,"
+      "\"sha256\":"
+      "\"370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3\","
+      "\"content_type\":\"text/html\"}]}";
+  char embedded_manifest[1024];
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
   char body_spool_dir[] = "/tmp/vectis-runtime-body-spool.XXXXXX";
   char body_spool_child_dir[4096];
@@ -4873,8 +4882,12 @@ static void assert_kore_smoke(void) {
   webdav_storage.max_file_bytes = 4096u;
   webdav_storage.max_total_bytes = 65536u;
   vectis_embedded_fs_config_init(&embedded_fs_config);
+  written = snprintf(embedded_manifest, sizeof(embedded_manifest), "%s%s%s",
+                     embedded_manifest_part_a, embedded_manifest_part_b,
+                     embedded_manifest_part_c);
+  assert(written > 0 && (size_t)written < sizeof(embedded_manifest));
   embedded_fs_config.manifest_json = embedded_manifest;
-  embedded_fs_config.manifest_json_size = sizeof(embedded_manifest) - 1u;
+  embedded_fs_config.manifest_json_size = (size_t)written;
   embedded_fs_config.payload = embedded_payload;
   embedded_fs_config.payload_size = sizeof(embedded_payload) - 1u;
   status =
@@ -5369,6 +5382,15 @@ static void assert_kore_smoke(void) {
       &http, format_loopback_http_url(url, sizeof(url), port, "/embedded"),
       &embedded_response, &error);
   assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 308L);
+  assert(strcmp(vectis_http_response_header(&embedded_response, "location"),
+                "/embedded/") == 0);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/embedded/"),
+      &embedded_response, &error);
+  assert(status == VECTIS_OK);
   assert(embedded_response.status_code == 200L);
   assert(embedded_response.content_type != NULL);
   assert(strcmp(embedded_response.content_type, "text/html") == 0);
@@ -5380,6 +5402,46 @@ static void assert_kore_smoke(void) {
              "no-cache") == 0);
   assert(embedded_response.body_size == 6u);
   assert(memcmp(embedded_response.body, "hello\n", 6u) == 0);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/embedded/vectis"),
+      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 308L);
+  assert(strcmp(vectis_http_response_header(&embedded_response, "location"),
+                "/embedded/vectis/") == 0);
+  assert(embedded_response.body_size == 0u);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/embedded/vectis/"),
+      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 200L);
+  assert(embedded_response.body_size == 7u);
+  assert(memcmp(embedded_response.body, "nested\n", 7u) == 0);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status =
+      vectis_http_get(&http,
+                      format_loopback_http_url(url, sizeof(url), port,
+                                               "/embedded/vectis/index.html"),
+                      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 200L);
+  assert(embedded_response.body_size == 7u);
+  assert(memcmp(embedded_response.body, "nested\n", 7u) == 0);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/embedded/assets"),
+      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 404L);
   vectis_http_response_cleanup(&embedded_response);
 
   status = vectis_http_get(&http,

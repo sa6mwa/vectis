@@ -126,6 +126,7 @@ typedef struct vectis_static_route_data {
   const char *root_dir;
   const char *content_type;
   const char *index_file;
+  int index_enabled;
   const vectis_embedded_fs *embedded_fs;
   const char *cache_control;
   const char *not_found_body;
@@ -4070,7 +4071,6 @@ void vectis_static_directory_config_init(
     return;
   }
   memset(config, 0, sizeof(*config));
-  config->index_file = "index.html";
   config->methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD;
 }
 
@@ -13823,9 +13823,10 @@ vectis_static_methods_or_default(vectis_http_methods methods) {
 static vectis_static_route_data *vectis_static_route_data_new(
     int directory, const char *path_prefix, const char *file_path,
     const char *root_dir, const char *content_type, const char *index_file,
-    const vectis_embedded_fs *embedded_fs, const char *cache_control,
-    const char *not_found_body, const char *not_found_content_type,
-    vectis_http_methods allowed_methods, vectis_error *error) {
+    int index_enabled, const vectis_embedded_fs *embedded_fs,
+    const char *cache_control, const char *not_found_body,
+    const char *not_found_content_type, vectis_http_methods allowed_methods,
+    vectis_error *error) {
   vectis_static_route_data *data;
   char *cursor;
   size_t total;
@@ -13848,6 +13849,7 @@ static vectis_static_route_data *vectis_static_route_data_new(
     return NULL;
   }
   data->directory = directory;
+  data->index_enabled = index_enabled;
   data->embedded_fs = embedded_fs;
   data->allowed_methods = allowed_methods;
   cursor = (char *)(data + 1);
@@ -14153,6 +14155,110 @@ static int vectis_static_open_file_fd(const char *root_dir,
   return current_fd;
 }
 
+static char *vectis_static_directory_index_relative(const char *relative,
+                                                    const char *index_file) {
+  char *index_relative;
+  size_t relative_len;
+  size_t index_len;
+  size_t total;
+
+  if (relative == NULL || index_file == NULL || index_file[0] == '\0') {
+    return NULL;
+  }
+  relative_len = strlen(relative);
+  if (relative_len > 0u && relative[relative_len - 1u] == '/') {
+    relative_len--;
+  }
+  index_len = strlen(index_file);
+  if (relative_len > ((size_t)-1) - index_len - 2u) {
+    return NULL;
+  }
+  total = relative_len + (relative_len > 0u ? 1u : 0u) + index_len + 1u;
+  index_relative = (char *)malloc(total);
+  if (index_relative == NULL) {
+    return NULL;
+  }
+  if (relative_len > 0u) {
+    memcpy(index_relative, relative, relative_len);
+    index_relative[relative_len] = '/';
+    memcpy(index_relative + relative_len + 1u, index_file, index_len + 1u);
+  } else {
+    memcpy(index_relative, index_file, index_len + 1u);
+  }
+  return index_relative;
+}
+
+static int vectis_static_redirect_path_byte_safe(unsigned char value) {
+  return isalnum(value) || value == (unsigned char)'-' ||
+         value == (unsigned char)'.' || value == (unsigned char)'_' ||
+         value == (unsigned char)'~' || value == (unsigned char)'/';
+}
+
+static char *vectis_static_directory_location(const char *path) {
+  static const char hex[] = "0123456789ABCDEF";
+  const unsigned char *input;
+  char *location;
+  char *output;
+  size_t total;
+  unsigned char value;
+
+  if (path == NULL || path[0] != '/') {
+    return NULL;
+  }
+  total = 2u;
+  for (input = (const unsigned char *)path; *input != '\0'; ++input) {
+    if (vectis_static_redirect_path_byte_safe(*input)) {
+      if (total == (size_t)-1) {
+        return NULL;
+      }
+      total++;
+    } else {
+      if (total > ((size_t)-1) - 3u) {
+        return NULL;
+      }
+      total += 3u;
+    }
+  }
+  location = (char *)malloc(total);
+  if (location == NULL) {
+    return NULL;
+  }
+  output = location;
+  for (input = (const unsigned char *)path; *input != '\0'; ++input) {
+    value = *input;
+    if (vectis_static_redirect_path_byte_safe(value)) {
+      *output++ = (char)value;
+    } else {
+      *output++ = '%';
+      *output++ = hex[value >> 4u];
+      *output++ = hex[value & 0x0fu];
+    }
+  }
+  *output++ = '/';
+  *output = '\0';
+  return location;
+}
+
+static vectis_status vectis_static_redirect_directory(vectis_response *response,
+                                                      const char *path,
+                                                      vectis_error *error) {
+  char *location;
+  vectis_status status;
+
+  location = vectis_static_directory_location(path);
+  if (location == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate static directory redirect");
+    return VECTIS_ERR_NOMEM;
+  }
+  status = vectis_response_header(response, "location", location, error);
+  free(location);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_response_status(response, 308, error);
+}
+
 static size_t vectis_static_fd_source_read(void *context, void *buffer,
                                            size_t count, lc_error *error) {
   vectis_static_fd_source *source;
@@ -14283,8 +14389,12 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   vectis_static_route_data *data;
   const char *path;
   const char *relative;
+  char *index_relative;
   size_t prefix_len;
+  size_t path_len;
   int file_fd;
+  int mount_root;
+  int trailing_slash;
   vectis_status status;
 
   (void)app;
@@ -14297,28 +14407,62 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   prefix_len = strlen(data->path_prefix);
+  mount_root = 0;
   if (strncmp(path, data->path_prefix, prefix_len) != 0) {
     return vectis_response_status(response, 404, error);
   }
   if (strcmp(data->path_prefix, "/") == 0) {
-    relative = path[1] == '\0' ? data->index_file : path + 1u;
+    relative = path + 1u;
+    mount_root = path[1] == '\0';
   } else if (path[prefix_len] == '\0') {
-    relative = data->index_file;
+    relative = "";
+    mount_root = 1;
   } else if (path[prefix_len] == '/') {
-    relative = path[prefix_len + 1u] == '\0' ? data->index_file
-                                             : path + prefix_len + 1u;
+    relative = path + prefix_len + 1u;
+    mount_root = path[prefix_len + 1u] == '\0';
   } else {
     return vectis_response_status(response, 404, error);
   }
-  if (!vectis_static_relative_path_safe(relative)) {
+  path_len = strlen(path);
+  trailing_slash = path_len > 1u && path[path_len - 1u] == '/';
+  if (!mount_root && !trailing_slash &&
+      !vectis_static_relative_path_safe(relative)) {
     return vectis_response_status(response, 404, error);
   }
-  file_fd = vectis_static_open_file_fd(data->root_dir, relative);
-  if (file_fd < 0) {
+  if (!trailing_slash) {
+    file_fd = vectis_static_open_file_fd(data->root_dir, relative);
+    if (file_fd >= 0) {
+      return vectis_static_response_fd(request, response, data->content_type,
+                                       relative, file_fd, error);
+    }
+  }
+  if (!data->index_enabled) {
     return vectis_response_status(response, 404, error);
+  }
+  index_relative = vectis_static_directory_index_relative(
+      relative, data->index_file != NULL ? data->index_file : "index.html");
+  if (index_relative == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate static directory index path");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (!vectis_static_relative_path_safe(index_relative)) {
+    free(index_relative);
+    return vectis_response_status(response, 404, error);
+  }
+  file_fd = vectis_static_open_file_fd(data->root_dir, index_relative);
+  if (file_fd < 0) {
+    free(index_relative);
+    return vectis_response_status(response, 404, error);
+  }
+  if (!trailing_slash && strcmp(path, "/") != 0) {
+    vectis_static_fd_close(&file_fd);
+    free(index_relative);
+    return vectis_static_redirect_directory(response, path, error);
   }
   status = vectis_static_response_fd(request, response, data->content_type,
-                                     relative, file_fd, error);
+                                     index_relative, file_fd, error);
+  free(index_relative);
   return status;
 }
 
@@ -14549,6 +14693,35 @@ static vectis_status vectis_static_embedded_not_found(
   return vectis_response_bytes(response, 404, content_type, body, error);
 }
 
+static char *vectis_static_embedded_index_path(const char *directory_path,
+                                               const char *index_file) {
+  size_t directory_len;
+  size_t index_len;
+  size_t total;
+  char *path;
+
+  if (directory_path == NULL || index_file == NULL || index_file[0] == '\0') {
+    return NULL;
+  }
+  directory_len = strlen(directory_path);
+  while (directory_len > 1u && directory_path[directory_len - 1u] == '/') {
+    directory_len--;
+  }
+  index_len = strlen(index_file);
+  if (directory_len == 0u || directory_len > ((size_t)-1) - index_len - 2u) {
+    return NULL;
+  }
+  total = directory_len + 1u + index_len + 1u;
+  path = (char *)malloc(total);
+  if (path == NULL) {
+    return NULL;
+  }
+  memcpy(path, directory_path, directory_len);
+  path[directory_len] = '/';
+  memcpy(path + directory_len + 1u, index_file, index_len + 1u);
+  return path;
+}
+
 static vectis_status vectis_static_embedded_response(
     const vectis_static_route_data *data, vectis_request *request,
     vectis_response *response, const vectis_embedded_fs_entry *entry,
@@ -14669,8 +14842,12 @@ static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
   vectis_http_methods method_mask;
   const char *path;
   const char *embedded_path;
+  char *directory_path;
+  char *index_path;
   size_t prefix_len;
   int found;
+  int mount_root;
+  int trailing_slash;
   vectis_status status;
 
   (void)app;
@@ -14695,33 +14872,114 @@ static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
     return vectis_response_status(response, 405, error);
   }
   prefix_len = strlen(data->path_prefix);
+  mount_root = 0;
   if (strcmp(data->path_prefix, "/") == 0) {
     embedded_path = path;
+    mount_root = path[1] == '\0';
   } else if (path[prefix_len] == '\0') {
     embedded_path = "/";
+    mount_root = 1;
   } else if (path[prefix_len] == '/') {
     embedded_path = path + prefix_len;
+    mount_root = embedded_path[1] == '\0';
   } else {
     return vectis_static_embedded_not_found(data, request, response, error);
+  }
+  trailing_slash = strlen(path) > 1u && path[strlen(path) - 1u] == '/';
+  if (mount_root) {
+    memset(&entry, 0, sizeof(entry));
+    found = 0;
+    status = data->embedded_fs->lookup(data->embedded_fs, embedded_path, &found,
+                                       &entry, error);
+    if (status == VECTIS_ERR_INVALID) {
+      return vectis_static_embedded_not_found(data, request, response, error);
+    }
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (!found) {
+      return vectis_static_embedded_not_found(data, request, response, error);
+    }
+    if (entry.kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+      return vectis_static_embedded_not_found(data, request, response, error);
+    }
+    if (strcmp(data->path_prefix, "/") != 0 && !trailing_slash) {
+      return vectis_static_redirect_directory(response, path, error);
+    }
+    return vectis_static_embedded_response(data, request, response, &entry,
+                                           error);
+  }
+  directory_path = NULL;
+  index_path = NULL;
+  if (trailing_slash) {
+    directory_path = vectis_strdup(embedded_path);
+    if (directory_path == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate embedded directory path");
+      return VECTIS_ERR_NOMEM;
+    }
+    directory_path[strlen(directory_path) - 1u] = '\0';
+    embedded_path = directory_path;
   }
   memset(&entry, 0, sizeof(entry));
   found = 0;
   status = data->embedded_fs->lookup(data->embedded_fs, embedded_path, &found,
                                      &entry, error);
   if (status == VECTIS_ERR_INVALID) {
+    free(directory_path);
     return vectis_static_embedded_not_found(data, request, response, error);
   }
   if (status != VECTIS_OK) {
+    free(directory_path);
     return status;
   }
   if (!found) {
+    free(directory_path);
     return vectis_static_embedded_not_found(data, request, response, error);
   }
-  if (entry.kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+  if (entry.kind != VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+    if (trailing_slash) {
+      free(directory_path);
+      return vectis_static_embedded_not_found(data, request, response, error);
+    }
+    free(directory_path);
+    return vectis_static_embedded_response(data, request, response, &entry,
+                                           error);
+  }
+  index_path = vectis_static_embedded_index_path(
+      embedded_path,
+      data->index_file != NULL ? data->index_file : "index.html");
+  if (index_path == NULL) {
+    free(directory_path);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate embedded directory index path");
+    return VECTIS_ERR_NOMEM;
+  }
+  memset(&entry, 0, sizeof(entry));
+  found = 0;
+  status = data->embedded_fs->lookup(data->embedded_fs, index_path, &found,
+                                     &entry, error);
+  free(directory_path);
+  if (status == VECTIS_ERR_INVALID) {
+    free(index_path);
     return vectis_static_embedded_not_found(data, request, response, error);
   }
-  return vectis_static_embedded_response(data, request, response, &entry,
-                                         error);
+  if (status != VECTIS_OK) {
+    free(index_path);
+    return status;
+  }
+  if (!found || entry.kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+    free(index_path);
+    return vectis_static_embedded_not_found(data, request, response, error);
+  }
+  if (!trailing_slash) {
+    free(index_path);
+    return vectis_static_redirect_directory(response, path, error);
+  }
+  status =
+      vectis_static_embedded_response(data, request, response, &entry, error);
+  free(index_path);
+  return status;
 }
 
 static char *vectis_static_directory_regex(const char *prefix,
@@ -14812,8 +15070,8 @@ vectis_register_static_file(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   data = vectis_static_route_data_new(
-      0, NULL, config->file_path, NULL, config->content_type, NULL, NULL, NULL,
-      NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
+      0, NULL, config->file_path, NULL, config->content_type, NULL, 0, NULL,
+      NULL, NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
   if (data == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -14833,6 +15091,7 @@ vectis_register_static_directory(vectis_app *app,
                                  vectis_error *error) {
   vectis_route_config route;
   vectis_static_route_data *data;
+  const char *index_file;
   vectis_status status;
   char *regex;
   char *path_prefix;
@@ -14846,6 +15105,13 @@ vectis_register_static_directory(vectis_app *app,
   if (config->path_prefix == NULL || config->root_dir == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "static directory path_prefix and root_dir are required");
+    return VECTIS_ERR_INVALID;
+  }
+  index_file = config->index_file != NULL ? config->index_file : "index.html";
+  if (config->index_enabled && (!vectis_static_relative_path_safe(index_file) ||
+                                strchr(index_file, '/') != NULL)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "static directory index_file must be one safe filename");
     return VECTIS_ERR_INVALID;
   }
   path_prefix =
@@ -14863,10 +15129,10 @@ vectis_register_static_directory(vectis_app *app,
     free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
-  data = vectis_static_route_data_new(
-      1, path_prefix, NULL, config->root_dir, config->content_type,
-      config->index_file != NULL ? config->index_file : "index.html", NULL,
-      NULL, NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
+  data = vectis_static_route_data_new(1, path_prefix, NULL, config->root_dir,
+                                      config->content_type, index_file,
+                                      config->index_enabled, NULL, NULL, NULL,
+                                      NULL, VECTIS_HTTP_METHODS_NONE, error);
   if (data == NULL) {
     free(path_prefix);
     free(regex);
@@ -14939,7 +15205,7 @@ vectis_register_static_embedded(vectis_app *app,
       2, path_prefix, NULL, NULL,
       config->content_type != NULL ? config->content_type
                                    : "application/octet-stream",
-      NULL, config->fs,
+      "index.html", 1, config->fs,
       config->cache_control != NULL ? config->cache_control : "no-cache",
       config->not_found_body != NULL ? config->not_found_body : "not found\n",
       config->not_found_content_type != NULL ? config->not_found_content_type
@@ -26618,16 +26884,25 @@ static int vectis_request_path_has_trailing_slash(const char *path) {
   return path_len > 1u && path[path_len - 1u] == '/';
 }
 
-static int vectis_trailing_slash_targets_static_directory(
-    vectis_app_impl *impl, vectis_http_method method, const char *path,
-    vectis_request *request, vectis_error *error) {
-  const vectis_static_route_data *data;
+static int vectis_trailing_slash_targets_static_site(vectis_app_impl *impl,
+                                                     vectis_http_method method,
+                                                     const char *path,
+                                                     vectis_request *request,
+                                                     vectis_error *error) {
   size_t i;
-  size_t prefix_len;
+  size_t path_len;
   size_t saved_count;
-  int matches_static_directory;
+  int matches_static_site;
 
-  matches_static_directory = 0;
+  if (path == NULL) {
+    return 0;
+  }
+  path_len = strlen(path);
+  if (path_len < 2u || path[path_len - 1u] != '/' ||
+      path[path_len - 2u] == '/') {
+    return 0;
+  }
+  matches_static_site = 0;
   saved_count = request->path_param_count;
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
@@ -26638,22 +26913,15 @@ static int vectis_trailing_slash_targets_static_directory(
         !vectis_route_path_matches(&impl->routes[i], path, request, error)) {
       continue;
     }
-    matches_static_directory = 0;
-    if (impl->routes[i].handler == vectis_static_directory_dispatch) {
-      data = (const vectis_static_route_data *)impl->routes[i].userdata;
-      if (data != NULL && data->path_prefix != NULL) {
-        prefix_len = strlen(data->path_prefix);
-        matches_static_directory =
-            strncmp(path, data->path_prefix, prefix_len) == 0 &&
-            path[prefix_len] == '/' && path[prefix_len + 1u] == '\0';
-      }
-    }
+    matches_static_site =
+        impl->routes[i].handler == vectis_static_directory_dispatch ||
+        impl->routes[i].handler == vectis_static_embedded_dispatch;
     break;
   }
   vectis_kv_truncate(&request->path_params, &request->path_param_count,
                      saved_count);
   (void)pthread_mutex_unlock(&impl->mutex);
-  return matches_static_directory;
+  return matches_static_site;
 }
 
 vectis_status
@@ -26681,8 +26949,8 @@ vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
   impl = (vectis_app_impl *)app->impl;
   if (vectis_validate_request_path(path, error) != VECTIS_OK) {
     if (!vectis_request_path_has_trailing_slash(path) ||
-        !vectis_trailing_slash_targets_static_directory(impl, method, path,
-                                                        request, error)) {
+        !vectis_trailing_slash_targets_static_site(impl, method, path, request,
+                                                   error)) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
     vectis_error_clear(error);
@@ -26769,8 +27037,8 @@ vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
   impl = (vectis_app_impl *)app->impl;
   if (vectis_validate_request_path(path, error) != VECTIS_OK) {
     if (vectis_request_path_has_trailing_slash(path) &&
-        vectis_trailing_slash_targets_static_directory(impl, method, path,
-                                                       request, error)) {
+        vectis_trailing_slash_targets_static_site(impl, method, path, request,
+                                                  error)) {
       vectis_error_clear(error);
       vectis_set_error(error, VECTIS_ERR_STATE,
                        "no websocket route matched request");
@@ -26844,8 +27112,8 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
   vectis_internal_request_init(&scratch);
   if (vectis_validate_request_path(path, error) != VECTIS_OK) {
     if (!vectis_request_path_has_trailing_slash(path) ||
-        !vectis_trailing_slash_targets_static_directory(impl, method, path,
-                                                        &scratch, error)) {
+        !vectis_trailing_slash_targets_static_site(impl, method, path, &scratch,
+                                                   error)) {
       vectis_internal_request_cleanup(&scratch);
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }

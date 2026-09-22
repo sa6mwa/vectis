@@ -9908,6 +9908,14 @@ static int vectis_lua_app_static_directory(lua_State *lua) {
   config.root_dir = root_dir;
   config.content_type = vectis_lua_table_string(lua, 2, "content_type");
   config.index_file = vectis_lua_table_string(lua, 2, "index_file");
+  lua_getfield(lua, 2, "index");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_isboolean(lua, -1)) {
+      return luaL_error(lua, "static directory index must be boolean");
+    }
+    config.index_enabled = lua_toboolean(lua, -1);
+  }
+  lua_pop(lua, 1);
   methods = vectis_lua_route_methods(
       lua, 2, VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
       "static directory");

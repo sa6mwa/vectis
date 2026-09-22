@@ -576,6 +576,12 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
     from the selected disk file extension and falls back to
     `application/octet-stream` for unknown extensions. When provided, it
     overrides inference for every file in the mount.
+  - Directory-index inference is disabled by default. Set `index = true` to
+    serve `index_file` (default: `index.html`) for the mount root and nested
+    directory requests. An index-backed slashless directory redirects to its
+    trailing-slash URL, which serves the index internally. Set `index = false`
+    to make the default policy explicit. Direct file requests remain available
+    in either mode, and directories without an index return 404.
 - `app:static_file(opts)` serves one disk file.
   - `path` is the required literal route path. `file_path` is the required disk
     file; `file` is a compatibility alias.
@@ -584,6 +590,10 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
     from `file_path` and falls back to `application/octet-stream` for unknown
     extensions.
 - `app:static_embedded(opts)` serves packed embedded assets read-only.
+  - Embedded directories containing `index.html` use normal static-site URLs:
+    `/docs` redirects to `/docs/`, while `/docs/` serves the index internally.
+    The redirected URL never exposes `index.html`; directories without an index
+    return 404.
 - `app:webdav(opts)` serves mutable WebDAV storage, either Vectis-managed
   storage or a direct disk `root_dir`.
 - `app:webdav_embedded(opts)` serves packed embedded assets through a

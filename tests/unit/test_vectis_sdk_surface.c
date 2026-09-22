@@ -1886,9 +1886,11 @@ static void assert_json_route_surface(void) {
   status = app->static_file(app, &static_file, &error);
   assert(status == VECTIS_OK);
   vectis_static_directory_config_init(&static_dir);
+  assert(static_dir.index_enabled == 0);
   static_dir.path_prefix = "/assets/";
   static_dir.root_dir = static_dir_path;
   static_dir.content_type = "application/javascript";
+  static_dir.index_enabled = 1;
   status = app->static_directory(app, &static_dir, &error);
   assert(status == VECTIS_OK);
   vectis_webdav_mount_config_init(&webdav_mount);
@@ -2144,6 +2146,35 @@ static void assert_json_route_surface(void) {
   root_static_app->close(root_static_app);
   root_static_app = NULL;
 
+  root_static_app = vectis_app_new(&config, &error);
+  assert(root_static_app != NULL);
+  vectis_static_directory_config_init(&static_dir);
+  assert(static_dir.index_enabled == 0);
+  static_dir.path_prefix = "/";
+  static_dir.root_dir = static_dir_path;
+  status =
+      root_static_app->static_directory(root_static_app, &static_dir, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_dispatch_route(root_static_app, VECTIS_HTTP_GET, "/",
+                                          request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 404);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  status =
+      vectis_internal_dispatch_route(root_static_app, VECTIS_HTTP_GET,
+                                     "/index.html", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  source = vectis_internal_response_take_stream_source(response);
+  assert(source != NULL);
+  assert_source_equals(source, "static-index", 12u);
+  lc_source_close(source);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  root_static_app->close(root_static_app);
+  root_static_app = NULL;
+
   assert(symlink(static_dir_path, static_dir_root_link_path) == 0);
   root_static_app = vectis_app_new(&config, &error);
   assert(root_static_app != NULL);
@@ -2213,8 +2244,10 @@ static void assert_json_route_surface(void) {
 
   status = vectis_internal_dispatch_route(
       app, VECTIS_HTTP_GET, "/assets/app.js/", request, response, &error);
-  assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "empty segment") != NULL);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 404);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
 
   route = vectis_json_route(VECTIS_HTTP_POST, "/typed/:id", &sample_doc_map,
                             sizeof(sample_doc), &sample_doc_map,

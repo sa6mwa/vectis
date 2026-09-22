@@ -838,12 +838,22 @@ typedef struct vectis_static_directory_config {
    * files in the mount.
    */
   const char *content_type;
+  /* Index filename used for the mount root and every requested subdirectory
+   * when index_enabled is nonzero. NULL selects "index.html".
+   */
   const char *index_file;
+  /* Serve index_file for directory requests. Defaults to false so a zeroed
+   * configuration never exposes inferred directory indexes.
+   */
+  int index_enabled;
   vectis_http_methods methods;
 } vectis_static_directory_config;
 
 /* Read-only HTTP mount over a borrowed vectis_embedded_fs handle. The caller
  * must keep fs alive until the app is closed or the route is no longer used.
+ * A directory with an index.html is served at its trailing-slash URL; the
+ * slashless directory URL redirects to that canonical URL without exposing
+ * index.html in the redirect target.
  * NULL content_type defaults to application/octet-stream for entries without a
  * manifest content type. NULL cache_control defaults to no-cache. NULL
  * not_found_body defaults to "not found\n"; NULL not_found_content_type

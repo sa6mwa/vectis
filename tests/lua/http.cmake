@@ -8,17 +8,38 @@ set(auth_pouch_root "${WORK_DIR}/vectis-http-auth-pouch")
 set(auth_lockd_endpoint "pouch://${auth_pouch_root}?single_writer=false")
 set(metrics_storage_dir "${WORK_DIR}/vectis-http-metrics-pouch")
 set(static_dir "${WORK_DIR}/vectis-http-static")
+set(static_outside_index "${WORK_DIR}/vectis-http-outside-index.html")
 set(script "${WORK_DIR}/vectis-http-smoke.lua")
 
 file(WRITE "${json_file}" "{\"ok\":true,\"message\":\"vectis-http\"}\n")
 file(WRITE "${invalid_json_file}" "{bad json\n")
 file(WRITE "${download_source}" "downloaded through curl file sink\n")
 file(WRITE "${upload_source}" "uploaded through curl file source\n")
-file(MAKE_DIRECTORY "${static_dir}/assets")
+file(MAKE_DIRECTORY "${static_dir}/assets" "${static_dir}/guides/reference"
+                    "${static_dir}/spaces are supported/more spaces")
 file(WRITE "${static_dir}/index.html" "static directory index\n")
 file(WRITE "${static_dir}/assets/app.txt" "static directory asset\n")
 file(WRITE "${static_dir}/assets/app.css" "body { color: #123456; }\n")
 file(WRITE "${static_dir}/assets/blob.vct" "opaque static asset\n")
+file(WRITE "${static_dir}/guides/index.html" "nested guide index\n")
+file(WRITE "${static_dir}/guides/reference/index.html"
+           "nested reference index\n")
+file(WRITE "${static_dir}/spaces are supported/index.html"
+           "space directory index\n")
+file(WRITE "${static_dir}/spaces are supported/more spaces/index.html"
+           "deep space directory index\n")
+file(MAKE_DIRECTORY "${static_dir}/symlinked-index")
+file(WRITE "${static_outside_index}" "outside static root\n")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E create_symlink "${static_outside_index}"
+          "${static_dir}/symlinked-index/index.html"
+  RESULT_VARIABLE static_index_symlink_result
+  OUTPUT_VARIABLE static_index_symlink_stdout
+  ERROR_VARIABLE static_index_symlink_stderr)
+if(NOT static_index_symlink_result EQUAL 0)
+  message(FATAL_ERROR
+    "failed to create static-directory index symlink: ${static_index_symlink_stdout}${static_index_symlink_stderr}")
+endif()
 file(REMOVE "${download_target}" "${upload_target}")
 file(REMOVE_RECURSE "${auth_pouch_root}")
 file(REMOVE_RECURSE "${metrics_storage_dir}")
@@ -814,11 +835,18 @@ assert(api_server:static_directory({
   root_dir = static_dir,
   content_type = "text/plain",
   index_file = "index.html",
+  index = true,
 }) == true)
 assert(api_server:static_directory({
   path_prefix = "/site",
   root_dir = static_dir,
   index_file = "index.html",
+  index = true,
+}) == true)
+assert(api_server:static_directory({
+  path_prefix = "/no-index",
+  root_dir = static_dir,
+  index = false,
 }) == true)
 assert(api_server:static_file({
   path = "/single-index",
@@ -1423,16 +1451,29 @@ assert(callback_direct_allowed.body == '{"ok":true,"provider":"callback-direct"}
 local static_index = vectis.http.request({
   url = "http://127.0.0.1:28484/files",
   protocols = "http",
+  follow_redirects = false,
   timeout_ms = 2000,
   connect_timeout_ms = 1000,
   no_signal = true,
 })
 assert(static_index.ok == true,
        static_index.error and static_index.error.message)
-assert(static_index.status == 200)
-assert(static_index.body == "static directory index\n")
-assert(static_index.headers:lower():find("content-type: text/plain", 1, true),
+assert(static_index.status == 308)
+assert(static_index.headers:lower():find("location: /files/", 1, true),
        static_index.headers)
+local static_index_slash = vectis.http.request({
+  url = "http://127.0.0.1:28484/files/",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_index_slash.ok == true,
+       static_index_slash.error and static_index_slash.error.message)
+assert(static_index_slash.status == 200)
+assert(static_index_slash.body == "static directory index\n")
+assert(static_index_slash.headers:lower():find(
+    "content-type: text/plain", 1, true), static_index_slash.headers)
 local static_asset = vectis.http.request({
   url = "http://127.0.0.1:28484/files/assets/app.txt",
   protocols = "http",
@@ -1458,20 +1499,94 @@ assert(static_asset_head.status == 200)
 assert(static_asset_head.body == "")
 assert(static_asset_head.headers:lower():find("content-length: 23", 1, true),
        static_asset_head.headers)
-local inferred_static_index = vectis.http.request({
-  url = "http://127.0.0.1:28484/site",
+local function assert_static_directory_redirect(path, location)
+  local result = vectis.http.request({
+    url = "http://127.0.0.1:28484" .. path,
+    protocols = "http",
+    follow_redirects = false,
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+  })
+  assert(result.ok == true, result.error and result.error.message)
+  assert(result.status == 308, path .. ": " .. tostring(result.status))
+  assert(result.headers:lower():find(
+      "location: " .. location:lower(), 1, true), result.headers)
+  assert(result.body == "")
+end
+assert_static_directory_redirect("/site", "/site/")
+local function assert_static_directory_index(path, expected_body)
+  local result = vectis.http.request({
+    url = "http://127.0.0.1:28484" .. path,
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+  })
+  assert(result.ok == true, result.error and result.error.message)
+  assert(result.status == 200, path .. ": " .. tostring(result.status))
+  assert(result.body == expected_body, path .. ": " .. result.body)
+  assert(result.headers:lower():find(
+      "content-type: text/html; charset=utf-8", 1, true), result.headers)
+end
+assert_static_directory_index("/site/", "static directory index\n")
+assert_static_directory_redirect("/site/guides", "/site/guides/")
+assert_static_directory_index("/site/guides/", "nested guide index\n")
+assert_static_directory_redirect("/site/guides/reference",
+                                 "/site/guides/reference/")
+assert_static_directory_index("/site/guides/reference/",
+                              "nested reference index\n")
+assert_static_directory_redirect("/site/spaces%20are%20supported",
+                                 "/site/spaces%20are%20supported/")
+assert_static_directory_index("/site/spaces%20are%20supported/",
+                              "space directory index\n")
+assert_static_directory_redirect(
+    "/site/spaces%20are%20supported/more%20spaces",
+    "/site/spaces%20are%20supported/more%20spaces/")
+assert_static_directory_index(
+    "/site/spaces%20are%20supported/more%20spaces/",
+    "deep space directory index\n")
+local function assert_static_directory_not_found(path)
+  local result = vectis.http.request({
+    url = "http://127.0.0.1:28484" .. path,
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+  })
+  assert(result.status == 404, path .. ": " .. tostring(result.status))
+end
+assert_static_directory_not_found("/no-index")
+assert_static_directory_not_found("/no-index/")
+assert_static_directory_not_found("/no-index/guides")
+assert_static_directory_not_found("/no-index/guides/")
+local no_index_direct_file = vectis.http.request({
+  url = "http://127.0.0.1:28484/no-index/index.html",
   protocols = "http",
   timeout_ms = 2000,
   connect_timeout_ms = 1000,
   no_signal = true,
 })
-assert(inferred_static_index.ok == true,
-       inferred_static_index.error and inferred_static_index.error.message)
-assert(inferred_static_index.status == 200)
-assert(inferred_static_index.body == "static directory index\n")
-assert(inferred_static_index.headers:lower():find(
-    "content-type: text/html; charset=utf-8", 1, true),
-    inferred_static_index.headers)
+assert(no_index_direct_file.ok == true,
+       no_index_direct_file.error and no_index_direct_file.error.message)
+assert(no_index_direct_file.status == 200)
+assert(no_index_direct_file.body == "static directory index\n")
+local encoded_static_separator = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/guides%2Freference",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(encoded_static_separator.status == 400)
+local static_symlinked_index = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/symlinked-index",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_symlinked_index.status == 404)
 local static_file_response = vectis.http.get(
     "http://127.0.0.1:28484/single-index", {
   timeout_ms = 2000,
