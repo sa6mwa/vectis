@@ -114,6 +114,64 @@ discover_linux_readelf() {
   return 1
 }
 
+discover_linux_nm() {
+  local target_id=$1
+  local build_dir="$release_build_root/$target_id-release"
+  local tools
+  local NM
+
+  if [ -f "$build_dir/CMakeCache.txt" ]; then
+    if tools=$(unset VECTIS_NM; "$script_dir/discover_target_tools.sh" \
+        --build-dir "$build_dir" --target-id "$target_id" 2>/dev/null); then
+      NM=
+      eval "$tools"
+      if [ -n "${NM:-}" ] && [ -x "$NM" ]; then
+        printf '%s\n' "$NM"
+        return 0
+      fi
+    fi
+  fi
+
+  if [ -n "${VECTIS_NM:-}" ] && [ -x "$VECTIS_NM" ]; then
+    printf '%s\n' "$VECTIS_NM"
+    return 0
+  fi
+  if command -v "$target_id-nm" >/dev/null 2>&1; then
+    command -v "$target_id-nm"
+    return 0
+  fi
+  if command -v nm >/dev/null 2>&1; then
+    command -v nm
+    return 0
+  fi
+  return 1
+}
+
+discover_darwin_nm() {
+  local target_id=$1
+  local build_dir="$release_build_root/$target_id-release"
+  local tools
+  local NM
+
+  if [ -f "$build_dir/CMakeCache.txt" ]; then
+    if tools=$(unset VECTIS_NM; "$script_dir/discover_target_tools.sh" \
+        --build-dir "$build_dir" --target-id "$target_id" 2>/dev/null); then
+      NM=
+      eval "$tools"
+      if [ -n "${NM:-}" ] && [ -x "$NM" ]; then
+        printf '%s\n' "$NM"
+        return 0
+      fi
+    fi
+  fi
+
+  if [ -n "${VECTIS_NM:-}" ] && [ -x "$VECTIS_NM" ]; then
+    printf '%s\n' "$VECTIS_NM"
+    return 0
+  fi
+  return 1
+}
+
 verify_binary_sdk_manifest_target() {
   root=$1
   target_id=$2
@@ -173,6 +231,43 @@ verify_linux_vectis_binary_static() {
      grep -E '^[[:space:]]*INTERP[[:space:]]' >/dev/null 2>&1; then
     fail "Linux vectis binary has an ELF interpreter" "$file"
   fi
+}
+
+verify_linux_vectis_shared_exports() {
+  root=$1
+  target_id=$2
+  artifact_name=$3
+  library="$root/lib/libvectis.so"
+
+  [ -f "$library" ] || return 0
+  nm_bin=$(discover_linux_nm "$target_id") ||
+    fail "target nm is required to verify Vectis shared-library exports" "$artifact_name"
+  "$cmake_bin" \
+    "-DVECTIS_EXPORT_LIST=$repo_root/cmake/vectis.exports" \
+    "-DVECTIS_EXPORT_LIBRARY=$library" \
+    "-DVECTIS_EXPORT_NM=$nm_bin" \
+    -P "$repo_root/cmake/vectis_export_policy.cmake" ||
+    fail "Vectis shared-library exports do not match the source-controlled allowlist" \
+      "$artifact_name"
+}
+
+verify_darwin_vectis_shared_exports() {
+  root=$1
+  target_id=$2
+  artifact_name=$3
+  library="$root/lib/libvectis.dylib"
+
+  [ -f "$library" ] || return 0
+  nm_bin=$(discover_darwin_nm "$target_id") ||
+    fail "target nm is required to verify Vectis shared-library exports" "$artifact_name"
+  "$cmake_bin" \
+    "-DVECTIS_EXPORT_LIST=$repo_root/cmake/vectis.exports" \
+    "-DVECTIS_EXPORT_LIBRARY=$library" \
+    "-DVECTIS_EXPORT_NM=$nm_bin" \
+    -DVECTIS_EXPORT_DARWIN=1 \
+    -P "$repo_root/cmake/vectis_export_policy.cmake" ||
+    fail "Vectis shared-library exports do not match the source-controlled allowlist" \
+      "$artifact_name"
 }
 
 verify_linux_tree_elf_targets() {
@@ -312,6 +407,14 @@ while IFS= read -r artifact_name; do
              \) | grep . >/dev/null; then
             fail "binary SDK contains LuaRocks artifacts" "$artifact_name"
           fi
+          case "$target_id" in
+            *-linux-*)
+              verify_linux_vectis_shared_exports "$root" "$target_id" "$artifact_name"
+              ;;
+            arm64-apple-darwin)
+              verify_darwin_vectis_shared_exports "$root" "$target_id" "$artifact_name"
+              ;;
+          esac
           if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] &&
              [ "$root_name" = "vectis-$version-x86_64-linux-gnu" ]; then
             if [ -f "$root/lib/libvectis.a" ]; then

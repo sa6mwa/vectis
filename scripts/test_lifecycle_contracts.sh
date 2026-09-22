@@ -106,6 +106,22 @@ assert_lifecycle_surface_contract() {
   assert_contains "$repo_root/scripts/deps.sh" '^lua_version="5\.5\.1"$'
   assert_contains "$repo_root/CMakeLists.txt" 'VECTIS_EXPECTED_LUA_VERSION "5\.5\.1"'
   assert_contains "$repo_root/CMakeLists.txt" 'SOVERSION 0'
+  assert_contains "$repo_root/CMakeLists.txt" 'vectis_export_policy\.cmake'
+  assert_contains "$repo_root/CMakeLists.txt" 'LINKER:--version-script='
+  assert_contains "$repo_root/cmake/vectis.exports" \
+    '^vectis_app_new$'
+  assert_contains "$repo_root/cmake/vectis.exports" \
+    '^vectis_register_webdav$'
+  assert_contains "$repo_root/cmake/vectis_export_policy.cmake" \
+    'dynamic exports differ from the canonical allowlist'
+  assert_contains "$repo_root/tests/install/CMakeLists.txt" \
+    'private Vectis sentinel linked from vectis::shared'
+  assert_contains "$repo_root/scripts/verify_release_artifacts.sh" \
+    'verify_linux_vectis_shared_exports'
+  assert_contains "$repo_root/scripts/verify_release_artifacts.sh" \
+    'verify_darwin_vectis_shared_exports'
+  assert_contains "$repo_root/Makefile" \
+    'verify-package-install-shared-exports'
   for preset in debug-lua valgrind; do
     assert_contains "$repo_root/CMakePresets.json" "\"name\": \"$preset\""
     assert_contains "$repo_root/CMakePresets.json" "\"configurePreset\": \"$preset\""
@@ -1756,10 +1772,14 @@ EOF
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
-  VECTIS_RELEASE_BUILD_ROOT="$dist/build" \
-    VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
-    "$repo_root/scripts/verify_release_artifacts.sh" \
-    >"$dist/readelf.out" 2>"$dist/readelf.err"
+  if ! VECTIS_RELEASE_BUILD_ROOT="$dist/build" \
+       VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+       "$repo_root/scripts/verify_release_artifacts.sh" \
+       >"$dist/readelf.out" 2>"$dist/readelf.err"; then
+    echo "release artifact verifier did not use target-cache readelf" >&2
+    cat "$dist/readelf.err" >&2
+    exit 1
+  fi
 }
 
 assert_linux_release_matrix_required() {

@@ -39,18 +39,21 @@ configured_case() {
   make_tool "$root/bin/custom-install-name-tool"
   make_tool "$root/bin/custom-otool"
   make_tool "$root/bin/custom-readelf"
+  make_tool "$root/bin/custom-nm"
   cat >"$build/CMakeCache.txt" <<EOF
 CMAKE_C_COMPILER:FILEPATH=$root/bin/cc
 CMAKE_STRIP:FILEPATH=$root/bin/custom-strip
 CMAKE_INSTALL_NAME_TOOL:FILEPATH=$root/bin/custom-install-name-tool
 CMAKE_OTOOL:FILEPATH=$root/bin/custom-otool
 CMAKE_READELF:FILEPATH=$root/bin/custom-readelf
+CMAKE_NM:FILEPATH=$root/bin/custom-nm
 EOF
   output=$("$repo_root/scripts/discover_target_tools.sh" --build-dir "$build" --target-id arm64-apple-darwin)
   assert_output_contains "$output" "STRIP='$root/bin/custom-strip'"
   assert_output_contains "$output" "INSTALL_NAME_TOOL='$root/bin/custom-install-name-tool'"
   assert_output_contains "$output" "OTOOL='$root/bin/custom-otool'"
   assert_output_contains "$output" "READELF='$root/bin/custom-readelf'"
+  assert_output_contains "$output" "NM='$root/bin/custom-nm'"
 }
 
 darwin_sibling_case() {
@@ -58,7 +61,7 @@ darwin_sibling_case() {
   toolbin="$root/toolchain/bin"
   build="$root/build"
   mkdir -p "$toolbin" "$build"
-  for tool in arm64-apple-darwin25-clang arm64-apple-darwin25-strip arm64-apple-darwin25-install_name_tool arm64-apple-darwin25-otool readelf; do
+  for tool in arm64-apple-darwin25-clang arm64-apple-darwin25-strip arm64-apple-darwin25-install_name_tool arm64-apple-darwin25-otool arm64-apple-darwin25-nm readelf; do
     make_tool "$toolbin/$tool"
   done
   cat >"$build/CMakeCache.txt" <<EOF
@@ -71,6 +74,7 @@ EOF
   assert_output_contains "$output" "STRIP='$toolbin/arm64-apple-darwin25-strip'"
   assert_output_contains "$output" "INSTALL_NAME_TOOL='$toolbin/arm64-apple-darwin25-install_name_tool'"
   assert_output_contains "$output" "OTOOL='$toolbin/arm64-apple-darwin25-otool'"
+  assert_output_contains "$output" "NM='$toolbin/arm64-apple-darwin25-nm'"
   assert_output_contains "$output" "TARGET_HOST_PREFIX='arm64-apple-darwin25'"
 }
 
@@ -111,6 +115,7 @@ EOF
   assert_output_contains "$output" "STRIP=''"
   assert_output_contains "$output" "INSTALL_NAME_TOOL=''"
   assert_output_contains "$output" "OTOOL=''"
+  assert_output_contains "$output" "NM=''"
 }
 
 configured_case

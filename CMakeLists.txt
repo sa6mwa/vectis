@@ -686,6 +686,30 @@ set(vectis_private_includes
   "${CMAKE_SOURCE_DIR}/src"
 )
 
+# Keep linker controls generated from the source-controlled dynamic export
+# allowlist instead of relying on default compiler visibility or implementation
+# naming conventions.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/cmake/vectis.exports"
+  "${CMAKE_SOURCE_DIR}/cmake/vectis_export_policy.cmake")
+set(vectis_export_policy_dir "${CMAKE_BINARY_DIR}/generated/exports")
+file(MAKE_DIRECTORY "${vectis_export_policy_dir}")
+set(vectis_export_policy_args
+  "-DVECTIS_EXPORT_LIST=${CMAKE_SOURCE_DIR}/cmake/vectis.exports"
+  "-DVECTIS_EXPORT_ELF_MAP=${vectis_export_policy_dir}/vectis.map"
+  "-DVECTIS_EXPORT_DARWIN_LIST=${vectis_export_policy_dir}/vectis.exports"
+  "-DVECTIS_EXPORT_EXPECTED_LIST=${vectis_export_policy_dir}/vectis.symbols"
+  -P "${CMAKE_SOURCE_DIR}/cmake/vectis_export_policy.cmake")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" ${vectis_export_policy_args}
+  RESULT_VARIABLE vectis_export_policy_result
+  ERROR_VARIABLE vectis_export_policy_error)
+if(NOT vectis_export_policy_result EQUAL 0)
+  message(FATAL_ERROR
+    "failed to generate the Vectis shared-library export policy: "
+    "${vectis_export_policy_error}")
+endif()
+
 configure_file(
   "${CMAKE_SOURCE_DIR}/cmake/vectis_version.h.in"
   "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
@@ -761,6 +785,11 @@ if(VECTIS_BUILD_SHARED)
       INSTALL_NAME_DIR "@rpath"
       INSTALL_RPATH "@loader_path"
     )
+    target_link_options(vectis_shared PRIVATE
+      "-Wl,-exported_symbols_list,${vectis_export_policy_dir}/vectis.exports")
+  elseif(UNIX)
+    target_link_options(vectis_shared PRIVATE
+      "LINKER:--version-script=${vectis_export_policy_dir}/vectis.map")
   endif()
   if(VECTIS_BUILD_FUZZERS)
     target_compile_definitions(vectis_shared PRIVATE VECTIS_BUILD_FUZZERS)
@@ -1210,6 +1239,18 @@ endif()
 if(VECTIS_BUILD_TESTS OR VECTIS_BUILD_FUZZERS)
   enable_testing()
   add_subdirectory(tests)
+  if(VECTIS_BUILD_SHARED)
+    add_test(NAME vectis_shared_export_policy
+      COMMAND "${CMAKE_COMMAND}"
+              "-DVECTIS_EXPORT_LIST=${CMAKE_SOURCE_DIR}/cmake/vectis.exports"
+              "-DVECTIS_EXPORT_LIBRARY=$<TARGET_FILE:vectis_shared>"
+              "-DVECTIS_EXPORT_NM=${CMAKE_NM}"
+              "-DVECTIS_EXPORT_DARWIN=$<BOOL:${APPLE}>"
+              -P "${CMAKE_SOURCE_DIR}/cmake/vectis_export_policy.cmake")
+    set_tests_properties(vectis_shared_export_policy PROPERTIES
+      LABELS "unit;packaging;local"
+      TIMEOUT 30)
+  endif()
 endif()
 
 if(VECTIS_BUILD_EXAMPLES)

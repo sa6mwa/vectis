@@ -118,13 +118,16 @@ prefixed_strip=
 prefixed_install_name_tool=
 prefixed_otool=
 prefixed_readelf=
+prefixed_nm=
 if [ -n "$host_prefix" ]; then
   prefixed_strip="$host_prefix-strip"
   prefixed_install_name_tool="$host_prefix-install_name_tool"
   prefixed_otool="$host_prefix-otool"
+  prefixed_nm="$host_prefix-nm"
 elif [ -n "$target_id" ]; then
   prefixed_strip="$target_id-strip"
   prefixed_readelf="$target_id-readelf"
+  prefixed_nm="$target_id-nm"
 fi
 
 cc=$(resolve_path "$compiler" 2>/dev/null || printf '%s\n' "$compiler")
@@ -135,6 +138,7 @@ if [ -z "$otool" ]; then
   otool=$(find_tool OTOOL CPKT_OTOOL otool "$prefixed_otool")
 fi
 readelf_tool=$(find_tool READELF CMAKE_READELF readelf "$prefixed_readelf")
+nm_tool=$(find_tool NM CMAKE_NM nm "$prefixed_nm")
 
 quote() {
   printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")"
@@ -145,4 +149,5 @@ quote STRIP "$strip_tool"
 quote INSTALL_NAME_TOOL "$install_name_tool"
 quote OTOOL "$otool"
 quote READELF "$readelf_tool"
+quote NM "$nm_tool"
 quote TARGET_HOST_PREFIX "$host_prefix"

@@ -288,6 +288,10 @@ make prerelease
 - `make valgrind` runs the dedicated native Valgrind preset; `make test-all`
   includes it with the deterministic Lua, fuzz-smoke, performance, and e2e
   gates.
+- `cmake/vectis.exports` is the explicit dynamic export policy for the
+  optional shared SDK library. Update it deliberately with public ABI changes;
+  install-tree and release-artifact verification reject missing or leaked
+  exports.
 - `make lua-env` prints exports for running Lua examples with the built CLI.
 - `make test-e2e` runs the compose-backed integration smoke suite.
 - `make test-install-tree` verifies downstream CMake/pkg-config consumers from

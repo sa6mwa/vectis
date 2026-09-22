@@ -31,6 +31,29 @@ if(VECTIS_CONSUMER_LINK STREQUAL "static")
   endforeach()
 endif()
 
+if(VECTIS_CONSUMER_LINK STREQUAL "shared")
+  # Linux cross toolchains use static-library try-compiles for compiler probes.
+  # This privacy assertion must link an executable, otherwise an unresolved
+  # private declaration is never tested.
+  set(vectis_saved_try_compile_target_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
+  try_compile(vectis_private_sentinel_linked
+    "${CMAKE_BINARY_DIR}/private-sentinel"
+    "${CMAKE_CURRENT_SOURCE_DIR}/private_sentinel.c"
+    LINK_LIBRARIES vectis::shared
+    OUTPUT_VARIABLE vectis_private_sentinel_output)
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE "${vectis_saved_try_compile_target_type}")
+  if(vectis_private_sentinel_linked)
+    message(FATAL_ERROR
+      "private Vectis sentinel linked from vectis::shared; dynamic export policy is ineffective")
+  endif()
+  if(NOT vectis_private_sentinel_output MATCHES "vectis_internal_worker_count")
+    message(FATAL_ERROR
+      "private Vectis sentinel fixture did not fail on the private symbol; "
+      "the dynamic export policy was not proven")
+  endif()
+endif()
+
 if(VECTIS_CONSUMER_LINK STREQUAL "static" AND UNIX AND NOT APPLE AND CMAKE_DL_LIBS)
   get_target_property(openssl_crypto_links OpenSSL::Crypto INTERFACE_LINK_LIBRARIES)
   if(NOT CMAKE_DL_LIBS IN_LIST openssl_crypto_links)
