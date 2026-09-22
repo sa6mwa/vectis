@@ -16,12 +16,15 @@ file(WRITE "${invalid_json_file}" "{bad json\n")
 file(WRITE "${download_source}" "downloaded through curl file sink\n")
 file(WRITE "${upload_source}" "uploaded through curl file source\n")
 file(MAKE_DIRECTORY "${static_dir}/assets" "${static_dir}/guides/reference"
-                    "${static_dir}/spaces are supported/more spaces")
+                    "${static_dir}/spaces are supported/more spaces"
+                    "${static_dir}/index-is-directory/index.html")
 file(WRITE "${static_dir}/index.html" "static directory index\n")
+file(WRITE "${static_dir}/home.html" "custom directory index\n")
 file(WRITE "${static_dir}/assets/app.txt" "static directory asset\n")
 file(WRITE "${static_dir}/assets/app.css" "body { color: #123456; }\n")
 file(WRITE "${static_dir}/assets/blob.vct" "opaque static asset\n")
 file(WRITE "${static_dir}/guides/index.html" "nested guide index\n")
+file(WRITE "${static_dir}/guides/home.html" "nested custom index\n")
 file(WRITE "${static_dir}/guides/reference/index.html"
            "nested reference index\n")
 file(WRITE "${static_dir}/spaces are supported/index.html"
@@ -848,6 +851,42 @@ assert(api_server:static_directory({
   root_dir = static_dir,
   index = false,
 }) == true)
+assert(api_server:static_directory({
+  path_prefix = "/custom-index",
+  root_dir = static_dir,
+  index_file = "home.html",
+  index = true,
+}) == true)
+local invalid_static_index, invalid_static_index_err =
+    api_server:static_directory({
+      path_prefix = "/invalid-static-index",
+      root_dir = static_dir,
+      index_file = "../index.html",
+      index = true,
+    })
+assert(invalid_static_index == nil)
+assert(invalid_static_index_err.status == vectis.ERR_INVALID)
+assert(invalid_static_index_err.message:find("index_file", 1, true))
+local invalid_static_index_type_ok, invalid_static_index_type_err = pcall(
+    function()
+      return api_server:static_directory({
+        path_prefix = "/invalid-static-index-type",
+        root_dir = static_dir,
+        index = "true",
+      })
+    end)
+assert(invalid_static_index_type_ok == false)
+assert(invalid_static_index_type_err:find("index must be boolean", 1, true))
+local invalid_static_methods_ok, invalid_static_methods_err = pcall(function()
+  return api_server:static_directory({
+    path_prefix = "/invalid-static-methods",
+    root_dir = static_dir,
+    methods = {"POST"},
+  })
+end)
+assert(invalid_static_methods_ok == false)
+assert(invalid_static_methods_err:find("methods must be GET and/or HEAD",
+                                            1, true))
 assert(api_server:static_file({
   path = "/single-index",
   file_path = static_dir .. "/index.html",
@@ -1546,6 +1585,12 @@ assert_static_directory_redirect(
 assert_static_directory_index(
     "/site/spaces%20are%20supported/more%20spaces/",
     "deep space directory index\n")
+assert_static_directory_redirect("/custom-index", "/custom-index/")
+assert_static_directory_index("/custom-index/", "custom directory index\n")
+assert_static_directory_redirect("/custom-index/guides",
+                                 "/custom-index/guides/")
+assert_static_directory_index("/custom-index/guides/",
+                              "nested custom index\n")
 local function assert_static_directory_not_found(path)
   local result = vectis.http.request({
     url = "http://127.0.0.1:28484" .. path,
@@ -1560,6 +1605,9 @@ assert_static_directory_not_found("/no-index")
 assert_static_directory_not_found("/no-index/")
 assert_static_directory_not_found("/no-index/guides")
 assert_static_directory_not_found("/no-index/guides/")
+assert_static_directory_not_found("/site/index-is-directory")
+assert_static_directory_not_found("/site/index-is-directory/")
+assert_static_directory_not_found("/site/assets/app.txt/")
 local no_index_direct_file = vectis.http.request({
   url = "http://127.0.0.1:28484/no-index/index.html",
   protocols = "http",
@@ -1579,6 +1627,61 @@ local encoded_static_separator = vectis.http.request({
   no_signal = true,
 })
 assert(encoded_static_separator.status == 400)
+local encoded_static_nul = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/guides%00reference",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(encoded_static_nul.status == 400)
+local repeated_static_separator = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/guides//",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(repeated_static_separator.status == 400)
+local static_index_head = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/guides",
+  method = "HEAD",
+  protocols = "http",
+  follow_redirects = false,
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_index_head.ok == true,
+       static_index_head.error and static_index_head.error.message)
+assert(static_index_head.status == 308)
+assert(static_index_head.body == "")
+assert(static_index_head.headers:lower():find(
+    "location: /site/guides/", 1, true), static_index_head.headers)
+local static_index_post = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/guides/",
+  method = "POST",
+  body = "static routes do not accept request bodies",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_index_post.ok == false)
+assert(static_index_post.status == 405)
+assert(static_index_post.headers:lower():find("allow: get, head", 1, true),
+       static_index_post.headers)
+local malformed_static_post = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/guides//",
+  method = "POST",
+  body = "invalid path wins over method handling",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(malformed_static_post.ok == false)
+assert(malformed_static_post.status == 400)
 local static_symlinked_index = vectis.http.request({
   url = "http://127.0.0.1:28484/site/symlinked-index",
   protocols = "http",

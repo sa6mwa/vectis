@@ -5415,6 +5415,18 @@ static void assert_kore_smoke(void) {
   assert(embedded_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_response);
 
+  status = vectis_http_head(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/embedded/vectis"),
+      &embedded_head_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_head_response.status_code == 308L);
+  assert(
+      strcmp(vectis_http_response_header(&embedded_head_response, "location"),
+             "/embedded/vectis/") == 0);
+  assert(embedded_head_response.body_size == 0u);
+  vectis_http_response_cleanup(&embedded_head_response);
+
   status = vectis_http_get(
       &http,
       format_loopback_http_url(url, sizeof(url), port, "/embedded/vectis/"),
@@ -5444,6 +5456,23 @@ static void assert_kore_smoke(void) {
   assert(embedded_response.status_code == 404L);
   vectis_http_response_cleanup(&embedded_response);
 
+  status =
+      vectis_http_get(&http,
+                      format_loopback_http_url(url, sizeof(url), port,
+                                               "/embedded/assets/app.txt/"),
+                      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 404L);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/embedded/vectis//"),
+      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 400L);
+  vectis_http_response_cleanup(&embedded_response);
+
   status = vectis_http_get(&http,
                            format_loopback_http_url(url, sizeof(url), port,
                                                     "/embedded/assets/app.txt"),
@@ -5460,6 +5489,19 @@ static void assert_kore_smoke(void) {
              "bytes") == 0);
   assert(embedded_response.body_size == 4u);
   assert(memcmp(embedded_response.body, "app\n", 4u) == 0);
+  vectis_http_response_cleanup(&embedded_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
+  request.body = "static routes reject this body";
+  request.body_size = strlen((const char *)request.body);
+  status = vectis_http_execute(&http, &request, &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 405L);
+  assert(strcmp(vectis_http_response_header(&embedded_response, "allow"),
+                "GET, HEAD") == 0);
   vectis_http_response_cleanup(&embedded_response);
 
   vectis_http_request_init(&request);

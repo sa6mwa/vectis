@@ -13820,6 +13820,17 @@ vectis_static_methods_or_default(vectis_http_methods methods) {
   return methods;
 }
 
+static const char *vectis_static_methods_allow(vectis_http_methods methods) {
+  if ((methods & VECTIS_HTTP_METHODS_GET) != 0u &&
+      (methods & VECTIS_HTTP_METHODS_HEAD) != 0u) {
+    return "GET, HEAD";
+  }
+  if ((methods & VECTIS_HTTP_METHODS_HEAD) != 0u) {
+    return "HEAD";
+  }
+  return "GET";
+}
+
 static vectis_static_route_data *vectis_static_route_data_new(
     int directory, const char *path_prefix, const char *file_path,
     const char *root_dir, const char *content_type, const char *index_file,
@@ -14392,6 +14403,8 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   char *index_relative;
   size_t prefix_len;
   size_t path_len;
+  vectis_http_method method;
+  vectis_http_methods method_mask;
   int file_fd;
   int mount_root;
   int trailing_slash;
@@ -14405,6 +14418,18 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "static directory route is invalid");
     return VECTIS_ERR_INVALID;
+  }
+  method = vectis_request_method(request);
+  method_mask = vectis_method_mask(method);
+  if (method_mask == VECTIS_HTTP_METHODS_NONE ||
+      (data->allowed_methods & method_mask) == 0u) {
+    if (vectis_response_header(
+            response, "allow",
+            vectis_static_methods_allow(data->allowed_methods),
+            error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    return vectis_response_status(response, 405, error);
   }
   prefix_len = strlen(data->path_prefix);
   mount_root = 0;
@@ -14464,17 +14489,6 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
                                      index_relative, file_fd, error);
   free(index_relative);
   return status;
-}
-
-static const char *vectis_static_embedded_allow(vectis_http_methods methods) {
-  if ((methods & VECTIS_HTTP_METHODS_GET) != 0u &&
-      (methods & VECTIS_HTTP_METHODS_HEAD) != 0u) {
-    return "GET, HEAD";
-  }
-  if ((methods & VECTIS_HTTP_METHODS_HEAD) != 0u) {
-    return "HEAD";
-  }
-  return "GET";
 }
 
 static vectis_status vectis_static_embedded_header(vectis_response *response,
@@ -14865,7 +14879,7 @@ static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
       (data->allowed_methods & method_mask) == 0u) {
     if (vectis_response_header(
             response, "allow",
-            vectis_static_embedded_allow(data->allowed_methods),
+            vectis_static_methods_allow(data->allowed_methods),
             error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
@@ -15092,6 +15106,7 @@ vectis_register_static_directory(vectis_app *app,
   vectis_route_config route;
   vectis_static_route_data *data;
   const char *index_file;
+  vectis_http_methods allowed_methods;
   vectis_status status;
   char *regex;
   char *path_prefix;
@@ -15108,6 +15123,14 @@ vectis_register_static_directory(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   index_file = config->index_file != NULL ? config->index_file : "index.html";
+  allowed_methods = vectis_static_methods_or_default(config->methods);
+  if (allowed_methods == VECTIS_HTTP_METHODS_NONE ||
+      (allowed_methods &
+       ~(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD)) != 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "static directory methods must be GET and/or HEAD");
+    return VECTIS_ERR_INVALID;
+  }
   if (config->index_enabled && (!vectis_static_relative_path_safe(index_file) ||
                                 strchr(index_file, '/') != NULL)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -15129,10 +15152,9 @@ vectis_register_static_directory(vectis_app *app,
     free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
-  data = vectis_static_route_data_new(1, path_prefix, NULL, config->root_dir,
-                                      config->content_type, index_file,
-                                      config->index_enabled, NULL, NULL, NULL,
-                                      NULL, VECTIS_HTTP_METHODS_NONE, error);
+  data = vectis_static_route_data_new(
+      1, path_prefix, NULL, config->root_dir, config->content_type, index_file,
+      config->index_enabled, NULL, NULL, NULL, NULL, allowed_methods, error);
   if (data == NULL) {
     free(path_prefix);
     free(regex);
@@ -15140,9 +15162,8 @@ vectis_register_static_directory(vectis_app *app,
   }
   free(path_prefix);
   vectis_route_config_init(&route);
-  route.method =
-      vectis_first_method(vectis_static_methods_or_default(config->methods));
-  route.methods = vectis_static_methods_or_default(config->methods);
+  route.method = VECTIS_HTTP_GET;
+  route.methods = VECTIS_HTTP_METHODS_ALL;
   route.path = regex;
   route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   route.body = vectis_body_none();
@@ -27158,6 +27179,79 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
   if (status == VECTIS_ERR_STATE) {
     vectis_set_error(error, VECTIS_ERR_STATE, "no route matched request");
   }
+  return status;
+}
+
+vectis_status vectis_internal_static_route_method_denied(
+    vectis_app *app, vectis_http_method method, const char *path, int *denied,
+    const char **allow, vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_request scratch;
+  vectis_status status;
+  vectis_http_methods method_mask;
+  vectis_static_route_data *data;
+  size_t i;
+
+  if (app == NULL || app->impl == NULL || path == NULL || denied == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "static route method check is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  *denied = 0;
+  if (allow != NULL) {
+    *allow = NULL;
+  }
+  method_mask = vectis_method_mask(method);
+  if (method_mask == VECTIS_HTTP_METHODS_NONE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  vectis_internal_request_init(&scratch);
+  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+    if (!vectis_request_path_has_trailing_slash(path) ||
+        !vectis_trailing_slash_targets_static_site(impl, method, path, &scratch,
+                                                   error)) {
+      vectis_internal_request_cleanup(&scratch);
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    vectis_error_clear(error);
+  }
+  status = VECTIS_OK;
+  vectis_error_clear(error);
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    vectis_kv_truncate(&scratch.path_params, &scratch.path_param_count, 0u);
+    if (!vectis_route_method_matches(&impl->routes[i], method)) {
+      continue;
+    }
+    if (!vectis_route_path_matches(&impl->routes[i], path, &scratch, error)) {
+      if (error != NULL && (error->code == VECTIS_ERR_NOMEM ||
+                            error->code == VECTIS_ERR_INVALID)) {
+        status = error->code;
+        break;
+      }
+      continue;
+    }
+    if (impl->routes[i].handler == vectis_static_directory_dispatch ||
+        impl->routes[i].handler == vectis_static_embedded_dispatch) {
+      data = (vectis_static_route_data *)impl->routes[i].userdata;
+      if (data == NULL) {
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "static route data is missing");
+        status = VECTIS_ERR_STATE;
+      } else if ((data->allowed_methods & method_mask) == 0u) {
+        *denied = 1;
+        if (allow != NULL) {
+          *allow = vectis_static_methods_allow(data->allowed_methods);
+        }
+      }
+    }
+    break;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_internal_request_cleanup(&scratch);
   return status;
 }
 

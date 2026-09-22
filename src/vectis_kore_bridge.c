@@ -2603,11 +2603,15 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
   vectis_error error;
   vectis_app *app;
   char *path;
+  const char *allow;
   vectis_http_method method;
   vectis_status status;
+  int static_method_denied;
 
   vectis_error_clear(&error);
   path = NULL;
+  allow = NULL;
+  static_method_denied = 0;
   state = vectis_kore_body_state_get(req);
   if (state == NULL) {
     return KORE_RESULT_ERROR;
@@ -2634,6 +2638,22 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
   }
   method = vectis_kore_method(req->method);
   if (!state->initialized) {
+    status = vectis_internal_static_route_method_denied(
+        app, method, path, &static_method_denied, &allow, &error);
+    if (status != VECTIS_OK) {
+      vectis_kore_reject_body_chunk(
+          req, state, status == VECTIS_ERR_INVALID ? 400 : 500, error.message);
+      free(path);
+      return KORE_RESULT_OK;
+    }
+    if (static_method_denied) {
+      if (allow != NULL) {
+        http_response_header(req, "allow", allow);
+      }
+      vectis_kore_reject_body_chunk(req, state, 405, NULL);
+      free(path);
+      return KORE_RESULT_OK;
+    }
     status = vectis_internal_route_body_policy(
         app, method, path, &state->policy, &state->live_upload, &error);
     if (status != VECTIS_OK) {

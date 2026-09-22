@@ -4260,7 +4260,44 @@ static void assert_static_fifo_rejected(void) {
   assert(rmdir(root) == 0);
 }
 
+static void assert_static_directory_index_validation(void) {
+  static const char *const invalid_index_files[] = {
+      "", ".", "..", "../index.html", "nested/index.html", "index.html/"};
+  vectis_app_config config;
+  vectis_static_directory_config mount;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  size_t i;
+
+  vectis_app_config_init(&config);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  for (i = 0u; i < sizeof(invalid_index_files) / sizeof(invalid_index_files[0]);
+       ++i) {
+    vectis_static_directory_config_init(&mount);
+    mount.path_prefix = "/files";
+    mount.root_dir = "/tmp";
+    mount.index_enabled = 1;
+    mount.index_file = invalid_index_files[i];
+    status = app->static_directory(app, &mount, &error);
+    assert(status == VECTIS_ERR_INVALID);
+    assert(strstr(error.message, "index_file") != NULL);
+    vectis_error_clear(&error);
+  }
+  vectis_static_directory_config_init(&mount);
+  mount.path_prefix = "/files";
+  mount.root_dir = "/tmp";
+  mount.methods = VECTIS_HTTP_METHODS_POST;
+  status = app->static_directory(app, &mount, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "methods") != NULL);
+  vectis_error_clear(&error);
+  app->close(app);
+}
+
 int main(void) {
+  assert_static_directory_index_validation();
   assert_static_fifo_rejected();
   assert_http_surface();
   assert_io_surface();
