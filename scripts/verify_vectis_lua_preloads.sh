@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eu
+set -euo pipefail
 
 vectis_bin=${1:?usage: verify_vectis_lua_preloads.sh VECTIS_BIN [EXPECTED_VERSION]}
 expected_version=${2:-${VECTIS_VERSION:-}}

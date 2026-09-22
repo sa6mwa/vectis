@@ -85,7 +85,7 @@ if(NOT extract_result EQUAL 0)
 endif()
 
 file(WRITE "${consumer_src_dir}/CMakeLists.txt" [=[
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.24)
 project(vectis_darwin_smoke C)
 
 find_package(vectis CONFIG REQUIRED)

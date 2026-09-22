@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.24)
 
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_TOOLCHAIN_FILE)
   message(FATAL_ERROR
@@ -44,6 +44,21 @@ option(VECTIS_WITH_KORE_RUNTIME "Build the embedded Kore runtime adapter." ON)
 option(VECTIS_ENABLE_COVERAGE "Build with coverage instrumentation." OFF)
 option(VECTIS_INSTALL "Enable install rules." ON)
 
+if(NOT DEFINED CPKT_DEPENDENCY_CACHE OR CPKT_DEPENDENCY_CACHE STREQUAL "")
+  if(DEFINED ENV{CPKT_DEPENDENCY_CACHE} AND NOT "$ENV{CPKT_DEPENDENCY_CACHE}" STREQUAL "")
+    set(CPKT_DEPENDENCY_CACHE "$ENV{CPKT_DEPENDENCY_CACHE}")
+  elseif(DEFINED ENV{XDG_CACHE_HOME} AND NOT "$ENV{XDG_CACHE_HOME}" STREQUAL "")
+    set(CPKT_DEPENDENCY_CACHE "$ENV{XDG_CACHE_HOME}/c.pkt.systems/deps")
+  elseif(DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "")
+    set(CPKT_DEPENDENCY_CACHE "$ENV{HOME}/.cache/c.pkt.systems/deps")
+  else()
+    message(FATAL_ERROR
+      "CPKT_DEPENDENCY_CACHE is not set and neither XDG_CACHE_HOME nor HOME is available")
+  endif()
+endif()
+set(CPKT_DEPENDENCY_CACHE "${CPKT_DEPENDENCY_CACHE}" CACHE PATH
+    "Shared verified dependency archive cache.")
+
 set(VECTIS_EXTERNAL_ROOT "${CMAKE_SOURCE_DIR}/.cache/deps/host-debug"
     CACHE PATH "Provisioned third-party dependency root.")
 set(VECTIS_DIST_DIR "${CMAKE_BINARY_DIR}/dist"
@@ -65,7 +80,7 @@ set(VECTIS_EXPECTED_CAI_VERSION "0.6.0")
 set(VECTIS_EXPECTED_LIBLQL_VERSION "0.2.0")
 set(VECTIS_EXPECTED_LIBMDF_VERSION "0.8.0")
 set(VECTIS_EXPECTED_SOFTLINE_VERSION "0.6.0")
-set(VECTIS_EXPECTED_LUA_VERSION "5.5.0")
+set(VECTIS_EXPECTED_LUA_VERSION "5.5.1")
 set(VECTIS_EXPECTED_LIBPID0_VERSION "0.4.2")
 set(VECTIS_EXPECTED_LIBPID0_SHA256 "907fb7f084d192da1c6d92d26b1b6cd93bb4dafe36737856696f47de906dd5e8")
 set(VECTIS_EXPECTED_LIBXML2_VERSION "2.15.3")
@@ -736,7 +751,7 @@ if(VECTIS_BUILD_SHARED)
   set_target_properties(vectis_shared PROPERTIES
     OUTPUT_NAME vectis
     VERSION ${PROJECT_VERSION}
-    SOVERSION 2
+    SOVERSION 0
   )
   if(APPLE)
     set_target_properties(vectis_shared PROPERTIES

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eu
+set -euo pipefail
 
 target_id=${1:?usage: target_toolchain_available.sh TARGET_ID}
 

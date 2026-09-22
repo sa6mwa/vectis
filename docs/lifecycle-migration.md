@@ -21,8 +21,9 @@ keep it as project documentation.
 | Embedded Lua runner had no standard Lua lifecycle target | `make lua-test`, `make lua-env`, CTest `lua` labels | Vectis continues to ship an embedded Lua runner rather than a standalone Vectis Lua rock; the standard Lua test/env surface now exercises the embedded `lockdc`, `lonejson`, `cai`, and `libmdf` facades | `make lua-test`, `scripts/test_lifecycle_contracts.sh` | Implemented |
 | Binary SDK copied dependency Lua source trees from the external SDK `share/` tree | Binary SDK artifact contract and release privacy/layout verification | Dependency docs and c.pkt.systems manifest metadata remain in the SDK; dependency source trees, rockspec templates, and Lua C binding sources are excluded from C binary archives | `scripts/verify_release_artifacts.sh`, `make package-verify` | Implemented |
 | Darwin smoke bundle existed only as an internal package side effect | `make release-darwin-smoke-bundle` | Existing Darwin SDK and smoke bundle generation remains delegated to `scripts/package.sh arm64-apple-darwin` and skips/fails according to osxcross availability | `scripts/test_lifecycle_contracts.sh`, `make test-target-tools` | Implemented |
+| Lifecycle baseline and test tiers drifted from the shared current contract | CMake 3.24, explicit `CPKT_DEPENDENCY_CACHE`, `debug-lua` and `valgrind` presets, ABI-0 shared library, and aggregate deterministic test gate | All non-shippable local executables continue to use the pinned Bootlin runtime; shipped artifacts keep normal deployment loader metadata | `scripts/test_lifecycle_contracts.sh`, `make test-all`, package verification | Implemented |
 
 Open decisions:
 
-- Whether Vectis will ship Lua release artifacts now, or only keep current Lua
-  runner tests until a dedicated Lua facade/release slice.
+- None. The repository now ships the Lua source archive and source rock through
+  `make release-lua-artifacts` as part of `make release-matrix`.

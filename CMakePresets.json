@@ -2,7 +2,7 @@
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 21,
+    "minor": 24,
     "patch": 0
   },
   "configurePresets": [
@@ -35,6 +35,21 @@
         "VECTIS_TARGET_ARCH": "x86_64",
         "VECTIS_TARGET_OS": "linux",
         "VECTIS_TARGET_LIBC": "gnu"
+      }
+    },
+    {
+      "name": "debug-lua",
+      "inherits": "debug",
+      "cacheVariables": {
+        "VECTIS_BUILD_EXAMPLES": "ON"
+      }
+    },
+    {
+      "name": "valgrind",
+      "inherits": "debug",
+      "cacheVariables": {
+        "VECTIS_BUILD_BENCHMARKS": "OFF",
+        "VECTIS_BUILD_EXAMPLES": "OFF"
       }
     },
     {
@@ -166,6 +181,8 @@
   ],
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
+    { "name": "debug-lua", "configurePreset": "debug-lua" },
+    { "name": "valgrind", "configurePreset": "valgrind" },
     { "name": "x86_64-linux-gnu-release", "configurePreset": "x86_64-linux-gnu-release" },
     { "name": "x86_64-linux-musl-release", "configurePreset": "x86_64-linux-musl-release" },
     { "name": "aarch64-linux-gnu-release", "configurePreset": "aarch64-linux-gnu-release" },
@@ -181,6 +198,16 @@
     {
       "name": "debug",
       "configurePreset": "debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "debug-lua",
+      "configurePreset": "debug-lua",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "valgrind",
+      "configurePreset": "valgrind",
       "output": { "outputOnFailure": true }
     },
     {

@@ -58,7 +58,7 @@ Release archives are fetched through the shared verified
 archive cache. The current expected dependency set is:
 
 - `c.pkt.systems` 0.10.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
-  the C89 Lua runtime facade, libxml2 2.15.4, OPC UA, audio/miniaudio,
+  the C89 Lua runtime facade, libxml2 2.15.3, OPC UA, audio/miniaudio,
   SUS/whisper, and supporting package metadata.
 - `liblockdc` 0.17.0 for lockd C and Lua surfaces, including Pouch local
   storage and transactional inbox/outbox workflow support.
@@ -285,6 +285,9 @@ make prerelease
 
 - `make deps-debug` provisions host debug dependencies into `.cache/`.
 - `make lua-test` runs the embedded Lua runtime and bundled module smoke tests.
+- `make valgrind` runs the dedicated native Valgrind preset; `make test-all`
+  includes it with the deterministic Lua, fuzz-smoke, performance, and e2e
+  gates.
 - `make lua-env` prints exports for running Lua examples with the built CLI.
 - `make test-e2e` runs the compose-backed integration smoke suite.
 - `make test-install-tree` verifies downstream CMake/pkg-config consumers from

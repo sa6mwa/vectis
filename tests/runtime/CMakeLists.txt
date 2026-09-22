@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.24)
 project(vectis_runtime_fixture LANGUAGES C)
 
 option(WITH_EXTRA "Build an optional local executable" ON)

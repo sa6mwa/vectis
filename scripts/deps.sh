@@ -363,7 +363,7 @@ pid0_url="https://github.com/sa6mwa/libpid0/releases/download/v${pid0_version}/$
 pid0_sha256="907fb7f084d192da1c6d92d26b1b6cd93bb4dafe36737856696f47de906dd5e8"
 pid0_download="$archive_cache_root/$pid0_sha256/$pid0_header_gz"
 libxml2_version="2.15.3"
-lua_version="5.5.0"
+lua_version="5.5.1"
 manifest_path="$deps_root/manifest.txt"
 
 download_if_missing() {

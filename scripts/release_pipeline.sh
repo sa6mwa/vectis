@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eu
+set -euo pipefail
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
@@ -10,11 +10,8 @@ for target in \
   test-lifecycle \
   test-target-tools \
   test-cpkt-toolchains \
-  lua-test \
   test-all \
-  valgrind \
   asan \
-  fuzz-smoke \
   test-install-tree \
   package-source-smoke \
   release-matrix

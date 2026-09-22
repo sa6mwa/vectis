@@ -10,6 +10,8 @@ KORE_PATCH_STAMP := $(ROOT)/build/.kore-runtime-patches-applied
 KORE_PATCH_FILES := $(wildcard $(ROOT)/vendor/kore/patches/*.patch)
 
 DEBUG_PRESET := debug
+DEBUG_LUA_PRESET := debug-lua
+VALGRIND_PRESET := valgrind
 ASAN_PRESET := asan
 COVERAGE_PRESET := coverage
 FUZZ_PRESET := fuzz
@@ -17,7 +19,7 @@ FUZZ_PRESET := fuzz
 .PHONY: \
 	help \
 	deps-debug deps-release deps-cross \
-	build build-debug build-release build-asan build-coverage build-fuzz \
+	build build-debug build-debug-lua build-release build-asan build-valgrind build-coverage build-fuzz \
 	bench-metrics-storage perf-gate \
 	test test-debug test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
@@ -46,15 +48,15 @@ help:
 		'make lua-env            Print shell exports for running Lua examples with the built vectis CLI and local rock.' \
 		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
-		'make test-all           Run unit tests and local e2e smoke tests.' \
+		'make test-all           Run the deterministic local test, Lua, Valgrind, fuzz-smoke, performance, and e2e gates.' \
 		'make test-opcua-pubsub-live Run opt-in live OPC UA PubSub/MQTT broker validation.' \
 		'make test-cai-live       Run opt-in live CAI provider validation.' \
 		'make test-sus-audio-live Run opt-in live SUS/audio loaded-model validation.' \
 		'make test-sus-audio-hardening Run hardening-only cached SUS/audio model transcription validation.' \
 		'make asan               Build and run the ASan/UBSan preset.' \
-		'make valgrind           Run native debug unit facades under host Valgrind.' \
+		'make valgrind           Build and run the dedicated native Valgrind preset.' \
 		'make fuzz               Configure and build the fuzz preset.' \
-		'make fuzz-smoke         Build fuzz targets; bounded execution will be added with the lifecycle verifier.' \
+		'make fuzz-smoke         Build fuzz targets and run the bounded AFL++ coverage smoke.' \
 		'make coverage           Configure and test the coverage preset.' \
 		'make finalize-slice     Format and run the narrow local pre-commit gate.' \
 		'make prerelease         Run deterministic local pre-release checks available in this checkout.' \
@@ -158,6 +160,10 @@ build-debug: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-debug $(CMAKE) --preset $(DEBUG_PRESET)
 	$(TIMED) build-debug-compile $(CMAKE) --build --preset $(DEBUG_PRESET)
 
+build-debug-lua: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) build-debug-lua $(CMAKE) --preset $(DEBUG_LUA_PRESET)
+	$(TIMED) build-debug-lua-compile $(CMAKE) --build --preset $(DEBUG_LUA_PRESET)
+
 build-release: deps-release deps-cross $(KORE_PATCH_STAMP)
 	$(TIMED) build-x86_64-gnu $(CMAKE) --preset x86_64-linux-gnu-release
 	$(TIMED) build-x86_64-gnu-compile $(CMAKE) --build --preset x86_64-linux-gnu-release
@@ -222,12 +228,12 @@ lifecycle-version-contract:
 
 release:
 	$(MAKE) lifecycle-version-contract
+	$(MAKE) clean
 	@if [ "$$(bash ./scripts/release_version.sh)" = "0.0.0" ]; then \
 		printf '%s\n' 'make release requires an exact lightweight vX.Y.Z tag on HEAD or an explicit VECTIS_VERSION_OVERRIDE for a non-publishable rehearsal.' >&2; \
 		exit 2; \
 	fi
 	$(TIMED) release-worktree-clean bash ./scripts/require_clean_release_worktree.sh
-	$(MAKE) clean
 	$(TIMED) release-pipeline bash ./scripts/release_pipeline.sh
 
 print-release-version:
@@ -239,8 +245,12 @@ build-asan: deps-debug $(KORE_PATCH_STAMP)
 
 asan: test-asan
 
-valgrind: build-debug
-	$(TIMED) valgrind bash ./scripts/test_valgrind.sh build/$(DEBUG_PRESET)
+build-valgrind: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) build-valgrind $(CMAKE) --preset $(VALGRIND_PRESET)
+	$(TIMED) build-valgrind-compile $(CMAKE) --build --preset $(VALGRIND_PRESET)
+
+valgrind: build-valgrind
+	$(TIMED) valgrind bash ./scripts/test_valgrind.sh build/$(VALGRIND_PRESET)
 
 build-coverage: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-coverage $(CMAKE) --preset $(COVERAGE_PRESET)
@@ -288,13 +298,13 @@ test-sus-audio-hardening: build-debug
 release-lua-artifacts:
 	$(TIMED) release-lua-artifacts bash ./scripts/stage_lua_rock_sources.sh
 
-lua-test: build-debug lua-rock test-opcua-lua-surface
-	$(TIMED) lua-test $(CTEST) --preset $(DEBUG_PRESET) -L lua
+lua-test: build-debug-lua lua-rock test-opcua-lua-surface
+	$(TIMED) lua-test $(CTEST) --preset $(DEBUG_LUA_PRESET) -L lua
 	$(TIMED) lua-rock-smoke bash ./scripts/test_lua_rock.sh
 
-lua-env: build-debug
-	@printf '%s\n' 'export VECTIS_BIN="$(ROOT)/build/debug/vectis"'
-	@printf '%s\n' 'export PATH="$(ROOT)/build/debug:$$PATH"'
+lua-env: build-debug-lua
+	@printf '%s\n' 'export VECTIS_BIN="$(ROOT)/build/debug-lua/vectis"'
+	@printf '%s\n' 'export PATH="$(ROOT)/build/debug-lua:$$PATH"'
 	@printf '%s\n' 'eval "$$(luarocks path --tree "$(ROOT)/build/luarocks/tree")"'
 	@printf '%s\n' '# Example: "$$VECTIS_BIN" examples/lua/mdf_render.lua'
 
@@ -310,7 +320,7 @@ test-e2e:
 perf-gate: build-debug
 	$(TIMED) perf-gate python3 $(ROOT)/tests/metrics_startup.py --binary $(ROOT)/build/$(DEBUG_PRESET)/vectis
 
-test-all: test test-e2e
+test-all: test lua-test valgrind fuzz-smoke perf-gate test-e2e
 
 test-asan: build-asan
 	$(TIMED) test-asan $(CTEST) --preset $(ASAN_PRESET)

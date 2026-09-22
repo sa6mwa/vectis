@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eu
+set -euo pipefail
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
@@ -41,6 +41,13 @@ assert_not_contains() {
 }
 
 assert_c89_cmake_contract() {
+  for cmake_file in \
+    "$repo_root/CMakeLists.txt" \
+    "$repo_root/tests/install/CMakeLists.txt" \
+    "$repo_root/tests/runtime/CMakeLists.txt" \
+    "$repo_root/cmake/package_darwin_smoke_bundle.cmake"; do
+    assert_contains "$cmake_file" '^cmake_minimum_required\(VERSION 3\.24\)$'
+  done
   if grep -RInE --include='CMakeLists.txt' --include='*.cmake' \
     'C_STANDARD[[:space:]]+90|-std=c90' \
     "$repo_root/CMakeLists.txt" \
@@ -90,10 +97,41 @@ assert_c89_cmake_contract() {
     '72-column limit'
 }
 
+assert_lifecycle_surface_contract() {
+  assert_contains "$repo_root/.gitignore" '^/build/$'
+  assert_contains "$repo_root/CMakePresets.json" '"minor": 24'
+  assert_contains "$repo_root/CMakeLists.txt" 'CPKT_DEPENDENCY_CACHE.*CACHE PATH'
+  assert_contains "$repo_root/cmake/test_runtime.cmake" \
+    'set\(vectis_dependency_cache "\$\{CPKT_DEPENDENCY_CACHE\}"\)'
+  assert_contains "$repo_root/scripts/deps.sh" '^lua_version="5\.5\.1"$'
+  assert_contains "$repo_root/CMakeLists.txt" 'VECTIS_EXPECTED_LUA_VERSION "5\.5\.1"'
+  assert_contains "$repo_root/CMakeLists.txt" 'SOVERSION 0'
+  for preset in debug-lua valgrind; do
+    assert_contains "$repo_root/CMakePresets.json" "\"name\": \"$preset\""
+    assert_contains "$repo_root/CMakePresets.json" "\"configurePreset\": \"$preset\""
+  done
+  assert_contains "$repo_root/Makefile" '^build-debug-lua:'
+  assert_contains "$repo_root/Makefile" '^build-valgrind:'
+  assert_contains "$repo_root/Makefile" 'test_valgrind\.sh build/\$\(VALGRIND_PRESET\)'
+  assert_contains "$repo_root/Makefile" '--preset \$\(DEBUG_LUA_PRESET\) -L lua'
+  assert_contains "$repo_root/Makefile" '^test-all: test lua-test valgrind fuzz-smoke perf-gate test-e2e$'
+
+  release_start=$(awk '$0 == "release:" { print NR; exit }' "$repo_root/Makefile")
+  lifecycle_line=$(awk '$0 == "\t$(MAKE) lifecycle-version-contract" { print NR; exit }' "$repo_root/Makefile")
+  clean_line=$(awk '$0 == "\t$(MAKE) clean" { print NR; exit }' "$repo_root/Makefile")
+  if [ -z "$release_start" ] || [ -z "$lifecycle_line" ] || [ -z "$clean_line" ] ||
+     [ "$lifecycle_line" -ne $((release_start + 1)) ] ||
+     [ "$clean_line" -ne $((lifecycle_line + 1)) ]; then
+    echo "release must begin with lifecycle-version-contract followed by clean" >&2
+    exit 1
+  fi
+}
+
 for state_namespace in auth profile metrics acme smith; do
   assert_contains "$repo_root/docker-compose.yaml" "\"vectis\\.${state_namespace}=rw\""
 done
 assert_c89_cmake_contract
+assert_lifecycle_surface_contract
 assert_contains "$repo_root/Makefile" '^perf-gate: build-debug'
 assert_contains "$repo_root/scripts/test-e2e.sh" 'tests/metrics_startup.py'
 
@@ -2097,13 +2135,13 @@ done
 assert_contains "$repo_root/Makefile" '^\$\(KORE_PATCH_STAMP\): \$\(ROOT\)/vendor/kore/REVISION \$\(ROOT\)/vendor/kore/patches/series'
 assert_contains "$repo_root/Makefile" 'scripts/vendor-kore\.sh apply'
 assert_contains "$repo_root/Makefile" 'scripts/test_vendor_kore_lifecycle\.sh'
-assert_contains "$repo_root/Makefile" 'scripts/test_valgrind\.sh build/\$\(DEBUG_PRESET\)'
+assert_contains "$repo_root/Makefile" 'scripts/test_valgrind\.sh build/\$\(VALGRIND_PRESET\)'
 assert_not_contains "$repo_root/Makefile" 'ctest.*-T memcheck'
 assert_contains "$repo_root/scripts/test_valgrind.sh" '--leak-check=full'
 assert_contains "$repo_root/scripts/test_valgrind.sh" '--show-leak-kinds=definite,indirect,possible'
 assert_contains "$repo_root/scripts/test_valgrind.sh" '--track-origins=yes'
 assert_contains "$repo_root/scripts/test_valgrind.sh" '--error-exitcode=99'
-assert_contains "$repo_root/scripts/release_pipeline.sh" '  valgrind \\'
+assert_contains "$repo_root/scripts/release_pipeline.sh" '  test-all \\'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'revision_file="\$vendor_root/REVISION"'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" checkout --detach "\$upstream_revision"'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" fetch --no-tags origin'

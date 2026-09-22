@@ -52,11 +52,10 @@ cmake_language(DEFER CALL vectis_finalize_local_runtime)
 
 if(VECTIS_BUILD_TESTS OR VECTIS_BUILD_FUZZERS)
   get_filename_component(vectis_toolchain_cache "${CMAKE_SYSROOT}/../../../.." ABSOLUTE)
-  if(DEFINED ENV{XDG_CACHE_HOME})
-    set(vectis_dependency_cache "$ENV{XDG_CACHE_HOME}/c.pkt.systems/deps")
-  else()
-    set(vectis_dependency_cache "$ENV{HOME}/.cache/c.pkt.systems/deps")
+  if(NOT DEFINED CPKT_DEPENDENCY_CACHE OR CPKT_DEPENDENCY_CACHE STREQUAL "")
+    message(FATAL_ERROR "CPKT_DEPENDENCY_CACHE must be configured before test runtime setup")
   endif()
+  set(vectis_dependency_cache "${CPKT_DEPENDENCY_CACHE}")
   configure_file("${CMAKE_SOURCE_DIR}/cmake/test_environment.cmake.in"
     "${CMAKE_BINARY_DIR}/test_environment.cmake" @ONLY)
   set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES

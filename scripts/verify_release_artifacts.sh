@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eu
+set -euo pipefail
 unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
