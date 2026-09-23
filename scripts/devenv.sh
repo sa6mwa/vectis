@@ -115,11 +115,21 @@ case "$action" in
     printf 'SSH/SFTP: 127.0.0.1:%s\nMQTT: 127.0.0.1:%s\n' "$VECTIS_SSH_PORT" "$VECTIS_MQTT_PORT"
     ;;
   down)
+    status=0
     for service in mqtt ssh lockd minio; do
       if [ -f "$state_root/$service.yaml" ] && pod_exists "$service"; then
-        podman kube down "$state_root/$service.yaml"
+        if ! podman kube down "$state_root/$service.yaml"; then
+          status=1
+        fi
       fi
     done
+    for service in mqtt ssh lockd minio; do
+      if pod_exists "$service"; then
+        printf 'Podman pod %s-%s still exists after devenv down.\n' "$name" "$service" >&2
+        status=1
+      fi
+    done
+    exit "$status"
     ;;
   reset)
     "$script_dir/devenv.sh" down

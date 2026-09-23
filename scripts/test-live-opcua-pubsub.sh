@@ -31,13 +31,26 @@ EOF
 fi
 
 services_started=0
+work=""
 cleanup_services() {
-  if [ "$services_started" -eq 1 ] &&
-     [ "${VECTIS_E2E_KEEP_DEVSERVICES:-0}" != "1" ]; then
-    "$script_dir/devenv.sh" down >/dev/null 2>&1 || true
+  local status=$?
+  trap - EXIT
+  if [ "$services_started" -eq 1 ]; then
+    if ! "$script_dir/devenv.sh" down; then
+      printf '%s\n' 'Failed to stop the Vectis live OPC UA test Podman services.' >&2
+      [ "$status" -ne 0 ] || status=1
+    fi
   fi
+  if [ -n "$work" ] && ! rm -rf "$work"; then
+    printf 'Failed to remove Vectis live OPC UA test work directory: %s\n' "$work" >&2
+    [ "$status" -ne 0 ] || status=1
+  fi
+  exit "$status"
 }
-trap cleanup_services EXIT INT TERM
+trap cleanup_services EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 if [ "${VECTIS_OPCUA_PUBSUB_USE_EXISTING_MQTT:-0}" != "1" ]; then
   services_started=1
@@ -58,10 +71,6 @@ fi
 
 mkdir -p "$repo_root/build/devenv/tmp"
 work=$(mktemp -d "$repo_root/build/devenv/tmp/opcua-pubsub.XXXXXX")
-cleanup_work() {
-  rm -rf "$work"
-}
-trap 'cleanup_work; cleanup_services' EXIT INT TERM
 
 mqtt_host=${VECTIS_OPCUA_PUBSUB_HOST:-127.0.0.1}
 mqtt_port=${VECTIS_OPCUA_PUBSUB_PORT:-${VECTIS_MQTT_PORT:-21883}}

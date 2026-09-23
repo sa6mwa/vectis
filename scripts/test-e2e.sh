@@ -4,7 +4,6 @@ set -Eeuo pipefail
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 eval "$("$script_dir/devenv.sh" env)"
-"$script_dir/devenv.sh" reset
 
 disk_endpoint=${VECTIS_E2E_LOCKD_DISK_ENDPOINT:-https://127.0.0.1:${VECTIS_LOCKD_DISK_PORT:-29441}}
 s3_endpoint=${VECTIS_E2E_LOCKD_S3_ENDPOINT:-https://127.0.0.1:${VECTIS_LOCKD_S3_PORT:-29443}}
@@ -29,6 +28,50 @@ lua_site_port=${VECTIS_E2E_LUA_SITE_PORT:-$((kore_basic_port + 13))}
 metrics_remote_lockd_port=${VECTIS_E2E_METRICS_REMOTE_LOCKD_PORT:-$((kore_basic_port + 14))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 acme_mock_provider=${VECTIS_E2E_ACME_MOCK_PROVIDER:-$repo_root/build/debug/tests/vectis_acme_mock_provider}
+work_dir=""
+server_pids=""
+
+cleanup() {
+  local status=$? pid
+  trap - EXIT
+  cd "$repo_root" || exit 1
+  if [ "$status" -ne 0 ]; then
+    printf 'Vectis e2e failed; Podman service state and logs follow.\n' >&2
+    "$script_dir/devenv.sh" ps >&2 || true
+    "$script_dir/devenv.sh" logs --tail 50 >&2 || true
+  fi
+  if [ -n "$server_pids" ]; then
+    for pid in $server_pids; do
+      kill -- "-$pid" >/dev/null 2>&1 || kill "$pid" >/dev/null 2>&1 || true
+    done
+    sleep 1
+    for pid in $server_pids; do
+      kill -9 -- "-$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
+      wait "$pid" >/dev/null 2>&1 || true
+    done
+  fi
+  if ! "$script_dir/devenv.sh" down; then
+    printf '%s\n' 'Failed to stop the Vectis e2e Podman services.' >&2
+    "$script_dir/devenv.sh" ps >&2 || true
+    [ "$status" -ne 0 ] || status=1
+  fi
+  if [ -n "$work_dir" ]; then
+    if [ "${VECTIS_E2E_KEEP_WORK:-0}" = "1" ]; then
+      printf '%s\n' "vectis e2e work dir preserved at $work_dir" >&2
+    elif ! rm -rf "$work_dir"; then
+      printf 'Failed to remove Vectis e2e work directory: %s\n' "$work_dir" >&2
+      [ "$status" -ne 0 ] || status=1
+    fi
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+trap 'printf "[e2e] failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
+
+"$script_dir/devenv.sh" reset
 mkdir -p "$repo_root/build/devenv/tmp"
 work_dir=$(mktemp -d "$repo_root/build/devenv/tmp/run.XXXXXXXX")
 # Host service tools retain their XDG environment for rootless Podman.
@@ -41,34 +84,6 @@ ssh_known_hosts="$work_dir/vectis-e2e-known-hosts"
 ssh_bad_known_hosts="$work_dir/vectis-e2e-bad-known-hosts"
 ssh_host_key_sha256=""
 ssh_bad_host_key_sha256="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-server_pids=""
-
-cleanup() {
-  status=$?
-  if [ "$status" -ne 0 ]; then
-    printf 'Vectis e2e failed; Podman service state and logs follow.\n' >&2
-    "$script_dir/devenv.sh" ps >&2 || true
-    "$script_dir/devenv.sh" logs --tail 50 >&2 || true
-  fi
-  for pid in $server_pids; do
-    kill -- "-$pid" >/dev/null 2>&1 || kill "$pid" >/dev/null 2>&1 || true
-  done
-  sleep 1
-  for pid in $server_pids; do
-    kill -9 -- "-$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
-    wait "$pid" >/dev/null 2>&1 || true
-  done
-  if [ "${VECTIS_E2E_KEEP_WORK:-0}" = "1" ]; then
-    printf '%s\n' "vectis e2e work dir preserved at $work_dir" >&2
-  else
-    rm -rf "$work_dir"
-  fi
-  if [ "${VECTIS_E2E_KEEP_DEVSERVICES:-0}" != "1" ]; then
-    "$script_dir/devenv.sh" down >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT
-trap 'printf "[e2e] failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 wait_for_http() {
   url=$1
