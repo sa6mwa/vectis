@@ -20,6 +20,9 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
 #include <vectis/totp_qr.h>
@@ -2415,18 +2418,109 @@ static int run_foreground_persistent_metrics_entry(void) {
 
 static pid_t runtime_spawn_named_test(const char *name) {
   pid_t pid;
+#ifdef __linux__
+  pid_t parent_pid;
+#endif
 
   assert(runtime_test_program != NULL);
   assert(name != NULL);
+#ifdef __linux__
+  parent_pid = getpid();
+#endif
   pid = fork();
   assert(pid >= 0);
   if (pid == 0) {
+#ifdef __linux__
+    /* CTest can terminate this test while a named child runs app->run(). */
+    if (prctl(PR_SET_PDEATHSIG, SIGTERM) != 0 || getppid() != parent_pid) {
+      _exit(127);
+    }
+#endif
     assert(setenv("VECTIS_RUNTIME_TEST", name, 1) == 0);
     execl(runtime_test_program, runtime_test_program, (char *)NULL);
     _exit(127);
   }
   return pid;
 }
+
+#ifdef __linux__
+static int runtime_process_exited(pid_t pid) {
+  char path[64];
+  char stat_line[256];
+  char *end;
+  FILE *file;
+  int written;
+
+  written = snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid);
+  assert(written > 0 && (size_t)written < sizeof(path));
+  file = fopen(path, "r");
+  if (file == NULL) {
+    return errno == ENOENT;
+  }
+  if (fgets(stat_line, sizeof(stat_line), file) == NULL) {
+    (void)fclose(file);
+    return 0;
+  }
+  (void)fclose(file);
+  end = strrchr(stat_line, ')');
+  return end != NULL && end[1] == ' ' && end[2] == 'Z';
+}
+
+static void assert_named_child_exits_with_parent(void) {
+  int pid_pipe[2];
+  int ready_pipe[2];
+  pid_t launcher;
+  pid_t child_pid;
+  int status;
+  int attempt;
+  char ready_fd_text[16];
+  char ready;
+  ssize_t nread;
+
+  assert(pipe(pid_pipe) == 0);
+  assert(pipe(ready_pipe) == 0);
+  launcher = fork();
+  assert(launcher >= 0);
+  if (launcher == 0) {
+    (void)close(pid_pipe[0]);
+    /* The probe's ready pipe is inherited across exec by design. */
+    assert(snprintf(ready_fd_text, sizeof(ready_fd_text), "%d", ready_pipe[1]) >
+           0);
+    assert(setenv("VECTIS_RUNTIME_PARENT_DEATH_READY_FD", ready_fd_text, 1) ==
+           0);
+    child_pid = runtime_spawn_named_test("parent_death_probe");
+    (void)close(ready_pipe[1]);
+    if (write(pid_pipe[1], &child_pid, sizeof(child_pid)) !=
+        (ssize_t)sizeof(child_pid)) {
+      _exit(1);
+    }
+    (void)close(pid_pipe[1]);
+    nread = read(ready_pipe[0], &ready, 1u);
+    _exit(nread == 1 && ready == 'R' ? 0 : 1);
+  }
+
+  (void)close(pid_pipe[1]);
+  (void)close(ready_pipe[0]);
+  (void)close(ready_pipe[1]);
+  child_pid = 0;
+  nread = read(pid_pipe[0], &child_pid, sizeof(child_pid));
+  (void)close(pid_pipe[0]);
+  assert(nread == (ssize_t)sizeof(child_pid) && child_pid > 0);
+  assert(waitpid(launcher, &status, 0) == launcher);
+  assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+  for (attempt = 0; attempt < 300; ++attempt) {
+    if (runtime_process_exited(child_pid)) {
+      return;
+    }
+    usleep(10000u);
+  }
+  (void)kill(child_pid, SIGKILL);
+  fprintf(stderr, "named runtime test child %ld survived its parent\n",
+          (long)child_pid);
+  abort();
+}
+#endif
 
 static void assert_foreground_run_restores_persistent_metrics(void) {
   vectis_app_config config;
@@ -9081,6 +9175,21 @@ static int run_named_runtime_test(const char *name) {
     assert(run_foreground_persistent_metrics_entry() == 0);
     return 1;
   }
+#ifdef __linux__
+  if (strcmp(name, "parent_death_probe") == 0) {
+    const char *text;
+    int fd;
+
+    text = getenv("VECTIS_RUNTIME_PARENT_DEATH_READY_FD");
+    assert(text != NULL);
+    fd = atoi(text);
+    assert(fd > 0);
+    assert(write(fd, "R", 1u) == 1);
+    for (;;) {
+      (void)pause();
+    }
+  }
+#endif
   if (strcmp(name, "metrics_persistence_merges_shared_identity") == 0) {
     assert_metrics_persistence_merges_shared_identity();
     return 1;
@@ -9262,6 +9371,10 @@ int main(int argc, char **argv) {
   if (run_named_runtime_test(getenv("VECTIS_RUNTIME_TEST"))) {
     return 0;
   }
+
+#ifdef __linux__
+  assert_named_child_exits_with_parent();
+#endif
 
   assert_server_config_validation();
   assert_runtime_control_frame_contract();

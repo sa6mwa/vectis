@@ -82,6 +82,11 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_https_runtime test_vectis_https_runtime.c)
   vectis_add_unit_test(vectis_unit_https_mtls_runtime test_vectis_https_mtls_runtime.c)
   vectis_add_unit_test(vectis_unit_runtime test_vectis_runtime.c)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.27")
+    set_tests_properties(vectis_unit_runtime PROPERTIES
+      TIMEOUT_SIGNAL_NAME SIGTERM
+      TIMEOUT_SIGNAL_GRACE_PERIOD 5)
+  endif()
   vectis_add_unit_test(vectis_unit_runtime_header_limit
     test_vectis_runtime.c)
   target_compile_definitions(vectis_unit_runtime_header_limit PRIVATE
