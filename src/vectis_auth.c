@@ -439,9 +439,8 @@ static vectis_auth_store_lock *vectis_auth_active_store_lock(void) {
 
 static const char *
 vectis_auth_store_namespace(const vectis_auth_store_config *config) {
-  return config != NULL && config->namespace_name != NULL &&
-                 config->namespace_name[0] != '\0'
-             ? config->namespace_name
+  return config != NULL && config->ns != NULL && config->ns[0] != '\0'
+             ? config->ns
              : "vectis.auth";
 }
 
@@ -584,7 +583,7 @@ vectis_auth_lock_open(const vectis_auth_store_config *config,
     return VECTIS_ERR_STATE;
   }
   lc_acquire_req_init(&acquire);
-  acquire.namespace_name = vectis_auth_store_namespace(config);
+  acquire.ns = vectis_auth_store_namespace(config);
   acquire.key = lock->key;
   (void)snprintf(owner, sizeof(owner), "vectis-auth-%ld", (long)getpid());
   acquire.owner = owner;
@@ -668,7 +667,7 @@ static vectis_status vectis_auth_store_read_key(
     return VECTIS_ERR_STATE;
   }
   lc_acquire_req_init(&acquire);
-  acquire.namespace_name = vectis_auth_store_namespace(config);
+  acquire.ns = vectis_auth_store_namespace(config);
   acquire.key = key;
   acquire.owner = "vectis-auth-rewrite";
   acquire.ttl_seconds = 30L;
@@ -757,7 +756,7 @@ static vectis_status vectis_auth_store_write_key(
     return VECTIS_ERR_STATE;
   }
   lc_acquire_req_init(&acquire);
-  acquire.namespace_name = vectis_auth_store_namespace(config);
+  acquire.ns = vectis_auth_store_namespace(config);
   acquire.key = key;
   acquire.owner = "vectis-auth-rewrite";
   acquire.ttl_seconds = 30L;
@@ -815,7 +814,7 @@ static void vectis_auth_unlink_temp_path(const char *temp_path) {
     return;
   }
   lc_acquire_req_init(&acquire);
-  acquire.namespace_name = vectis_auth_store_namespace(active->config);
+  acquire.ns = vectis_auth_store_namespace(active->config);
   acquire.key = temp_path;
   acquire.owner = "vectis-auth-rewrite";
   acquire.ttl_seconds = 30L;
@@ -3242,9 +3241,8 @@ static const char *vectis_auth_browser_session_state_key(
 
 static const char *vectis_auth_browser_session_namespace(
     const vectis_auth_browser_session_config *config) {
-  return config != NULL && config->namespace_name != NULL &&
-                 config->namespace_name[0] != '\0'
-             ? config->namespace_name
+  return config != NULL && config->ns != NULL && config->ns[0] != '\0'
+             ? config->ns
              : "vectis.auth";
 }
 
@@ -3267,7 +3265,7 @@ vectis_status vectis_auth_browser_session_config_validate(
   const char *cookie_path;
   const char *purpose;
   const char *state_key;
-  const char *namespace_name;
+  const char *ns;
   uint64_t ttl;
 
   if (config == NULL) {
@@ -3288,7 +3286,7 @@ vectis_status vectis_auth_browser_session_config_validate(
   cookie_path = vectis_auth_browser_session_cookie_path(config);
   purpose = vectis_auth_browser_session_purpose(config);
   state_key = vectis_auth_browser_session_state_key(config);
-  namespace_name = vectis_auth_browser_session_namespace(config);
+  ns = vectis_auth_browser_session_namespace(config);
   ttl = vectis_auth_browser_session_ttl(config);
   if (!vectis_auth_browser_session_cookie_name_valid(cookie_name)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -3315,7 +3313,7 @@ vectis_status vectis_auth_browser_session_config_validate(
     return VECTIS_ERR_INVALID;
   }
   if (!vectis_auth_browser_session_text_valid(
-          namespace_name, VECTIS_AUTH_BROWSER_SESSION_KEY_MAX - 96u)) {
+          ns, VECTIS_AUTH_BROWSER_SESSION_KEY_MAX - 96u)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "browser session namespace is invalid");
     return VECTIS_ERR_INVALID;
@@ -3551,7 +3549,7 @@ static vectis_status vectis_auth_browser_session_update(
     return VECTIS_ERR_STATE;
   }
   lc_acquire_req_init(&request);
-  request.namespace_name = vectis_auth_browser_session_namespace(config);
+  request.ns = vectis_auth_browser_session_namespace(config);
   request.key = key;
   request.owner = "vectis-auth-browser-session";
   request.ttl_seconds = 30L;
@@ -3664,7 +3662,7 @@ static vectis_status vectis_auth_browser_session_delete_record(
     return VECTIS_ERR_STATE;
   }
   lc_acquire_req_init(&acquire);
-  acquire.namespace_name = vectis_auth_browser_session_namespace(config);
+  acquire.ns = vectis_auth_browser_session_namespace(config);
   acquire.key = key;
   acquire.owner = "vectis-auth-browser-session";
   acquire.ttl_seconds = 30L;
@@ -3824,7 +3822,7 @@ static vectis_status vectis_auth_browser_session_prune(
   handler.chunk = vectis_auth_browser_session_prune_key_chunk;
   handler.end = vectis_auth_browser_session_prune_key_end;
   lc_query_req_init(&request);
-  request.namespace_name = vectis_auth_browser_session_namespace(config);
+  request.ns = vectis_auth_browser_session_namespace(config);
   request.selector_json = selector;
   request.limit = (long)VECTIS_AUTH_BROWSER_SESSION_PRUNE_BATCH;
   request.engine = "scan";
@@ -8279,10 +8277,9 @@ vectis_status vectis_auth_provider_from_native_store(
                      "native auth provider configuration is required");
     return VECTIS_ERR_INVALID;
   }
-  if (config->browser_session.namespace_name == NULL ||
-      config->browser_session.namespace_name[0] == '\0') {
-    config->browser_session.namespace_name =
-        vectis_auth_store_namespace(&config->store);
+  if (config->browser_session.ns == NULL ||
+      config->browser_session.ns[0] == '\0') {
+    config->browser_session.ns = vectis_auth_store_namespace(&config->store);
   }
   if (vectis_auth_browser_session_config_validate(&config->browser_session,
                                                   error) != VECTIS_OK) {

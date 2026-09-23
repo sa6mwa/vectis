@@ -13,7 +13,7 @@ lockd bundle sources.
 - `vectis.lockd.with_client(opts, handler)` opens a client, calls `handler`, and
   closes the client after the handler returns or raises.
 - `vectis.lockd.load_json(opts, req)` opens a client, acquires a state lease,
-  reads JSON with `lease:get_json()`, releases the lease after a successful
+  reads JSON with `lease:read_json()`, releases the lease after a successful
   read or no-content response, closes the client, and returns `value, meta`.
 - `vectis.lockd.save_json(opts, req, value)` opens a client, acquires a state
   lease, writes JSON with `lease:update_json(value)`, releases the lease after a
@@ -26,7 +26,7 @@ lockd bundle sources.
   closes the client. It does not implicitly release the remote lease; call
   `lease:release()` in the handler when that is the intended workflow.
 - `vectis.lockd.with_dequeued_json(opts, req, handler)` opens a client,
-  dequeues one message, reads `message:payload_json()`, calls
+  dequeues one message, reads `message:read_payload_json()`, calls
   `handler(payload, message, client, payload_bytes)`, closes the message handle,
   and closes the client. It does not implicitly ack or nack; call
   `message:ack()` or `message:nack()` in the handler.
@@ -49,8 +49,8 @@ conveniences:
 
 - `namespace` is copied to `default_namespace` and then removed.
 - `client_bundle = "embedded"` uses the packed in-memory lockd bundle source.
-- `client_bundle = "/path/to/client.pem"` is copied to
-  `client_bundle_path`.
+- `client_bundle = "/path/to/client.pem"` becomes a file-backed
+  `client_bundle_source`.
 
 When no packed lockd bundle exists, `client_bundle = "embedded"` returns
 `nil, err`; `err.status`, `err.status_string`, and `err.message` follow the

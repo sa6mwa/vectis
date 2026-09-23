@@ -180,7 +180,7 @@ typedef struct vectis_lua_app_openapi_schema_ref {
 typedef struct vectis_lua_app_native_auth {
   lua_State *lua;
   vectis_app *app;
-  char *namespace_name;
+  char *ns;
   char *state_key;
   char *transient_state_key;
   char *purpose;
@@ -190,7 +190,7 @@ typedef struct vectis_lua_app_native_auth {
   char *browser_session_cookie_path;
   char *browser_session_purpose;
   char *browser_session_state_key;
-  char *browser_session_namespace_name;
+  char *browser_session_ns;
   char *callback_location;
   char *callback_content_type;
   char *callback_body;
@@ -2239,7 +2239,7 @@ static int vectis_cli_auth_store_lockd_option(int argc, char **argv, int *index,
       lockd->client_bundle_path = argv[*index + 1];
     } else if (strcmp(option, "--lockd-namespace") == 0) {
       lockd->default_namespace = argv[*index + 1];
-      store->namespace_name = argv[*index + 1];
+      store->ns = argv[*index + 1];
     } else if (strcmp(option, "--pouch-crypto-key") == 0) {
       lockd->pouch_crypto_key = argv[*index + 1];
     } else if (strcmp(option, "--pouch-crypto-key-file") == 0) {
@@ -7037,7 +7037,7 @@ static void vectis_lua_app_native_auth_free(vectis_lua_app_native_auth *auth) {
     auth->callback_ref = LUA_NOREF;
   }
   vectis_lua_app_native_auth_clear_callback(auth);
-  free(auth->namespace_name);
+  free(auth->ns);
   free(auth->state_key);
   free(auth->transient_state_key);
   free(auth->purpose);
@@ -7047,7 +7047,7 @@ static void vectis_lua_app_native_auth_free(vectis_lua_app_native_auth *auth) {
   free(auth->browser_session_cookie_path);
   free(auth->browser_session_purpose);
   free(auth->browser_session_state_key);
-  free(auth->browser_session_namespace_name);
+  free(auth->browser_session_ns);
   free(auth);
 }
 
@@ -8127,8 +8127,7 @@ static int vectis_lua_app_native_auth_browser_session(
     if (config.state_key == NULL) {
       config.state_key = "auth.browser_session.v1";
     }
-    config.namespace_name =
-        vectis_lua_table_string(lua, session_index, "namespace");
+    config.ns = vectis_lua_table_string(lua, session_index, "namespace");
     config.ttl_seconds = (uint64_t)vectis_lua_table_size(
         lua, session_index, "ttl_seconds", config.ttl_seconds);
     lua_pop(lua, 1);
@@ -8141,14 +8140,12 @@ static int vectis_lua_app_native_auth_browser_session(
   auth->browser_session_cookie_path = vectis_cli_strdup(config.cookie_path);
   auth->browser_session_purpose = vectis_cli_strdup(config.purpose);
   auth->browser_session_state_key = vectis_cli_strdup(config.state_key);
-  auth->browser_session_namespace_name =
-      vectis_cli_strdup(config.namespace_name);
+  auth->browser_session_ns = vectis_cli_strdup(config.ns);
   if (auth->browser_session_cookie_name == NULL ||
       auth->browser_session_cookie_path == NULL ||
       auth->browser_session_purpose == NULL ||
       auth->browser_session_state_key == NULL ||
-      (config.namespace_name != NULL &&
-       auth->browser_session_namespace_name == NULL)) {
+      (config.ns != NULL && auth->browser_session_ns == NULL)) {
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
                          "failed to copy browser session configuration");
     return 0;
@@ -8158,7 +8155,7 @@ static int vectis_lua_app_native_auth_browser_session(
   auth->browser_session.cookie_path = auth->browser_session_cookie_path;
   auth->browser_session.purpose = auth->browser_session_purpose;
   auth->browser_session.state_key = auth->browser_session_state_key;
-  auth->browser_session.namespace_name = auth->browser_session_namespace_name;
+  auth->browser_session.ns = auth->browser_session_ns;
   return 1;
 }
 
@@ -8166,7 +8163,7 @@ static vectis_lua_app_native_auth *
 vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
                                const char *context, vectis_error *error) {
   vectis_lua_app_native_auth *auth;
-  const char *namespace_name;
+  const char *ns;
   const char *state_key;
   const char *transient_state_key;
   const char *kind;
@@ -8281,7 +8278,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
                          "app auth kind must be native or callback");
     return NULL;
   }
-  namespace_name = vectis_lua_table_string(lua, provider_index, "namespace");
+  ns = vectis_lua_table_string(lua, provider_index, "namespace");
   state_key = vectis_lua_table_string(lua, provider_index, "state_key");
   transient_state_key =
       vectis_lua_table_string(lua, provider_index, "transient_state_key");
@@ -8297,13 +8294,13 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   }
   auth->callback_ref = LUA_NOREF;
   auth->app = app;
-  auth->namespace_name = vectis_cli_strdup(namespace_name);
+  auth->ns = vectis_cli_strdup(ns);
   auth->state_key = vectis_cli_strdup(state_key);
   auth->transient_state_key = vectis_cli_strdup(transient_state_key);
   auth->purpose = vectis_cli_strdup(purpose != NULL ? purpose : "webdav");
   auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
   auth->browser_login_path = vectis_cli_strdup(browser_login_path);
-  if ((namespace_name != NULL && auth->namespace_name == NULL) ||
+  if ((ns != NULL && auth->ns == NULL) ||
       (state_key != NULL && auth->state_key == NULL) ||
       (transient_state_key != NULL && auth->transient_state_key == NULL) ||
       auth->purpose == NULL || auth->realm == NULL ||
@@ -8328,7 +8325,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
 
   vectis_auth_native_provider_config_init(&auth->native_config);
   auth->native_config.store.app = app;
-  auth->native_config.store.namespace_name = auth->namespace_name;
+  auth->native_config.store.ns = auth->ns;
   auth->native_config.store.state_key = auth->state_key;
   auth->native_config.store.transient_state_key = auth->transient_state_key;
   auth->native_config.store.max_record_bytes = vectis_lua_table_size(
@@ -12483,7 +12480,7 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   config.store.app = app;
   config.store.state_key = state_key;
   config.store.transient_state_key = transient_state_key;
-  config.store.namespace_name = vectis_lua_table_string(lua, 2, "namespace");
+  config.store.ns = vectis_lua_table_string(lua, 2, "namespace");
   config.store.max_record_bytes = vectis_lua_table_size(
       lua, 2, "max_record_bytes", config.store.max_record_bytes);
   realm = vectis_lua_table_string(lua, 2, "realm");
@@ -12579,7 +12576,7 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
     if (config.browser_session.state_key == NULL) {
       config.browser_session.state_key = "auth.browser_session.v1";
     }
-    config.browser_session.namespace_name =
+    config.browser_session.ns =
         vectis_lua_table_string(lua, browser_session_index, "namespace");
     config.browser_session.ttl_seconds = (uint64_t)vectis_lua_table_size(
         lua, browser_session_index, "ttl_seconds",
@@ -17616,7 +17613,7 @@ static void vectis_lua_auth_store_config(lua_State *lua, int index,
   config->state_key = vectis_lua_table_string(lua, index, "state_key");
   config->transient_state_key =
       vectis_lua_table_string(lua, index, "transient_state_key");
-  config->namespace_name = vectis_lua_table_string(lua, index, "namespace");
+  config->ns = vectis_lua_table_string(lua, index, "namespace");
   config->max_record_bytes = vectis_lua_table_size(
       lua, index, "max_record_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
 }

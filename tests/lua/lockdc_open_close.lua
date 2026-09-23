@@ -6,7 +6,7 @@ local namespace = os.getenv("LOCKD_NAMESPACE") or "examples"
 
 local client, err = lockdc.open({
   endpoints = { endpoint },
-  client_bundle_path = bundle,
+  client_bundle_source = { path = bundle },
   default_namespace = namespace,
 })
 assert(client, err and err.message or "lockdc.open failed")

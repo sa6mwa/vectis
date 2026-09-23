@@ -12,7 +12,7 @@
 typedef struct combined_config {
   const char *endpoint;
   const char *bundle_path;
-  const char *namespace_name;
+  const char *ns;
   const char *queue;
   const char *bind;
   const char *webdav_cache_dir;
@@ -59,8 +59,7 @@ static void load_config(combined_config *config) {
   config->endpoint = env_or_default("LOCKD_ENDPOINT", "https://127.0.0.1:8443");
   config->bundle_path =
       env_or_default("LOCKD_CLIENT_BUNDLE", "/etc/vectis/lockd-client.pem");
-  config->namespace_name =
-      env_or_default("VECTIS_E2E_COMBINED_NAMESPACE", "examples");
+  config->ns = env_or_default("VECTIS_E2E_COMBINED_NAMESPACE", "examples");
   config->queue =
       env_or_default("VECTIS_E2E_COMBINED_QUEUE", "vectis-e2e-combined");
   config->bind = env_or_default("VECTIS_KORE_BIND", "127.0.0.1");
@@ -289,7 +288,7 @@ int main(void) {
   app_config.lockd.endpoint_count = 1u;
   app_config.lockd.client_bundle =
       vectis_source_from_path(context.config.bundle_path);
-  app_config.lockd.default_namespace = context.config.namespace_name;
+  app_config.lockd.default_namespace = context.config.ns;
   app_config.lockd.logger = lockd_logger;
 
   app = vectis_app_new(&app_config, &error);

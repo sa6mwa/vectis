@@ -2230,7 +2230,8 @@ local normalized_lockd = assert(vectis.lockd.config({
 assert(normalized_lockd.default_namespace == "lua-lockd")
 assert(normalized_lockd.namespace == nil)
 assert(normalized_lockd.client_bundle == nil)
-assert(normalized_lockd.client_bundle_path == "/tmp/vectis-lockd-client.pem")
+assert(normalized_lockd.client_bundle_source.path ==
+       "/tmp/vectis-lockd-client.pem")
 local embedded_lockd_config, embedded_lockd_err =
     vectis.lockd.config({ client_bundle = "embedded" })
 assert(embedded_lockd_config == nil)

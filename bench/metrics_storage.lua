@@ -21,8 +21,10 @@ end
 local config = {
   endpoints = {"pouch://" .. root .. "/state"},
   default_namespace = "vectis.metrics.bench",
-  pouch_crypto_key_file = root .. "/key",
-  pouch_crypto_generate_key_file = true,
+  pouch = {
+    crypto_key_file = root .. "/key",
+    crypto_generate_key_file = true,
+  },
 }
 local client = checked(lockdc.open(config))
 local writes, read_bytes, written_bytes, reads = 0, 0, 0, 0
@@ -44,7 +46,7 @@ local function update(tier, minute)
   local group, position = slot // tier.width, slot % tier.width + 1
   local key = tier.name .. "/" .. group
   with_lease(key, function(lease)
-    local bytes, meta = lease:get_raw()
+    local bytes, meta = lease:read()
     local state
     if bytes == nil then
       assert(meta and meta.no_content, type(meta) == "table" and meta.message)
@@ -59,7 +61,7 @@ local function update(tier, minute)
     for field = 1, 8 do values[field] = tier.sums[field] end
     state.samples[position] = {t = index * tier.step, n = tier.count, v = values}
     local encoded = checked(lockdc.encode_json(state))
-    checked(lease:update_raw(encoded, {content_type = "application/json"}))
+    checked(lease:update(encoded, {content_type = "application/json"}))
     writes, written_bytes = writes + 1, written_bytes + #encoded
   end)
   tier.keys[key] = true
@@ -106,7 +108,7 @@ local ok, err = xpcall(function()
     table.sort(keys)
     for _, key in ipairs(keys) do
       with_lease(key, function(lease)
-        local encoded = checked(lease:get_raw())
+        local encoded = checked(lease:read())
         reads, read_bytes = reads + 1, read_bytes + #encoded
         local state = checked(lockdc.decode_json(encoded))
         for _, record in ipairs(state.samples) do

@@ -917,7 +917,7 @@ typedef struct vectis_consumer_service_receiver_config {
   const char *name;
   const char *queue;
   const char *owner;
-  const char *namespace_name;
+  const char *ns;
   long visibility_timeout_seconds;
   long wait_seconds;
   size_t worker_count;
@@ -3036,18 +3036,20 @@ vectis_status vectis_lockd_state_load(struct lc_client *client, const char *key,
                                       const char *owner, long ttl_seconds,
                                       const lonejson_map *map, void *out,
                                       vectis_error *error);
-vectis_status vectis_lockd_state_load_in_namespace(
-    struct lc_client *client, const char *namespace_name, const char *key,
-    const char *owner, long ttl_seconds, const lonejson_map *map, void *out,
-    vectis_error *error);
+vectis_status
+vectis_lockd_state_load_in_namespace(struct lc_client *client, const char *ns,
+                                     const char *key, const char *owner,
+                                     long ttl_seconds, const lonejson_map *map,
+                                     void *out, vectis_error *error);
 vectis_status vectis_lockd_state_save(struct lc_client *client, const char *key,
                                       const char *owner, long ttl_seconds,
                                       const lonejson_map *map,
                                       const void *value, vectis_error *error);
-vectis_status vectis_lockd_state_save_in_namespace(
-    struct lc_client *client, const char *namespace_name, const char *key,
-    const char *owner, long ttl_seconds, const lonejson_map *map,
-    const void *value, vectis_error *error);
+vectis_status
+vectis_lockd_state_save_in_namespace(struct lc_client *client, const char *ns,
+                                     const char *key, const char *owner,
+                                     long ttl_seconds, const lonejson_map *map,
+                                     const void *value, vectis_error *error);
 vectis_status vectis_lockd_state_update(struct lc_client *client,
                                         const char *key, const char *owner,
                                         long ttl_seconds,
@@ -3055,7 +3057,7 @@ vectis_status vectis_lockd_state_update(struct lc_client *client,
                                         vectis_lockd_state_update_fn update,
                                         void *userdata, vectis_error *error);
 vectis_status vectis_lockd_state_update_in_namespace(
-    struct lc_client *client, const char *namespace_name, const char *key,
+    struct lc_client *client, const char *ns, const char *key,
     const char *owner, long ttl_seconds, const lonejson_map *map, void *state,
     vectis_lockd_state_update_fn update, void *userdata, vectis_error *error);
 

@@ -188,7 +188,7 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
   char message[512];
   char dependency_message[256];
   const char *endpoint;
-  const char *namespace_name;
+  const char *ns;
   int rc;
 
   lc_acquire_req_init(&request);
@@ -203,13 +203,12 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
     endpoint = store->diagnostic_endpoint != NULL
                    ? store->diagnostic_endpoint
                    : "configured lockdc endpoint";
-    namespace_name = store->diagnostic_namespace != NULL
-                         ? store->diagnostic_namespace
-                         : "client default namespace";
+    ns = store->diagnostic_namespace != NULL ? store->diagnostic_namespace
+                                             : "client default namespace";
     (void)snprintf(message, sizeof(message),
                    "lockdc error: unable to acquire Smith state "
                    "(endpoint=%s namespace=%s code=%d): %s",
-                   endpoint, namespace_name, lcerr.code, dependency_message);
+                   endpoint, ns, lcerr.code, dependency_message);
     vectis_smith_set_cai_error(error, CAI_ERR_TRANSPORT, message);
   }
   lc_error_cleanup(&lcerr);
@@ -918,7 +917,7 @@ void vectis_smith_store_config_init(vectis_smith_store_config *config) {
 
 int vectis_smith_store_set_diagnostic_context(vectis_smith_store *store,
                                               const char *endpoint,
-                                              const char *namespace_name) {
+                                              const char *ns) {
   char *endpoint_copy;
   char *namespace_copy;
 
@@ -926,10 +925,9 @@ int vectis_smith_store_set_diagnostic_context(vectis_smith_store *store,
     return -1;
   }
   endpoint_copy = endpoint == NULL ? NULL : vectis_smith_strdup(endpoint);
-  namespace_copy =
-      namespace_name == NULL ? NULL : vectis_smith_strdup(namespace_name);
+  namespace_copy = ns == NULL ? NULL : vectis_smith_strdup(ns);
   if ((endpoint != NULL && endpoint_copy == NULL) ||
-      (namespace_name != NULL && namespace_copy == NULL)) {
+      (ns != NULL && namespace_copy == NULL)) {
     free(namespace_copy);
     free(endpoint_copy);
     return -1;

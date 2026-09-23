@@ -127,7 +127,7 @@ int vectis_kore_acme_state_persist(const char *domain) {
   memset(&config, 0, sizeof(config));
   config.lockd_client_config = vectis_kore_current.lockd_client_config;
   config.endpoint = vectis_kore_current.acme_storage_endpoint;
-  config.namespace_name = vectis_kore_current.acme_storage_namespace;
+  config.ns = vectis_kore_current.acme_storage_namespace;
   config.key = vectis_kore_current.acme_storage_key;
   config.owner = "vectis-acme";
   config.runtime_dir = vectis_kore_current.acme_state_dir;

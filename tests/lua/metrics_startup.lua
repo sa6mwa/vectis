@@ -2,8 +2,7 @@
 local vectis = require("vectis")
 local lockdc = require("lockdc")
 local mode, root, key = arg[1], arg[2], arg[3]
-local endpoint = "pouch://" .. root .. "/state" ..
-    (arg[6] == "shared" and "?single_writer=false" or "")
+local endpoint = "pouch://" .. root .. "/state"
 local function checked(value, err)
   assert(value ~= nil and value ~= false,
          type(err) == "table" and err.message or tostring(err))
@@ -14,7 +13,10 @@ if mode == "seed" then
   local client = checked(lockdc.open({
     endpoints = {endpoint},
     default_namespace = "vectis.metrics",
-    pouch_crypto_key = assert(os.getenv("VECTIS_POUCH_CRYPTO_KEY")),
+    pouch = {
+      crypto_key = assert(os.getenv("VECTIS_POUCH_CRYPTO_KEY")),
+      single_writer = arg[6] ~= "shared",
+    },
   }))
   local doc = {
     format = "vectis-metrics-snapshot", version = 1,
@@ -27,7 +29,7 @@ if mode == "seed" then
   for i = 1, count do
     local lease = checked(client:acquire({key=key, owner="vectis", ttl_seconds=30}))
     doc.http.requests_total, doc.http.status["2xx"], doc.persistence.writes = i, i, i
-    checked(lease:update_raw(checked(lockdc.encode_json(doc)), {content_type="application/json"}))
+    checked(lease:update(checked(lockdc.encode_json(doc)), {content_type="application/json"}))
     checked(lease:release())
     lease:close()
   end

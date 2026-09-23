@@ -333,7 +333,7 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
   /* endpoint selects this independently configured state client; a Unix
    * socket from the app's general client must not override it. */
   client_config.unix_socket_path = NULL;
-  client_config.default_namespace = config->namespace_name;
+  client_config.default_namespace = config->ns;
   if (vectis_acme_state_endpoint_is_pouch(config->endpoint)) {
     environment_key = getenv(VECTIS_POUCH_CRYPTO_KEY_ENV);
     if (environment_key != NULL) {
@@ -510,7 +510,7 @@ vectis_status vectis_acme_state_hydrate(const vectis_acme_state_config *config,
   rc = vectis_acme_state_client_open(config, &client, &memory, &lcerr);
   if (rc == LC_OK) {
     lc_acquire_req_init(&acquire);
-    acquire.namespace_name = config->namespace_name;
+    acquire.ns = config->ns;
     acquire.key = config->key;
     acquire.owner = config->owner;
     acquire.ttl_seconds = 30L;
@@ -659,7 +659,7 @@ vectis_status vectis_acme_state_persist(const vectis_acme_state_config *config,
   rc = vectis_acme_state_client_open(config, &client, &memory, &lcerr);
   if (rc == LC_OK) {
     lc_acquire_req_init(&acquire);
-    acquire.namespace_name = config->namespace_name;
+    acquire.ns = config->ns;
     acquire.key = config->key;
     acquire.owner = config->owner;
     acquire.ttl_seconds = 30L;

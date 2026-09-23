@@ -422,7 +422,7 @@ static void fake_lockd_message_init(lc_consumer_message *consumer,
   consumer->queue = "jobs";
   consumer->with_state = 1;
   consumer->message = message;
-  message->namespace_name = "unit";
+  message->ns = "unit";
   message->queue = "jobs";
   message->message_id = "msg-1";
   message->attempts = 2;

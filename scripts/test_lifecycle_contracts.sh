@@ -512,7 +512,7 @@ assert_lockdc_lua_runtime_contract() {
 
 assert_lql_lua_runtime_contract() {
   assert_contains "$repo_root/scripts/deps.sh" 'lql_lua_archive="liblql-lua-\${lql_version}\.tar\.gz"'
-  assert_contains "$repo_root/scripts/deps.sh" 'lql_lua_sha256="b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438"'
+  assert_contains "$repo_root/scripts/deps.sh" 'lql_lua_sha256="c4610615f4315081c519afe47d519e72c1242cce449620cf90f8f8828eccdfe1"'
   assert_contains "$repo_root/CMakeLists.txt" 'share/liblql-lua-source/lua/lql/init\.lua'
   assert_contains "$repo_root/CMakeLists.txt" 'share/liblql-lua-source/lua/lql_core\.c'
   assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_liblql_lua OBJECT'
@@ -1036,7 +1036,7 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" 'native_client:acquire'
   assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" '"query_raw"'
   assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" '"queue_nack"'
-  assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" '"payload_json"'
+  assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" '"read_payload_json"'
   assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" 'lockd\.load_json'
   assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" 'lockd\.save_json'
   assert_contains "$repo_root/tests/lua/lockd_helpers.cmake" 'lockd\.with_dequeued_json'
@@ -1986,12 +1986,12 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.2$'; 
 fi
 for expected in \
   '^system_sha256=fb64caa3cad66e01669705412cd88cb4267025ca0a083fa936fe25786011391d$' \
-  '^liblockdc_sha256=b5060d5a82a5aa5e97bdad2376828a559ae40d9da5d93c904eb85b8a1b76d286$' \
-  '^lonejson_sha256=520e045c7bfe13396b9dd2ef664d2aaf723ff3173ac02e0f0fe08bcf96f14fa2$' \
+  '^liblockdc_sha256=1e949887d613824716645dd5e9a85a1b89ad2d8d66431838c0a28c999b0e23da$' \
+  '^lonejson_sha256=5255a32cef6dd89cd4f068c2a4f1bd6a8f8e79d5cffe6d6922cb2506d320c520$' \
   '^pslog_sha256=db4089205cd674ec65540ea7a2388a827a8db5dd7c841db39d4beb8d9eff3d26$' \
   '^cai_sha256=f7f78d9f847f1265267bbc33a6d6cb2058602d82967357ab561f36ebb1d0daf8$' \
-  '^lql_sha256=a32b3ecc33b0634df23c630843b1c2c16a8a2caa947109a33bad20965e47a399$' \
-  '^lql_lua_sha256=b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438$' \
+  '^lql_sha256=fafb04f9af5d9610f77380ac1f848d1edd3d60dcf7ce6a098f6a04e30dd2b47a$' \
+  '^lql_lua_sha256=c4610615f4315081c519afe47d519e72c1242cce449620cf90f8f8828eccdfe1$' \
   '^softline_sha256=b1e4f2fb8ad4d8072acf1d72be31ec23066d8ccbf66a6fe10e15b7243ac8ac2f$'
 do
   if ! printf '%s\n' "$linux_deps_output" | grep -Eq "$expected"; then

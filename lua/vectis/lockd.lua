@@ -84,8 +84,8 @@ function M.config(config)
     normalized.client_bundle = nil
   elseif type(normalized.client_bundle) == "string" and
       normalized.client_bundle ~= "" then
-    if normalized.client_bundle_path == nil then
-      normalized.client_bundle_path = normalized.client_bundle
+    if normalized.client_bundle_source == nil then
+      normalized.client_bundle_source = { path = normalized.client_bundle }
     end
     normalized.client_bundle = nil
   end
@@ -157,7 +157,7 @@ function M.load_json(config, req)
   end
 
   local ok_get, value, meta_or_err = pcall(function()
-    return lease:get_json()
+    return lease:read_json()
   end)
   if not ok_get then
     close_handle(lease)
@@ -168,7 +168,7 @@ function M.load_json(config, req)
       meta_or_err.no_content) then
     close_handle(lease)
     client:close()
-    return nil, lockdc_error(meta_or_err, "lockdc get_json failed")
+    return nil, lockdc_error(meta_or_err, "lockdc read_json failed")
   end
 
   local ok_release, released, release_err = pcall(function()
@@ -271,7 +271,7 @@ function M.with_dequeued_json(config, req, handler)
     end
 
     local ok_payload, payload, payload_written_or_err = pcall(function()
-      return message:payload_json()
+      return message:read_payload_json()
     end)
     if not ok_payload then
       close_handle(message)
@@ -280,7 +280,7 @@ function M.with_dequeued_json(config, req, handler)
     if payload == nil then
       close_handle(message)
       return nil, lockdc_error(payload_written_or_err,
-                               "lockdc payload_json failed")
+                               "lockdc read_payload_json failed")
     end
 
     local ok, result, handler_err =

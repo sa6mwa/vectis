@@ -886,8 +886,7 @@ static void vectis_smith_cli_redact_endpoint(const char *endpoint, char *out,
   out[length] = '\0';
 }
 
-static int vectis_smith_cli_open_store(const char *endpoint,
-                                       const char *namespace_name,
+static int vectis_smith_cli_open_store(const char *endpoint, const char *ns,
                                        pslog_logger *logger, char *failure,
                                        size_t failure_capacity,
                                        lc_client **out_client,
@@ -913,7 +912,7 @@ static int vectis_smith_cli_open_store(const char *endpoint,
   lc_client_config_init(&client_config);
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
-  client_config.default_namespace = namespace_name;
+  client_config.default_namespace = ns;
   client_config.logger = logger;
   if (strncmp(endpoint, "pouch://", 8u) == 0) {
     lc_error_init(&lcerr);
@@ -958,7 +957,7 @@ static int vectis_smith_cli_open_store(const char *endpoint,
     return -1;
   }
   if (vectis_smith_store_set_diagnostic_context(*out_store, diagnostic_endpoint,
-                                                namespace_name) != 0) {
+                                                ns) != 0) {
     if (failure != NULL && failure_capacity != 0u) {
       (void)snprintf(failure, failure_capacity,
                      "failed to retain lockdc diagnostic context");

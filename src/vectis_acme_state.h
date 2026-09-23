@@ -9,7 +9,7 @@ typedef struct vectis_acme_state_config {
    * mTLS, logging, allocator, or Pouch policy. */
   lc_client_config lockd_client_config;
   const char *endpoint;
-  const char *namespace_name;
+  const char *ns;
   const char *key;
   const char *owner;
   const char *runtime_dir;

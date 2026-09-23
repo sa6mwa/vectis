@@ -36,7 +36,7 @@ typedef struct workflow_config {
   const char *endpoint;
   const char *bundle_path;
   const char *queue;
-  const char *namespace_name;
+  const char *ns;
   const char *expected_content;
   const char *bind;
   unsigned short port;
@@ -138,8 +138,7 @@ static void load_config(workflow_config *config) {
       env_or_default("LOCKD_CLIENT_BUNDLE", "/etc/vectis/lockd-client.pem");
   config->queue =
       env_or_default("VECTIS_E2E_WORKFLOW_QUEUE", "vectis-e2e-workflow");
-  config->namespace_name =
-      env_or_default("VECTIS_E2E_WORKFLOW_NAMESPACE", "examples");
+  config->ns = env_or_default("VECTIS_E2E_WORKFLOW_NAMESPACE", "examples");
   config->expected_content =
       env_or_default("VECTIS_E2E_WORKFLOW_CONTENT", "vectis e2e content");
   config->bind = env_or_default("VECTIS_KORE_BIND", "127.0.0.1");
@@ -594,7 +593,7 @@ static int run_server(void) {
   app_config.lockd.endpoint_count = 1u;
   app_config.lockd.client_bundle =
       vectis_source_from_path(context.config.bundle_path);
-  app_config.lockd.default_namespace = context.config.namespace_name;
+  app_config.lockd.default_namespace = context.config.ns;
   app_config.lockd.logger = lockd_logger;
   app = vectis_app_new(&app_config, &error);
   if (app == NULL) {
@@ -691,7 +690,7 @@ static int run_consumer(lonejson_int64 expected_counter,
   app_config.lockd.endpoint_count = 1u;
   app_config.lockd.client_bundle =
       vectis_source_from_path(context.config.bundle_path);
-  app_config.lockd.default_namespace = context.config.namespace_name;
+  app_config.lockd.default_namespace = context.config.ns;
   app_config.lockd.logger = lockd_logger;
   app = vectis_app_new(&app_config, &error);
   if (app == NULL) {
@@ -759,7 +758,7 @@ static int run_verify(void) {
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
   client_config.client_bundle_path = config.bundle_path;
-  client_config.default_namespace = config.namespace_name;
+  client_config.default_namespace = config.ns;
   rc = lc_client_open(&client_config, &client, &error);
   if (rc == LC_OK) {
     status = load_content_state(client,

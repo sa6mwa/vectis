@@ -83,9 +83,8 @@ static void generate_key_file(const char *path) {
   lc_error_cleanup(&error);
 }
 
-static void write_plaintext_state(const char *endpoint,
-                                  const char *namespace_name, const char *key,
-                                  const char *contents) {
+static void write_plaintext_state(const char *endpoint, const char *ns,
+                                  const char *key, const char *contents) {
   const char *endpoints[1];
   lc_client_config config;
   lc_client *client;
@@ -104,10 +103,10 @@ static void write_plaintext_state(const char *endpoint,
   lc_client_config_init(&config);
   config.endpoints = endpoints;
   config.endpoint_count = 1u;
-  config.default_namespace = namespace_name;
+  config.default_namespace = ns;
   assert(lc_client_open(&config, &client, &error) == LC_OK);
   lc_acquire_req_init(&acquire);
-  acquire.namespace_name = namespace_name;
+  acquire.ns = ns;
   acquire.key = key;
   acquire.owner = "test";
   acquire.ttl_seconds = 30L;
@@ -125,9 +124,8 @@ static void write_plaintext_state(const char *endpoint,
   lc_error_cleanup(&error);
 }
 
-static void assert_plaintext_state(const char *endpoint,
-                                   const char *namespace_name, const char *key,
-                                   const char *contents) {
+static void assert_plaintext_state(const char *endpoint, const char *ns,
+                                   const char *key, const char *contents) {
   const char *endpoints[1];
   lc_client_config config;
   lc_client *client;
@@ -145,7 +143,7 @@ static void assert_plaintext_state(const char *endpoint,
   lc_client_config_init(&config);
   config.endpoints = endpoints;
   config.endpoint_count = 1u;
-  config.default_namespace = namespace_name;
+  config.default_namespace = ns;
   assert(lc_client_open(&config, &client, &error) == LC_OK);
   assert(lc_sink_to_memory(&sink, &error) == LC_OK);
   assert(client->get(client, key, NULL, sink, &result, &error) == LC_OK);
@@ -313,7 +311,7 @@ int main(void) {
   memset(&config, 0, sizeof(config));
   lc_client_config_init(&config.lockd_client_config);
   config.endpoint = endpoint;
-  config.namespace_name = "vectis.acme";
+  config.ns = "vectis.acme";
   config.key = "round-trip";
   config.owner = "test";
   config.runtime_dir = runtime_one;

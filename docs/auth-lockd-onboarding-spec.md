@@ -1,7 +1,7 @@
 # Lockd-Backed Authentication and Self-Service Onboarding
 
-Status: implementation authority; unblocked by liblockdc 0.15.0, which
-provides transactional inbox/outbox operations.
+Status: implementation authority; liblockdc 0.18.0 supplies the LockDC/Pouch
+state and outbox APIs. Onboarding remains specified future work.
 
 ## Purpose
 
@@ -23,8 +23,9 @@ The resulting system has these properties:
 - any auth state domain may explicitly use another Lockd or Pouch backend;
 - a deployment may deliberately place every Vectis state domain in one Lockd
   endpoint/root while retaining distinct namespaces and keys;
-- invitation, email-code state mutation, and email dispatch enqueue use
-  liblockdc transactional outbox operations; and
+- email-code delivery is one synchronous attempt, with an authenticating
+  verifier activated only after SMTP succeeds; other asynchronous effects may
+  use liblockdc's transactional outbox; and
 - onboarding creates a normal user and profile, but does not authenticate that
   user or change an endpoint's independently configured login policy.
 
@@ -102,7 +103,6 @@ The standard domains are:
 | `auth.browser_session` | `vectis.auth` | session signing keys and sessions |
 | `auth.onboarding` | `vectis.auth` | invitations and onboarding progress |
 | `auth.profile` | `vectis.profile` | completed user profiles |
-| `auth.delivery` | `vectis.auth` | transactional outbox records and dispatcher cursor/state |
 
 The default namespace names a storage boundary, not an authorization boundary.
 Keys are still typed and namespaced. A deployment that needs different access
@@ -233,54 +233,31 @@ receiver helper rather than reimplemented by `users`, `credentials`, and
 directory because that would conceal a breaking storage change. The help text
 and error diagnostics direct operators to the common Lockd/Pouch options.
 
-## Transactional delivery dependency
+## Synchronous authentication email and outbox scope
 
-The implementation requires liblockdc 0.15.0 or later for transactional
-inbox/outbox operations. It must use that API directly; Vectis must not
-implement an equivalent queue, lease convention, polling format, or retry
-protocol on top of ordinary Lockd records.
+Email-code login and onboarding use one synchronous SMTP attempt in the
+request. The workflow record is created first. On SMTP failure it stores only
+a decoy code state with an ineligible principal, so the code-entry page and
+response shape match an unknown address but cannot authenticate. The failure
+is logged without the code or recipient. There is no email
+outbox job, synchronous retry, delayed retry, or Vectis-owned retry queue.
+SMTP acceptance and LockDC commit are not one atomic operation: if commit fails
+after acceptance, the received code is unusable and the user must begin again.
 
-Each auth issuance uses an ordinary, threadless `lc_workflow` for its selected
-auth state domain. A fresh issuance starts an `lc_workflow_transaction` through
-`lc_workflow_append_outbox()` or `lc_workflow_accept_command()`, acquires the
-affected typed auth records as transaction participants, stages their state,
-adds the immutable `lc_outbox_entry` with its streamed encrypted payload, and
-commits once. This transaction path does not start a dispatcher. Duplicate
-operation identities must use liblockdc's durable receipt/outbox semantics;
-they must not regenerate a code or enqueue another delivery.
+Other effects that genuinely require durable asynchronous dispatch must use
+liblockdc 0.18.0's threadless `lc_outbox` transaction and dispatcher APIs
+directly. Vectis must not implement a parallel queue, lease convention,
+polling format, or retry protocol. The generic supervisor design is in
+[Supervisor and Workflow Dispatch](supervisor-workflow-spec.md).
 
-The Vectis SMTP worker is a workflow-outbox adapter attached to the persistent
-logical supervisor defined by [Supervisor and Workflow
-Dispatch](supervisor-workflow-spec.md). The supervisor explicitly acquires its
-one compatible liblockdc dispatcher; its SMTP handler receives claimed
-`lc_outbox_job` values, streams the payload with `lc_outbox_job_write_payload()`,
-and records exactly one upstream terminal action: `complete`, `retry`, or
-`dead_letter`. The dispatcher, claims, recovery, and dead-letter lifecycle
-remain authoritative in liblockdc.
-Vectis never reads a workflow payload into a hidden full-message buffer or
-creates another durable queue.
-
-An email token issuance transaction does all of the following atomically:
-
-1. creates or advances the relevant workflow/onboarding record;
-2. stores only the token hash in the verification record;
-3. stores the delivery payload, including the plaintext token, only in the
-   encrypted transactional outbox payload; and
-4. commits the outbox message with a stable message id and delivery policy.
-
-The dispatcher consumes the liblockdc outbox, sends SMTP with a stable
-Message-ID/idempotency identity, and acknowledges the outbox message only
-after the SMTP handoff succeeds. A retry can produce at-least-once SMTP
-delivery; it must never produce a different token for the same active
-transaction. Raw codes, provisioning URIs, password values, and TOTP secrets
-are never logged, returned in dispatcher diagnostics, included in metrics, or
-stored in an unencrypted side file.
+Raw codes, provisioning URIs, password values, and TOTP secrets are never
+logged, included in metrics, or stored in an unencrypted side file.
 
 Invitation creation itself does not send email. The administrator registers an
 address; the user starts onboarding from the login surface, and that action
-causes email-code issuance and outbox enqueue. Resend is a configured,
-rate-limited operation that atomically invalidates the previous code and
-enqueues exactly one replacement delivery.
+attempts one synchronous email-code delivery. Resend is a configured,
+rate-limited operation that invalidates the previous code and attempts one
+replacement delivery.
 
 The future inbox primitive is used for external/admin command ingestion when
 that surface is added. The CLI in this specification writes directly through
@@ -402,7 +379,7 @@ The browser state machine is C-owned and uses opaque, expiring Lockd records:
 
 ```text
 invited email entry
-  -> email code issuance + transactional outbox enqueue
+  -> one synchronous email-code send; activate verifier on SMTP success
   -> email code verification
   -> configured profile/credential form
   -> optional or required TOTP provisioning and confirmation
@@ -499,11 +476,11 @@ following.
 
 ### Delivery
 
-- Token record update and outbox enqueue are one transaction.
-- Simulated interruption before/after commit produces neither a usable token
-  without an outbox job nor an outbox job without matching verification state.
-- Dispatcher retry preserves token and message identity, redacts secrets, and
-  acknowledges only after successful SMTP handoff.
+- A failed SMTP attempt leaves no usable verifier and schedules no retry.
+- A known address with failed SMTP and an unknown address have identical public
+  response shapes; diagnostics never disclose the code or recipient.
+- A successful SMTP handoff followed by a failed verifier commit does not leave
+  an active code.
 
 ### Onboarding
 
@@ -526,13 +503,12 @@ following.
   protections.
 
 Run the complete debug, release, Lua facade, CLI action, Lockd/Pouch, browser
-workflow, and SMTP integration suites. Add failure-injection tests for Lockd
-transaction/outbox boundaries; happy-path SMTP tests alone are insufficient.
+workflow, and SMTP integration suites. Test failure boundaries as well as
+successful delivery; do not infer activation merely from a 202 response.
 
 ## Implementation order
 
-1. Upgrade to the liblockdc release with transactional inbox/outbox and add
-   focused wrapper tests for the upstream API.
+1. Upgrade to liblockdc 0.18.0 and verify the direct LockDC/Pouch state APIs.
 2. Introduce the common Vectis state-client factory and shared default Pouch
    root; migrate existing persistence users such as metrics/ACME to it.
 3. Replace the file-backed auth store with typed Lockd records and transactional
@@ -540,7 +516,8 @@ transaction/outbox boundaries; happy-path SMTP tests alone are insufficient.
    same change.
 4. Migrate direct auth primitives, issued credentials, OAuth flows, ordered
    workflows, and browser sessions to the unified domain contract.
-5. Add transactional SMTP delivery dispatch and migrate email-code issuance.
+5. Use a single synchronous SMTP send and activate email-code verifiers only
+   after successful delivery.
 6. Add invitation administration, profile storage/projection, onboarding M2M
    routes, and browser pages.
 7. Add SVG QR rendering and TOTP-confirmation enrollment.

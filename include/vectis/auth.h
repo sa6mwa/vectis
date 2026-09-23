@@ -55,7 +55,7 @@ typedef struct vectis_auth_browser_session_config {
   /* Lockd key prefix. Zero/default is "auth.browser_session.v1". */
   const char *state_key;
   /* Lockd namespace. Zero/default inherits the auth store namespace. */
-  const char *namespace_name;
+  const char *ns;
   /* Zero uses VECTIS_AUTH_BROWSER_SESSION_DEFAULT_TTL_SECONDS. */
   uint64_t ttl_seconds;
 } vectis_auth_browser_session_config;
@@ -80,7 +80,7 @@ typedef struct vectis_auth_store_config {
   /* Optional standalone Lockd selection. It must be NULL when `app` is set. */
   const vectis_lockd_config *lockd;
   /* Zero/default is the security-state namespace "vectis.auth". */
-  const char *namespace_name;
+  const char *ns;
   /* Zero/default is the durable credential/user state key "auth/v1/store". */
   const char *state_key;
   /*

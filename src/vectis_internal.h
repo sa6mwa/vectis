@@ -11,7 +11,7 @@
 
 int vectis_smith_store_set_diagnostic_context(vectis_smith_store *store,
                                               const char *endpoint,
-                                              const char *namespace_name);
+                                              const char *ns);
 void vectis_smith_lockdc_diagnostic_message(const char *message, char *out,
                                             size_t out_capacity);
 

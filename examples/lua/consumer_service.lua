@@ -109,7 +109,7 @@ local client_config = {
 if bundle == "embedded" then
   client_config.client_bundle_source = assert(vectis.embedded_lockd_bundle_source())
 elseif bundle ~= nil and bundle ~= "" then
-  client_config.client_bundle_path = bundle
+  client_config.client_bundle_source = { path = bundle }
 end
 local client, open_err = lockdc.open(client_config)
 assert(client, open_err and open_err.message or "lockdc.open failed")

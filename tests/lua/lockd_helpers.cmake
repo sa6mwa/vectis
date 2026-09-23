@@ -107,7 +107,7 @@ package.loaded.lockdc = {
       enqueue_body = body
       return true
     end
-    function client:get_json()
+    function client:read_json()
       return loaded_value, { etag = "client-etag" }
     end
     function client:update_json()
@@ -134,7 +134,7 @@ package.loaded.lockdc = {
       end
       acquired_req = req
       local lease = {}
-      function lease:get_json()
+      function lease:read_json()
         if req.key == "explode-load" then
           error("load exploded")
         end
@@ -177,7 +177,7 @@ package.loaded.lockdc = {
     function client:dequeue(req)
       dequeued_req = req
       local message = {}
-      function message:payload_json()
+      function message:read_payload_json()
         if req.queue == "explode-payload" then
           error("payload exploded")
         end
@@ -246,7 +246,7 @@ assert(lockd.enqueue_json({
 assert(opened_configs[1].default_namespace == "helpers")
 assert(opened_configs[1].namespace == nil)
 assert(opened_configs[1].client_bundle == nil)
-assert(opened_configs[1].client_bundle_path == "/tmp/client.pem")
+assert(opened_configs[1].client_bundle_source.path == "/tmp/client.pem")
 assert(enqueue_req.queue == "orders")
 assert(enqueue_req.content_type == "application/json")
 assert(enqueue_body == '{"type":"order.created","id":"1001"}')
@@ -394,7 +394,7 @@ assert(closed_clients == 13)
 local native_client = assert(lockd.native.open({}))
 for _, method in ipairs({
   "acquire",
-  "get_json",
+  "read_json",
   "update_json",
   "query_raw",
   "queue_ack",
@@ -408,7 +408,7 @@ for _, method in ipairs({
 end
 local native_lease = assert(native_client:acquire({ key = "native-direct" }))
 for _, method in ipairs({
-  "get_json",
+  "read_json",
   "update_json",
   "mutate",
   "metadata",
@@ -421,7 +421,7 @@ for _, method in ipairs({
 end
 local native_message = assert(native_client:dequeue({ queue = "native-direct" }))
 for _, method in ipairs({
-  "payload_json",
+  "read_payload_json",
   "ack",
   "nack",
   "extend",

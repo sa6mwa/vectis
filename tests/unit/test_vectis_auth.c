@@ -107,7 +107,7 @@ static void expect_no_auth_temporary_records(vectis_app *app) {
   handler.chunk = auth_key_chunk;
   handler.end = auth_key_end;
   lc_query_req_init(&request);
-  request.namespace_name = "vectis.auth";
+  request.ns = "vectis.auth";
   request.selector_json = "{\"exists\":\"/users\"}";
   request.engine = "scan";
   request.limit = 10000L;
@@ -493,7 +493,7 @@ static int auth_release_failure(lc_lease *lease, const lc_release_req *request,
   /* Roll back through the client API without consuming the local handle.
    * The caller must close that handle after the injected release failure. */
   lc_release_op_init(&rollback);
-  rollback.lease.namespace_name = lease->namespace_name;
+  rollback.lease.ns = lease->ns;
   rollback.lease.key = lease->key;
   rollback.lease.lease_id = lease->lease_id;
   rollback.lease.txn_id = lease->txn_id;

@@ -29,7 +29,7 @@ package.loaded.lockdc = {
     function client:dequeue(req)
       dequeued_req = req
       local message = {}
-      function message:payload_json()
+      function message:read_payload_json()
         return lonejson.decode_json(queued_payload), #queued_payload
       end
       function message:ack()
@@ -47,7 +47,7 @@ package.loaded.lockdc = {
         state_by_key[req.key] = value
         return true
       end
-      function lease:get_json()
+      function lease:read_json()
         return state_by_key[req.key], { etag = "stub-etag" }
       end
       function lease:release()

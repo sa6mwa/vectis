@@ -224,7 +224,7 @@ static int runtime_browser_session_key_end(void *userdata, lc_error *error) {
 }
 
 static size_t runtime_browser_session_record_count(vectis_app *app,
-                                                   const char *namespace_name,
+                                                   const char *ns,
                                                    const char *state_key) {
   runtime_browser_session_key_counter counter;
   lc_query_key_handler handler;
@@ -236,7 +236,7 @@ static size_t runtime_browser_session_record_count(vectis_app *app,
   int written;
 
   assert(app != NULL);
-  assert(namespace_name != NULL);
+  assert(ns != NULL);
   assert(state_key != NULL);
   written = snprintf(prefix, sizeof(prefix), "%s/", state_key);
   assert(written > 0 && (size_t)written < sizeof(prefix));
@@ -247,7 +247,7 @@ static size_t runtime_browser_session_record_count(vectis_app *app,
   handler.chunk = runtime_browser_session_key_chunk;
   handler.end = runtime_browser_session_key_end;
   lc_query_req_init(&request);
-  request.namespace_name = namespace_name;
+  request.ns = ns;
   request.selector_json = "{\"exists\":\"/cleanup_at\"}";
   request.engine = "scan";
   memset(&response, 0, sizeof(response));
@@ -1861,12 +1861,9 @@ metrics_required_provider(const vectis_auth_provider_request *request,
   return VECTIS_OK;
 }
 
-static int metrics_pouch_snapshot_contains_text(const char *endpoint,
-                                                const char *namespace_name,
-                                                const char *pouch_crypto_key,
-                                                const char *storage_owner,
-                                                const char *app_name,
-                                                const char *needle);
+static int metrics_pouch_snapshot_contains_text(
+    const char *endpoint, const char *ns, const char *pouch_crypto_key,
+    const char *storage_owner, const char *app_name, const char *needle);
 static void remove_tree(const char *path);
 
 static void assert_metrics_surface(void) {
@@ -3679,12 +3676,9 @@ static void remove_tree(const char *path) {
   (void)rmdir(path);
 }
 
-static int metrics_pouch_snapshot_contains_text(const char *endpoint,
-                                                const char *namespace_name,
-                                                const char *pouch_crypto_key,
-                                                const char *storage_owner,
-                                                const char *app_name,
-                                                const char *needle) {
+static int metrics_pouch_snapshot_contains_text(
+    const char *endpoint, const char *ns, const char *pouch_crypto_key,
+    const char *storage_owner, const char *app_name, const char *needle) {
   const char *endpoints[1];
   lc_client_config client_config;
   lc_client *client;
@@ -3693,7 +3687,7 @@ static int metrics_pouch_snapshot_contains_text(const char *endpoint,
   int found;
   int rc;
 
-  if (endpoint == NULL || namespace_name == NULL || pouch_crypto_key == NULL ||
+  if (endpoint == NULL || ns == NULL || pouch_crypto_key == NULL ||
       storage_owner == NULL || app_name == NULL || needle == NULL ||
       vectis_internal_metrics_snapshot_key(storage_owner, app_name, key,
                                            sizeof(key), NULL) != VECTIS_OK) {
@@ -3704,7 +3698,7 @@ static int metrics_pouch_snapshot_contains_text(const char *endpoint,
   lc_client_config_init(&client_config);
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
-  client_config.default_namespace = namespace_name;
+  client_config.default_namespace = ns;
   client_config.pouch_crypto_key = pouch_crypto_key;
   client = NULL;
   rc = lc_client_open(&client_config, &client, &lcerr);
@@ -4516,6 +4510,18 @@ static void assert_keepalive_limit(unsigned short port) {
   (void)close(fd);
 }
 
+static vectis_status runtime_smtp_attempt_probe(CURL *curl, void *userdata,
+                                                vectis_error *error) {
+  const char marker = 's';
+  int *fd;
+
+  (void)curl;
+  (void)error;
+  fd = (int *)userdata;
+  return fd != NULL && write(*fd, &marker, 1u) == 1 ? VECTIS_OK
+                                                    : VECTIS_ERR_STATE;
+}
+
 static void assert_kore_smoke(void) {
   vectis_app_config config;
   vectis_http_client_config http;
@@ -4727,6 +4733,9 @@ static void assert_kore_smoke(void) {
   int reserved_fd;
   int second_reserved_fd;
   int high_fds[1100];
+  int smtp_attempt_pipe[2];
+  char smtp_attempt_markers[8];
+  ssize_t smtp_attempt_count;
   size_t high_fd_count;
   int written;
   vectis_totp auth_totp;
@@ -4863,6 +4872,9 @@ static void assert_kore_smoke(void) {
                                           &auth_enrollment, &error);
   assert(status == VECTIS_OK);
   vectis_auth_user_enrollment_cleanup(&auth_enrollment);
+  status = vectis_auth_user_email_set(&auth_store, "runtime-user",
+                                      "known@example.com", &error);
+  assert(status == VECTIS_OK);
   vectis_auth_user_config_init(&auth_user);
   auth_user.username = "runtime-totp";
   auth_user.password = "runtime-totp-password";
@@ -5086,7 +5098,7 @@ static void assert_kore_smoke(void) {
   browser_session.ttl_seconds = 60u;
   vectis_auth_browser_session_config_init(&foreign_browser_session);
   foreign_browser_session.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
-  foreign_browser_session.namespace_name = "vectis.auth.foreign";
+  foreign_browser_session.ns = "vectis.auth.foreign";
   foreign_browser_session.state_key = "aaa.browser-session";
   foreign_browser_session.ttl_seconds = 60u;
   vectis_auth_routes_config_init(&auth_routes);
@@ -5151,8 +5163,12 @@ static void assert_kore_smoke(void) {
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
   vectis_auth_smtp_config_init(&email_smtp);
+  assert(pipe(smtp_attempt_pipe) == 0);
+  assert(fcntl(smtp_attempt_pipe[0], F_SETFL, O_NONBLOCK) == 0);
   email_smtp.url = "smtp://127.0.0.1:1";
   email_smtp.mail_from = "login@example.com";
+  email_smtp.configure_curl = runtime_smtp_attempt_probe;
+  email_smtp.configure_curl_userdata = &smtp_attempt_pipe[1];
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth-first-email";
   auth_routes.store = empty_auth_store;
@@ -5161,6 +5177,10 @@ static void assert_kore_smoke(void) {
   auth_routes.step_count = 1u;
   auth_routes.email_code_max_attempts = 0u;
   auth_routes.email_smtp = email_smtp;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_OK);
+  auth_routes.path_prefix = "/auth-known-email";
+  auth_routes.store = auth_store;
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
   vectis_auth_routes_config_init(&auth_routes);
@@ -6001,6 +6021,45 @@ static void assert_kore_smoke(void) {
                        "\"step\":\"email_code\""));
   vectis_http_response_cleanup(&auth_bad_response);
 
+  /* A failed first SMTP attempt leaves no usable verifier, does not enqueue a
+   * delayed send, and retains the same public pending response as an unknown
+   * address. */
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-known-email/m2m/start");
+  request.content_type = "application/json";
+  request.body = "{\"email\":\"known@example.com\"}";
+  request.body_size = strlen((const char *)request.body);
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 202L);
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "\"step\":\"email_code\""));
+  assert(runtime_json_string_value(auth_bad_response.body,
+                                   auth_bad_response.body_size, "workflow",
+                                   auth_workflow_id, sizeof(auth_workflow_id)));
+  vectis_http_response_cleanup(&auth_bad_response);
+  written =
+      snprintf(auth_totp_form, sizeof(auth_totp_form),
+               "{\"workflow\":\"%s\",\"code\":\"123456\"}", auth_workflow_id);
+  assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-known-email/m2m/continue");
+  request.content_type = "application/json";
+  request.body = auth_totp_form;
+  request.body_size = strlen(auth_totp_form);
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 401L);
+  vectis_http_response_cleanup(&auth_bad_response);
+  sleep(2);
+  smtp_attempt_count = read(smtp_attempt_pipe[0], smtp_attempt_markers,
+                            sizeof(smtp_attempt_markers));
+  assert(smtp_attempt_count == 1);
+
   /* A password+TOTP workflow exposes only the next TOTP step. */
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
@@ -6524,6 +6583,8 @@ static void assert_kore_smoke(void) {
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
+  assert(close(smtp_attempt_pipe[0]) == 0);
+  assert(close(smtp_attempt_pipe[1]) == 0);
   assert(runtime_file_contains(access_log_path, "\"GET /health HTTP/1.1\""));
   assert(runtime_file_contains(access_log_path, " 200 "));
 
