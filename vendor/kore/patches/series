@@ -25,3 +25,4 @@
 0025-kore-vectis-preserve-fileref-content-type.patch
 0026-kore-vectis-acme-state-hook.patch
 0027-kore-pslog-accesslog-levels.patch
+0028-kore-bound-worker-pslog-messages.patch

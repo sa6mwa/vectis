@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 #include <vectis/auth.h>
@@ -28,6 +29,7 @@
 extern u_int16_t kore_curl_timeout;
 extern u_int64_t kore_curl_recv_max;
 extern int kore_quiet;
+extern void kore_log(int prio, const char *fmt, ...);
 
 #ifndef __has_feature
 #define __has_feature(x) 0
@@ -332,6 +334,14 @@ static vectis_status sample_handler(vectis_app *app, vectis_request *request,
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
+}
+
+static vectis_status worker_log_handler(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
+  kore_log(LOG_INFO, "vectis-worker-log-sentinel");
+  return sample_handler(app, request, response, userdata, error);
 }
 
 static vectis_status ip_handler(vectis_app *app, vectis_request *request,
@@ -1710,6 +1720,10 @@ static void assert_access_log_levels(void) {
   route = vectis_route(VECTIS_HTTP_GET, "/ok", sample_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/worker-log", worker_log_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/accepted", status_202_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
@@ -1743,6 +1757,11 @@ static void assert_access_log_levels(void) {
   assert(status == VECTIS_OK && response.status_code == 200L);
   vectis_http_response_cleanup(&response);
   status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/worker-log"),
+      &response, &error);
+  assert(status == VECTIS_OK && response.status_code == 200L);
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(
       &http, format_loopback_http_url(url, sizeof(url), port, "/accepted"),
       &response, &error);
   assert(status == VECTIS_OK && response.status_code == 202L);
@@ -1772,6 +1791,8 @@ static void assert_access_log_levels(void) {
   app->close(app);
   logger->destroy(logger);
   assert(runtime_file_contains(access_log_path, "\"sub\":\"http\""));
+  assert(runtime_file_contains(access_log_path,
+                               "\"msg\":\"vectis-worker-log-sentinel\""));
   assert(runtime_file_line_contains(access_log_path, "\"path\":\"/ok\"",
                                     "\"lvl\":\"trace\""));
   assert(runtime_file_line_contains(access_log_path, "\"path\":\"/accepted\"",
