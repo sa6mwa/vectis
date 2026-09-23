@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+eval "$("$script_dir/devenv.sh" env)"
+"$script_dir/devenv.sh" reset
 
 disk_endpoint=${VECTIS_E2E_LOCKD_DISK_ENDPOINT:-https://127.0.0.1:${VECTIS_LOCKD_DISK_PORT:-29441}}
 s3_endpoint=${VECTIS_E2E_LOCKD_S3_ENDPOINT:-https://127.0.0.1:${VECTIS_LOCKD_S3_PORT:-29443}}
-client_bundle=${VECTIS_E2E_LOCKD_CLIENT_BUNDLE:-$repo_root/devenv/volumes/lockd-config/client.pem}
+client_bundle=${VECTIS_E2E_LOCKD_CLIENT_BUNDLE:-$repo_root/build/devenv/state/lockd-config/client.pem}
 ssh_port=${VECTIS_SSH_PORT:-29222}
 mqtt_port=${VECTIS_MQTT_PORT:-21883}
 default_kore_basic_port=$((31080 + ($$ % 1000) * 8))
@@ -27,9 +29,9 @@ lua_site_port=${VECTIS_E2E_LUA_SITE_PORT:-$((kore_basic_port + 13))}
 metrics_remote_lockd_port=${VECTIS_E2E_METRICS_REMOTE_LOCKD_PORT:-$((kore_basic_port + 14))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 acme_mock_provider=${VECTIS_E2E_ACME_MOCK_PROVIDER:-$repo_root/build/debug/tests/vectis_acme_mock_provider}
-mkdir -p "$repo_root/build/e2e"
-work_dir=$(mktemp -d "$repo_root/build/e2e/run.XXXXXXXX")
-# Host service tools retain their XDG environment (rootless containerd uses it).
+mkdir -p "$repo_root/build/devenv/tmp"
+work_dir=$(mktemp -d "$repo_root/build/devenv/tmp/run.XXXXXXXX")
+# Host service tools retain their XDG environment for rootless Podman.
 export TMPDIR="$work_dir/tmp"
 mkdir -m 700 -p "$TMPDIR"
 unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
@@ -42,6 +44,12 @@ ssh_bad_host_key_sha256="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 server_pids=""
 
 cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'Vectis e2e failed; Podman service state and logs follow.\n' >&2
+    "$script_dir/devenv.sh" ps >&2 || true
+    "$script_dir/devenv.sh" logs --tail 50 >&2 || true
+  fi
   for pid in $server_pids; do
     kill -- "-$pid" >/dev/null 2>&1 || kill "$pid" >/dev/null 2>&1 || true
   done
@@ -56,10 +64,11 @@ cleanup() {
     rm -rf "$work_dir"
   fi
   if [ "${VECTIS_E2E_KEEP_DEVSERVICES:-0}" != "1" ]; then
-    "$script_dir/dev-down.sh" >/dev/null 2>&1 || true
+    "$script_dir/devenv.sh" down >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
+trap 'printf "[e2e] failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 wait_for_http() {
   url=$1
@@ -404,7 +413,7 @@ run_service_examples() {
   env VECTIS_SSH_HOST="127.0.0.1" \
     VECTIS_SSH_PORT="$ssh_port" \
     VECTIS_SSH_USERNAME="vectis" \
-    VECTIS_SSH_PASSWORD="vectispass" \
+    VECTIS_SSH_PASSWORD="$ssh_password" \
     VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     VECTIS_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/examples/vectis_example_ssh"
@@ -413,7 +422,7 @@ run_service_examples() {
   env VECTIS_SSH_HOST="127.0.0.1" \
     VECTIS_SSH_PORT="$ssh_port" \
     VECTIS_SSH_USERNAME="vectis" \
-    VECTIS_SSH_PASSWORD="vectispass" \
+    VECTIS_SSH_PASSWORD="$ssh_password" \
     VECTIS_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/examples/vectis_example_ssh"
 
@@ -421,7 +430,7 @@ run_service_examples() {
   if env VECTIS_SSH_HOST="127.0.0.1" \
       VECTIS_SSH_PORT="$ssh_port" \
       VECTIS_SSH_USERNAME="vectis" \
-      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_PASSWORD="$ssh_password" \
       VECTIS_SSH_HOST_KEY_SHA256="$ssh_bad_host_key_sha256" \
       "$repo_root/build/debug/examples/vectis_example_ssh"; then
     printf '%s\n' \
@@ -433,7 +442,7 @@ run_service_examples() {
   if env VECTIS_SSH_HOST="127.0.0.1" \
       VECTIS_SSH_PORT="$ssh_port" \
       VECTIS_SSH_USERNAME="vectis" \
-      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_PASSWORD="$ssh_password" \
       VECTIS_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
       "$repo_root/build/debug/examples/vectis_example_ssh"; then
     printf '%s\n' "libssh2 SSH unexpectedly accepted mismatched known_hosts pin" >&2
@@ -452,7 +461,7 @@ run_service_examples() {
   env VECTIS_LUA_SSH_HOST="127.0.0.1" \
     VECTIS_LUA_SSH_PORT="$ssh_port" \
     VECTIS_LUA_SSH_USERNAME="vectis" \
-    VECTIS_LUA_SSH_PASSWORD="vectispass" \
+    VECTIS_LUA_SSH_PASSWORD="$ssh_password" \
     VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     VECTIS_LUA_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"
@@ -466,7 +475,7 @@ run_service_examples() {
   env VECTIS_LUA_SSH_HOST="127.0.0.1" \
     VECTIS_LUA_SSH_PORT="$ssh_port" \
     VECTIS_LUA_SSH_USERNAME="vectis" \
-    VECTIS_LUA_SSH_PASSWORD="vectispass" \
+    VECTIS_LUA_SSH_PASSWORD="$ssh_password" \
     VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     VECTIS_LUA_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$lua_ssh_pack"
@@ -475,7 +484,7 @@ run_service_examples() {
   if env VECTIS_LUA_SSH_HOST="127.0.0.1" \
       VECTIS_LUA_SSH_PORT="$ssh_port" \
       VECTIS_LUA_SSH_USERNAME="vectis" \
-      VECTIS_LUA_SSH_PASSWORD="vectispass" \
+      VECTIS_LUA_SSH_PASSWORD="$ssh_password" \
       VECTIS_LUA_SSH_HOST_KEY_SHA256="$ssh_bad_host_key_sha256" \
       "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"; then
     printf '%s\n' \
@@ -487,7 +496,7 @@ run_service_examples() {
   if env VECTIS_LUA_SSH_HOST="127.0.0.1" \
       VECTIS_LUA_SSH_PORT="$ssh_port" \
       VECTIS_LUA_SSH_USERNAME="vectis" \
-      VECTIS_LUA_SSH_PASSWORD="vectispass" \
+      VECTIS_LUA_SSH_PASSWORD="$ssh_password" \
       VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
       "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"; then
     printf '%s\n' "Lua libssh2 SSH unexpectedly accepted mismatched known_hosts pin" >&2
@@ -498,7 +507,7 @@ run_service_examples() {
   if env VECTIS_LUA_SSH_HOST="127.0.0.1" \
       VECTIS_LUA_SSH_PORT="$ssh_port" \
       VECTIS_LUA_SSH_USERNAME="vectis" \
-      VECTIS_LUA_SSH_PASSWORD="vectispass" \
+      VECTIS_LUA_SSH_PASSWORD="$ssh_password" \
       VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
       "$lua_ssh_pack"; then
     printf '%s\n' \
@@ -510,7 +519,7 @@ run_service_examples() {
   env VECTIS_SSH_HOST="127.0.0.1" \
     VECTIS_SSH_PORT="$ssh_port" \
     VECTIS_SSH_USERNAME="vectis" \
-    VECTIS_SSH_PASSWORD="vectispass" \
+    VECTIS_SSH_PASSWORD="$ssh_password" \
     VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     VECTIS_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/examples/vectis_example_ssh_sftp"
@@ -519,7 +528,7 @@ run_service_examples() {
   if env VECTIS_SSH_HOST="127.0.0.1" \
       VECTIS_SSH_PORT="$ssh_port" \
       VECTIS_SSH_USERNAME="vectis" \
-      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_PASSWORD="$ssh_password" \
       VECTIS_SSH_HOST_KEY_SHA256="$ssh_bad_host_key_sha256" \
       "$repo_root/build/debug/examples/vectis_example_ssh_sftp"; then
     printf '%s\n' \
@@ -531,7 +540,7 @@ run_service_examples() {
   if env VECTIS_SSH_HOST="127.0.0.1" \
       VECTIS_SSH_PORT="$ssh_port" \
       VECTIS_SSH_USERNAME="vectis" \
-      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_PASSWORD="$ssh_password" \
       VECTIS_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
       "$repo_root/build/debug/examples/vectis_example_ssh_sftp"; then
     printf '%s\n' "libssh2 SFTP unexpectedly accepted mismatched known_hosts pin" >&2
@@ -541,13 +550,13 @@ run_service_examples() {
   printf '[e2e] curl sftp upload/download\n'
   env VECTIS_SFTP_URL="sftp://127.0.0.1:$ssh_port" \
     VECTIS_SFTP_USERNAME="vectis" \
-    VECTIS_SFTP_PASSWORD="vectispass" \
+    VECTIS_SFTP_PASSWORD="$ssh_password" \
     "$repo_root/build/debug/examples/vectis_example_sftp"
 
   printf '[e2e] lua sftp upload/download\n'
   env VECTIS_LUA_SFTP_URL="sftp://127.0.0.1:$ssh_port" \
     VECTIS_LUA_SFTP_USERNAME="vectis" \
-    VECTIS_LUA_SFTP_PASSWORD="vectispass" \
+    VECTIS_LUA_SFTP_PASSWORD="$ssh_password" \
     VECTIS_LUA_SFTP_KNOWN_HOSTS="$ssh_known_hosts" \
     VECTIS_LUA_SFTP_UPLOAD_FILE="$work_dir/lua-sftp-upload.txt" \
     VECTIS_LUA_SFTP_DOWNLOAD_FILE="$work_dir/lua-sftp-download.txt" \
@@ -558,7 +567,7 @@ run_service_examples() {
   env VECTIS_LUA_SFTP_HOST="127.0.0.1" \
     VECTIS_LUA_SFTP_PORT="$ssh_port" \
     VECTIS_LUA_SFTP_USERNAME="vectis" \
-    VECTIS_LUA_SFTP_PASSWORD="vectispass" \
+    VECTIS_LUA_SFTP_PASSWORD="$ssh_password" \
     VECTIS_LUA_SFTP_KNOWN_HOSTS="$ssh_known_hosts" \
     VECTIS_LUA_SFTP_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     VECTIS_LUA_SFTP_REMOTE_FILE="/config/lua-sftp-handles-$$.txt" \
@@ -568,7 +577,7 @@ run_service_examples() {
   if env VECTIS_LUA_SFTP_HOST="127.0.0.1" \
       VECTIS_LUA_SFTP_PORT="$ssh_port" \
       VECTIS_LUA_SFTP_USERNAME="vectis" \
-      VECTIS_LUA_SFTP_PASSWORD="vectispass" \
+      VECTIS_LUA_SFTP_PASSWORD="$ssh_password" \
       VECTIS_LUA_SFTP_KNOWN_HOSTS="$ssh_bad_known_hosts" \
       VECTIS_LUA_SFTP_REMOTE_FILE="/config/lua-sftp-handles-bad-$$.txt" \
       "$repo_root/build/debug/vectis" "$repo_root/examples/lua/sftp_handles.lua"; then
@@ -3651,7 +3660,7 @@ provision_ssh_public_key() {
 }
 
 install_ssh_public_key() {
-  "$script_dir/compose.sh" exec -T ssh-sftp /bin/sh -ec \
+  "$script_dir/devenv.sh" exec-ssh /bin/sh -ec \
     'mkdir -p /config/.ssh && cat > /config/.ssh/authorized_keys && chmod 700 /config/.ssh && chmod 600 /config/.ssh/authorized_keys' \
     <"$ssh_memory_key.pub"
 }
@@ -3682,9 +3691,11 @@ provision_ssh_known_hosts() {
   fi
 }
 
-"$script_dir/dev-reset.sh"
 provision_ssh_public_key
-"$script_dir/dev-up.sh"
+"$script_dir/devenv.sh" up
+[ "$(stat -c %a "$repo_root/build/devenv/devenv.yaml")" = 600 ]
+[ "$(stat -c %a "$repo_root/build/devenv/credentials/ssh_password")" = 600 ]
+ssh_password=$(cat "$repo_root/build/devenv/credentials/ssh_password")
 install_ssh_public_key
 provision_ssh_known_hosts
 make -C "$repo_root" build-debug

@@ -10,6 +10,10 @@ if [ "${VECTIS_OPCUA_PUBSUB_LIVE:-0}" != "1" ]; then
   exit 0
 fi
 
+if [ "${VECTIS_OPCUA_PUBSUB_USE_EXISTING_MQTT:-0}" != "1" ]; then
+  eval "$("$script_dir/devenv.sh" env)"
+fi
+
 vectis_bin=${VECTIS_BIN:-"$repo_root/build/debug/vectis"}
 if [ ! -x "$vectis_bin" ]; then
   cat >&2 <<EOF
@@ -30,13 +34,14 @@ services_started=0
 cleanup_services() {
   if [ "$services_started" -eq 1 ] &&
      [ "${VECTIS_E2E_KEEP_DEVSERVICES:-0}" != "1" ]; then
-    "$script_dir/dev-down.sh" >/dev/null 2>&1 || true
+    "$script_dir/devenv.sh" down >/dev/null 2>&1 || true
   fi
 }
 trap cleanup_services EXIT INT TERM
 
 if [ "${VECTIS_OPCUA_PUBSUB_USE_EXISTING_MQTT:-0}" != "1" ]; then
-  if ! "$script_dir/dev-up.sh"; then
+  services_started=1
+  if ! "$script_dir/devenv.sh" up; then
     cat >&2 <<'EOF'
 PKT_DIAGNOSTIC_BEGIN
 surface=prerelease-live
@@ -44,15 +49,15 @@ phase=dev-services
 status=failed
 class=e2e-service
 reason=dev-up-failed
-next=inspect docker/nerdctl availability and local MQTT service logs
+next=inspect rootless Podman availability and local MQTT service logs
 PKT_DIAGNOSTIC_END
 EOF
     exit 2
   fi
-  services_started=1
 fi
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/vectis-opcua-pubsub.XXXXXX")
+mkdir -p "$repo_root/build/devenv/tmp"
+work=$(mktemp -d "$repo_root/build/devenv/tmp/opcua-pubsub.XXXXXX")
 cleanup_work() {
   rm -rf "$work"
 }

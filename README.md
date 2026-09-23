@@ -293,7 +293,7 @@ make prerelease
   install-tree and release-artifact verification reject missing or leaked
   exports.
 - `make lua-env` prints exports for running Lua examples with the built CLI.
-- `make test-e2e` runs the compose-backed integration smoke suite.
+- `make test-e2e` runs the Podman Kube integration smoke suite.
 - `make test-install-tree` verifies downstream CMake/pkg-config consumers from
   an installed SDK tree.
 - `make package` builds release SDK archives.
@@ -304,12 +304,12 @@ make prerelease
 - `make release-matrix` builds, checksums, and verifies supported release
   targets.
 
-Generated state lives under `build/`, `dist/`, `.cache/`, `devenv/volumes/`,
+Generated state lives under `build/`, `dist/`, `.cache/`,
 and the generated Kore upstream checkout. `make clean` removes generated state.
 
 ## Local Integration Environment
 
-`docker-compose.yaml` defines the local service environment used by e2e tests:
+`devenv.yaml.in` defines the rootless Podman Kube services used by e2e tests:
 
 - MinIO for S3-backed lockd testing.
 - lockd disk transport with generated mTLS material.
@@ -331,6 +331,12 @@ make test-e2e
 `make test-e2e` resets generated state, starts the local services, runs lockd,
 MQTT, SSH, curl-backed SFTP, and libssh2-backed SFTP smoke tests, and then stops
 the services unless `VECTIS_E2E_KEEP_DEVSERVICES=1` is set.
+The rendered manifest, generated credentials, and service state are under
+`build/devenv/`; `make dev-reset` removes them after stopping the pods.
+`make dev-up` prints the effective checkout-specific ports. Override any port
+with `VECTIS_MINIO_API_PORT`, `VECTIS_MINIO_CONSOLE_PORT`,
+`VECTIS_LOCKD_DISK_PORT`, `VECTIS_LOCKD_S3_PORT`, `VECTIS_SSH_PORT`, or
+`VECTIS_MQTT_PORT`.
 
 ## Examples
 

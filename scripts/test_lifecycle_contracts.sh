@@ -144,8 +144,24 @@ assert_lifecycle_surface_contract() {
 }
 
 for state_namespace in auth profile metrics acme smith; do
-  assert_contains "$repo_root/docker-compose.yaml" "\"vectis\\.${state_namespace}=rw\""
+  assert_contains "$repo_root/devenv.yaml.in" "\"vectis\\.${state_namespace}=rw\""
 done
+assert_contains "$repo_root/Makefile" 'dev-up bash ./scripts/devenv\.sh up'
+assert_not_contains "$repo_root/Makefile" 'compose\.sh|docker-compose\.yaml'
+port_exports=$(VECTIS_SSH_PORT=61000 "$repo_root/scripts/devenv.sh" env)
+case "$port_exports" in
+  *'export VECTIS_SSH_PORT=61000'*) ;;
+  *) echo 'devenv port override was ignored' >&2; exit 1 ;;
+esac
+if VECTIS_SSH_PORT=0 "$repo_root/scripts/devenv.sh" env >/dev/null 2>&1; then
+  echo 'devenv accepted a privileged port' >&2
+  exit 1
+fi
+if VECTIS_SSH_PORT=61000 VECTIS_MQTT_PORT=61000 \
+   "$repo_root/scripts/devenv.sh" env >/dev/null 2>&1; then
+  echo 'devenv accepted duplicate service ports' >&2
+  exit 1
+fi
 assert_c89_cmake_contract
 assert_lifecycle_surface_contract
 assert_contains "$repo_root/Makefile" '^perf-gate: build-debug'

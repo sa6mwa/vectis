@@ -80,7 +80,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 ## C-first boundary
 
 The first C SDK pass is implemented and covered by unit, install-tree, ASAN, and
-compose-backed e2e tests. Remaining C items below are either deeper runtime
+Podman Kube e2e tests. Remaining C items below are either deeper runtime
 coverage, future feature expansion, or post-C-SDK polish; they should not block
 starting the Lua runtime/facade phase unless they directly affect Lua API shape.
 Lua runtime work remains documented below and should mirror the C naming, source,
@@ -476,12 +476,12 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 
 - [x] Add unit coverage for current runtime/config behavior.
 - [x] Add a first fuzz target around `lonejson` validation via Vectis.
-- [x] Add a non-conflicting local integration compose environment for mTLS lockd disk, mTLS lockd S3 over MinIO, SSH/SFTP, and MQTT.
+- [x] Add a non-conflicting local Podman Kube environment for mTLS lockd disk, mTLS lockd S3 over MinIO, SSH/SFTP, and MQTT.
 - [x] Add Makefile entrypoints for local integration services: `dev-up`, `dev-down`, `dev-reset`, `dev-ps`, and `dev-logs`.
 - [x] Add `make test-e2e` and `make test-all` entrypoints.
-- [x] Add the first compose-backed lockd e2e smoke against disk and S3-backed lockd services.
+- [x] Add the first Podman Kube lockd e2e smoke against disk and S3-backed lockd services.
 - [x] Add integration/e2e tests against local lockd and Kore.
-- [x] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
+- [x] Add integration/e2e tests against the local SSH/SFTP and MQTT services.
 - [x] Add integration/e2e tests for Lua runner behavior.
 - [x] Add package/archive generation for the C SDK and Vectis binary.
 - [x] Add package/archive generation for the current C SDK.

@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: @NAME@-minio
+spec:
+  restartPolicy: Always
+  containers:
+    - name: minio
+      image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+      args: ["server", "/data", "--console-address", ":9001"]
+      env:
+        - {name: MINIO_ROOT_USER, value: "@MINIO_USER@"}
+        - {name: MINIO_ROOT_PASSWORD, value: "@MINIO_PASSWORD@"}
+      ports:
+        - {containerPort: 9000, hostPort: @MINIO_API_PORT@, hostIP: 127.0.0.1}
+        - {containerPort: 9001, hostPort: @MINIO_CONSOLE_PORT@, hostIP: 127.0.0.1}
+      volumeMounts:
+        - {name: data, mountPath: /data}
+  volumes:
+    - name: data
+      hostPath: {path: "@STATE@/minio", type: Directory}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: @NAME@-lockd
+spec:
+  restartPolicy: Always
+  initContainers:
+    - name: minio-init
+      image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+      command: ["/bin/sh", "-ec"]
+      args:
+        - >-
+          attempts=0;
+          until mc alias set local http://@NAME@-minio:9000 @MINIO_USER@ @MINIO_PASSWORD@;
+          do attempts=$((attempts + 1)); [ "$attempts" -lt 90 ] || exit 1; sleep 1; done;
+          mc mb --ignore-existing local/lockd-client-s3;
+          mc anonymous set none local/lockd-client-s3
+    - name: lockd-ca
+      image: docker.io/pktsystems/lockd:v0.9.0
+      args: ["auth", "new", "ca", "--cn", "vectis-lockd-root", "--out", "/config/ca.pem", "--force"]
+      volumeMounts: [{name: config, mountPath: /config}]
+    - name: lockd-disk-server-cert
+      image: docker.io/pktsystems/lockd:v0.9.0
+      args: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-disk", "--hosts", "lockd-disk,localhost,127.0.0.1", "--out", "/config/disk-server.pem", "--force"]
+      volumeMounts: [{name: config, mountPath: /config}]
+    - name: lockd-s3-server-cert
+      image: docker.io/pktsystems/lockd:v0.9.0
+      args: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-s3", "--hosts", "lockd-s3,localhost,127.0.0.1", "--out", "/config/s3-server.pem", "--force"]
+      volumeMounts: [{name: config, mountPath: /config}]
+    - name: lockd-client-cert
+      image: docker.io/pktsystems/lockd:v0.9.0
+      args: ["auth", "new", "client", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-client", "-n", "default=rw", "-n", "examples=rw", "-n", "vectis.auth=rw", "-n", "vectis.profile=rw", "-n", "vectis.metrics=rw", "-n", "vectis.acme=rw", "-n", "vectis.smith=rw", "--out", "/config/client.pem", "--force"]
+      volumeMounts: [{name: config, mountPath: /config}]
+  containers:
+    - name: lockd-disk
+      image: docker.io/pktsystems/lockd:v0.9.0
+      args: ["--bundle", "/config/disk-server.pem", "--connguard-enabled=false", "--store", "disk:///storage", "--listen", ":9341", "--listen-proto", "tcp"]
+      env:
+        - {name: LOCKD_CONFIG_DIR, value: /config}
+        - {name: LOCKD_OTLP_ENDPOINT, value: ""}
+      ports:
+        - {containerPort: 9341, hostPort: @LOCKD_DISK_PORT@, hostIP: 127.0.0.1}
+      volumeMounts:
+        - {name: config, mountPath: /config}
+        - {name: disk, mountPath: /storage}
+    - name: lockd-s3
+      image: docker.io/pktsystems/lockd:v0.9.0
+      args: ["--bundle", "/config/s3-server.pem", "--connguard-enabled=false", "--store", "s3://@NAME@-minio:9000/lockd-client-s3/vectis?insecure=1&path-style=1", "--listen", ":9342", "--listen-proto", "tcp"]
+      env:
+        - {name: LOCKD_CONFIG_DIR, value: /config}
+        - {name: LOCKD_OTLP_ENDPOINT, value: ""}
+        - {name: LOCKD_S3_ACCESS_KEY_ID, value: "@MINIO_USER@"}
+        - {name: LOCKD_S3_SECRET_ACCESS_KEY, value: "@MINIO_PASSWORD@"}
+      ports:
+        - {containerPort: 9342, hostPort: @LOCKD_S3_PORT@, hostIP: 127.0.0.1}
+      volumeMounts:
+        - {name: config, mountPath: /config}
+  volumes:
+    - name: config
+      hostPath: {path: "@STATE@/lockd-config", type: Directory}
+    - name: disk
+      hostPath: {path: "@STATE@/lockd-disk", type: Directory}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: @NAME@-ssh
+spec:
+  restartPolicy: Always
+  containers:
+    - name: ssh-sftp
+      image: ghcr.io/linuxserver/openssh-server:10.3_p1-r0-ls233
+      env:
+        - {name: PUID, value: "0"}
+        - {name: PGID, value: "0"}
+        - {name: TZ, value: UTC}
+        - {name: USER_NAME, value: vectis}
+        - {name: USER_PASSWORD, value: "@SSH_PASSWORD@"}
+        - {name: PASSWORD_ACCESS, value: "true"}
+        - {name: SUDO_ACCESS, value: "false"}
+        - {name: LOG_STDOUT, value: "true"}
+      ports:
+        - {containerPort: 2222, hostPort: @SSH_PORT@, hostIP: 127.0.0.1}
+      volumeMounts:
+        - {name: config, mountPath: /config}
+        - {name: data, mountPath: /data}
+        - {name: settings, mountPath: /config/sshd/sshd_config.d, readOnly: true}
+  volumes:
+    - name: config
+      hostPath: {path: "@STATE@/ssh-config", type: Directory}
+    - name: data
+      hostPath: {path: "@STATE@/ssh-data", type: Directory}
+    - name: settings
+      hostPath: {path: "@ROOT@/devenv/ssh/sshd_config.d", type: Directory}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: @NAME@-mqtt
+spec:
+  restartPolicy: Always
+  containers:
+    - name: mqtt
+      image: docker.io/emqx/nanomq:0.24.13
+      ports:
+        - {containerPort: 1883, hostPort: @MQTT_PORT@, hostIP: 127.0.0.1}

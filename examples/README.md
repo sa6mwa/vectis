@@ -186,10 +186,10 @@ same code works in scratch containers where `vectis` is the only executable.
   both normal and packed forms.
 - `lua/sftp_transfer.lua`: curl-backed Lua SFTP upload/download through
   `vectis.http.sftp_upload()` and `sftp_download()`. The local e2e harness runs
-  it against the compose SSH/SFTP service.
+  it against the Podman Kube SSH/SFTP service.
 - `lua/ssh_command.lua`: libssh2-backed Lua SSH command execution through
   `vectis.ssh.exec()` and reusable `vectis.ssh.open()` receivers. The local e2e
-  harness runs normal and packed forms against the compose SSH/SFTP service
+  harness runs normal and packed forms against the Podman Kube SSH/SFTP service
   with known_hosts pinning.
 - `lua/lockd_state.lua`: Vectis lockd helper state save/load workflow against
   `LOCKD_ENDPOINT`.

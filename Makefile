@@ -47,7 +47,7 @@ help:
 		'make test-opcua-lua-surface Verify OPC UA Lua covers all non-native cpkt C89 client/server symbols.' \
 		'make lua-env            Print shell exports for running Lua examples with the built vectis CLI and local rock.' \
 		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
-		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
+		'make test-e2e           Reset and run the local Podman Kube lockd e2e smoke tests.' \
 		'make test-all           Run the deterministic local test, Lua, Valgrind, fuzz-smoke, performance, and e2e gates.' \
 		'make test-opcua-pubsub-live Run opt-in live OPC UA PubSub/MQTT broker validation.' \
 		'make test-cai-live       Run opt-in live CAI provider validation.' \
@@ -62,9 +62,9 @@ help:
 		'make prerelease         Run deterministic local pre-release checks available in this checkout.' \
 		'make print-release-version Print the version used by packaging and release targets.' \
 		'make test-install-tree  Build a native installed SDK tree and verify static/shared downstream consumers.' \
-		'make dev-up             Start the local lockd/MinIO/SSH/SFTP/MQTT integration environment.' \
+		'make dev-up             Start rootless Podman Kube services (VECTIS_*_PORT overrides).' \
 		'make dev-down           Stop the local integration environment.' \
-		'make dev-reset          Stop the local integration environment and reset lockd/MinIO generated state.' \
+		'make dev-reset          Stop local services and remove all generated service state.' \
 		'make dev-ps             Show local integration environment service status.' \
 		'make dev-logs           Show local integration environment logs.' \
 		'make build-release      Configure the shipped Linux release matrix.' \
@@ -380,19 +380,19 @@ verify-kore-patches: deps-debug vendor-kore
 	$(TIMED) verify-kore-patches bash ./scripts/verify-kore-patches.sh ./.cache/deps/host-debug
 
 dev-up:
-	$(TIMED) dev-up bash ./scripts/dev-up.sh
+	$(TIMED) dev-up bash ./scripts/devenv.sh up
 
 dev-down:
-	$(TIMED) dev-down bash ./scripts/dev-down.sh
+	$(TIMED) dev-down bash ./scripts/devenv.sh down
 
 dev-reset:
-	$(TIMED) dev-reset bash ./scripts/dev-reset.sh
+	$(TIMED) dev-reset bash ./scripts/devenv.sh reset
 
 dev-ps:
-	bash ./scripts/dev-ps.sh
+	bash ./scripts/devenv.sh ps
 
 dev-logs:
-	bash ./scripts/dev-logs.sh
+	bash ./scripts/devenv.sh logs
 
 clean:
 	$(TIMED) clean bash ./scripts/clean.sh
