@@ -25,6 +25,11 @@ The default is Vectis's encrypted Pouch root. Configure an app's `lockd`
 table, or the CLI's Lockd/Pouch options, to select an explicit shared endpoint.
 The auth namespace defaults to `vectis.auth`; application profile state belongs
 in the separate `vectis.profile` namespace.
+Removed file-backed options (`credentials_path`, `state_path`,
+`auth_state_path`, and `path`) raise a Lua error immediately when supplied to
+auth store operations, native providers, or `app:auth_routes`. Configure the
+app's `lockd` endpoint and pass `app = app` to standalone auth calls so they
+use the same store as the routes.
 
 ```lua
 local vectis = require("vectis")

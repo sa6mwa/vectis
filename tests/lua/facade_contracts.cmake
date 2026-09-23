@@ -58,6 +58,31 @@ assert(canonical_source.source_code == status.ERROR_SOURCE_CURL)
 assert_status_error(canonical_source, status.ERR_STATE,
                     "source string must follow source_code")
 
+for _, key in ipairs({ "credentials_path", "state_path", "auth_state_path", "path" }) do
+  local obsolete = { app = auth_app, [key] = "obsolete" }
+  local expected = "auth option '" .. key .. "' was removed"
+  local ok, err = pcall(vectis.auth.store_init, obsolete)
+  assert(not ok and tostring(err):find(expected, 1, true), tostring(err))
+  ok, err = pcall(vectis.auth.user_add, obsolete)
+  assert(not ok and tostring(err):find(expected, 1, true), tostring(err))
+  ok, err = pcall(vectis.auth.provider_native, obsolete)
+  assert(not ok and tostring(err):find(expected, 1, true), tostring(err))
+  ok, err = pcall(function()
+    return auth_app:auth_routes({ path_prefix = "/removed-auth-option", [key] = "obsolete" })
+  end)
+  assert(not ok and tostring(err):find(expected, 1, true), tostring(err))
+  for _, auth in ipairs({
+    { kind = "native", [key] = "obsolete" },
+    { provider = { kind = "native", [key] = "obsolete" } },
+  }) do
+    local result, route_err = auth_app:auth_json({
+      path = "/removed-auth-option", auth = auth,
+    })
+    assert(result == nil)
+    assert_status_error(route_err, vectis.ERR_INVALID, expected)
+  end
+end
+
 assert(vectis.auth.store_init({
   app = auth_app,
 }) == true)
@@ -1100,4 +1125,20 @@ endif()
 if(NOT facade_contracts_stdout MATCHES "vectis-lua-facade-contracts-ok")
   message(FATAL_ERROR
     "vectis Lua facade contracts did not report success: ${facade_contracts_stdout}")
+endif()
+
+set(obsolete_auth_script "${WORK_DIR}/obsolete-auth-startup.lua")
+file(WRITE "${obsolete_auth_script}" [=[
+local vectis = require("vectis")
+vectis.auth.store_init({credentials_path = "/never-used"})
+error("startup should have rejected the obsolete auth option")
+]=])
+execute_process(COMMAND "${VECTIS_BIN}" "${obsolete_auth_script}"
+                RESULT_VARIABLE obsolete_auth_result
+                OUTPUT_VARIABLE obsolete_auth_stdout
+                ERROR_VARIABLE obsolete_auth_stderr)
+if(obsolete_auth_result EQUAL 0 OR
+   NOT obsolete_auth_stderr MATCHES "auth option 'credentials_path' was removed")
+  message(FATAL_ERROR
+    "obsolete auth startup did not fail clearly: ${obsolete_auth_stdout}${obsolete_auth_stderr}")
 endif()

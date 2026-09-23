@@ -8159,6 +8159,24 @@ static int vectis_lua_app_native_auth_browser_session(
   return 1;
 }
 
+static const char *vectis_lua_auth_removed_store_path(lua_State *lua,
+                                                      int index) {
+  static const char *const removed[] = {"credentials_path", "state_path",
+                                        "auth_state_path", "path"};
+  size_t i;
+
+  index = lua_absindex(lua, index);
+  for (i = 0u; i < sizeof(removed) / sizeof(removed[0]); ++i) {
+    lua_getfield(lua, index, removed[i]);
+    if (!lua_isnil(lua, -1)) {
+      lua_pop(lua, 1);
+      return removed[i];
+    }
+    lua_pop(lua, 1);
+  }
+  return NULL;
+}
+
 static vectis_lua_app_native_auth *
 vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
                                const char *context, vectis_error *error) {
@@ -8170,6 +8188,8 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   const char *purpose;
   const char *realm;
   const char *browser_login_path;
+  const char *removed_path;
+  char removed_message[256];
   unsigned modes;
   int provider_index;
 
@@ -8181,6 +8201,21 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
     provider_index = lua_absindex(lua, -1);
   } else {
     lua_pop(lua, 1);
+  }
+  removed_path = vectis_lua_auth_removed_store_path(lua, index);
+  if (removed_path == NULL && provider_index != index) {
+    removed_path = vectis_lua_auth_removed_store_path(lua, provider_index);
+  }
+  if (removed_path != NULL) {
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
+    (void)snprintf(removed_message, sizeof(removed_message),
+                   "auth option '%s' was removed; configure lockd in "
+                   "vectis.app.new(...) and use the app's auth store",
+                   removed_path);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID, removed_message);
+    return NULL;
   }
   kind = vectis_lua_table_string(lua, index, "kind");
   if (kind == NULL && provider_index != index) {
@@ -12439,6 +12474,20 @@ static int vectis_lua_app_auth_json(lua_State *lua) {
   return 1;
 }
 
+static void vectis_lua_auth_reject_removed_store_paths(lua_State *lua,
+                                                       int index) {
+  const char *removed_path;
+
+  removed_path = vectis_lua_auth_removed_store_path(lua, index);
+  if (removed_path != NULL) {
+    (void)luaL_error(lua,
+                     "auth option '%s' was removed; configure lockd in "
+                     "vectis.app.new(...) and pass app to standalone auth "
+                     "calls",
+                     removed_path);
+  }
+}
+
 static int vectis_lua_app_auth_routes(lua_State *lua) {
   vectis_app *app;
   vectis_auth_routes_config config;
@@ -12464,6 +12513,7 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
 
   app = vectis_lua_app_app(lua, 1);
   luaL_checktype(lua, 2, LUA_TTABLE);
+  vectis_lua_auth_reject_removed_store_paths(lua, 2);
   smtp_allowed_recipients = NULL;
   smtp_allowed_recipient_count = 0u;
   path_prefix = vectis_lua_table_string(lua, 2, "path_prefix");
@@ -17600,6 +17650,7 @@ static void vectis_lua_auth_store_config(lua_State *lua, int index,
 
   vectis_auth_store_config_init(config);
   index = lua_absindex(lua, index);
+  vectis_lua_auth_reject_removed_store_paths(lua, index);
   lua_getfield(lua, index, "app");
   if (!lua_isnil(lua, -1)) {
     app = (vectis_lua_app *)luaL_testudata(lua, -1, VECTIS_LUA_APP);
@@ -18777,6 +18828,7 @@ static int vectis_lua_auth_native_provider_authenticate(lua_State *lua) {
 
 static int vectis_lua_auth_provider_native(lua_State *lua) {
   luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_lua_auth_reject_removed_store_paths(lua, 1);
   lua_newtable(lua);
   lua_pushliteral(lua, "native");
   lua_setfield(lua, -2, "kind");
