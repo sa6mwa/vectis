@@ -14,7 +14,7 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-      target_name MATCHES "^vectis_unit_kore_proxy_(curl_loop|direct_io)$")
+      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop|direct_io)|prebody_handoff)$")
     add_test(NAME ${target_name} COMMAND bash
       "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
       15 0 $<TARGET_FILE:${target_name}>)
@@ -120,6 +120,14 @@ if(VECTIS_WITH_KORE_RUNTIME)
   target_include_directories(vectis_unit_kore_prebody_handoff PRIVATE
     "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
   target_compile_options(vectis_unit_kore_prebody_handoff PRIVATE -std=c99)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME vectis_unit_kore_prebody_handoff_failure_cleanup
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PREBODY_EXIT_AFTER_START=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        10 71 $<TARGET_FILE:vectis_unit_kore_prebody_handoff>)
+    set_tests_properties(vectis_unit_kore_prebody_handoff_failure_cleanup
+      PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 20)
+  endif()
   vectis_add_unit_test(vectis_unit_proxy_curl_connect_only
     test_proxy_curl_connect_only.c)
   vectis_add_unit_test(vectis_unit_proxy_curl_connect_only_tls
