@@ -29,3 +29,4 @@
 0029-kore-preserve-pipelined-request-bytes.patch
 0030-kore-prebody-handoff-hook.patch
 0031-kore-drain-readable-bytes-before-read-half-close.patch
+0032-kore-match-host-header-name-exactly.patch

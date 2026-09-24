@@ -249,11 +249,66 @@ static int
 probe_prebody(struct http_request *req, const void *data, size_t len)
 {
   struct connection *c;
+  struct http_header *header;
   struct probe_state *state;
   struct chunk_state *chunk;
+  const char *first_length;
+  const char *second_length;
+  const char *transfer_encoding;
+  const char *second_host;
   u_int64_t declared;
+  unsigned length_count;
+  unsigned encoding_count;
+  unsigned host_count;
+  int framing_seen;
   size_t first;
 
+  if (strncmp(req->path, "/framing-", 9) == 0) {
+    first_length = NULL;
+    second_length = NULL;
+    transfer_encoding = NULL;
+    second_host = NULL;
+    length_count = 0;
+    encoding_count = 0;
+    host_count = 0;
+    TAILQ_FOREACH(header, &req->req_headers, list) {
+      if (strcmp(header->header, "content-length") == 0) {
+        if (length_count == 0)
+          first_length = header->value;
+        else if (length_count == 1)
+          second_length = header->value;
+        length_count++;
+      } else if (strcmp(header->header, "transfer-encoding") == 0) {
+        transfer_encoding = header->value;
+        encoding_count++;
+      } else if (strcmp(header->header, "host") == 0) {
+        second_host = header->value;
+        host_count++;
+      }
+    }
+    framing_seen = 0;
+    if (strcmp(req->path, "/framing-cl-te") == 0)
+      framing_seen = length_count == 1 && encoding_count == 1 &&
+          strcmp(first_length, "4") == 0 &&
+          strcmp(transfer_encoding, "chunked") == 0;
+    else if (strcmp(req->path, "/framing-duplicate-cl") == 0)
+      framing_seen = length_count == 2 && encoding_count == 0 &&
+          strcmp(first_length, "4") == 0 &&
+          strcmp(second_length, "5") == 0;
+    else if (strcmp(req->path, "/framing-duplicate-host") == 0)
+      framing_seen = length_count == 0 && host_count == 1 &&
+          strcmp(req->host, "localhost") == 0 &&
+          strcmp(second_host, "attacker.invalid") == 0;
+    else if (strcmp(req->path, "/framing-http10") == 0)
+      framing_seen = (req->flags & HTTP_VERSION_1_0) != 0;
+    if (framing_seen) {
+      static const char marker[] = "prebody-framing-reject";
+      req->owner->flags |= CONN_CLOSE_EMPTY;
+      http_response(req, 400, marker, sizeof(marker) - 1);
+      return KORE_RESULT_ERROR;
+    }
+    return KORE_RESULT_OK;
+  }
   if (strcmp(req->path, "/reject") == 0)
     return KORE_RESULT_ERROR;
   if (strcmp(req->path, "/forbidden") == 0) {
@@ -731,7 +786,8 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
   int ok;
 
   length = snprintf(wire, sizeof(wire),
-      "%s /probe HTTP/1.1\r\nHost: localhost\r\n"
+      "%s /probe HTTP/1.1\r\nHostile: attacker.invalid\r\n"
+      "Host: localhost\r\n"
       "Content-Length: 4\r\n\r\ndata"
       "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n", method);
   assert(length > 0 && (size_t)length < sizeof(wire));
@@ -781,6 +837,72 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
   return ok;
 }
 
+static int
+check_framing_header_visibility(unsigned short port, const char *path,
+    const char *version, const char *headers, int tls)
+{
+  SSL_CTX *ctx;
+  SSL *ssl;
+  struct pollfd watch;
+  char wire[512];
+  char output[1024];
+  size_t used;
+  ssize_t got;
+  int length;
+  int fd;
+  int ok;
+
+  length = snprintf(wire, sizeof(wire),
+      "GET %s HTTP/%s\r\nHost: localhost\r\n%s\r\n",
+      path, version, headers);
+  assert(length > 0 && (size_t)length < sizeof(wire));
+  fd = connect_local(port);
+  ctx = NULL;
+  ssl = NULL;
+  if (tls) {
+    ctx = SSL_CTX_new(TLS_client_method());
+    assert(ctx != NULL);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    ssl = SSL_new(ctx);
+    assert(ssl != NULL);
+    assert(SSL_set_fd(ssl, fd) == 1);
+    assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+    assert(SSL_connect(ssl) == 1);
+    assert(SSL_write(ssl, wire, length) == length);
+  } else {
+    send_exact(fd, wire, (size_t)length);
+  }
+  watch.fd = fd;
+  watch.events = POLLIN;
+  used = 0;
+  output[0] = '\0';
+  while (used < sizeof(output) - 1 &&
+      strstr(output, "prebody-framing-reject") == NULL) {
+    if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
+      break;
+    if (tls)
+      got = SSL_read(ssl, output + used,
+          (int)(sizeof(output) - 1 - used));
+    else
+      got = recv(fd, output + used, sizeof(output) - 1 - used, 0);
+    if (got <= 0)
+      break;
+    used += (size_t)got;
+    output[used] = '\0';
+  }
+  ok = strstr(output, " 400 ") != NULL &&
+      strstr(output, "prebody-framing-reject") != NULL;
+  fprintf(stderr, "%s %s admission visibility: %s\n",
+      tls ? "TLS" : "cleartext", path, ok ? "passed" : "failed");
+  assert(ok);
+  if (ssl != NULL)
+    SSL_free(ssl);
+  if (ctx != NULL)
+    SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+  return ok;
+}
+
 int
 main(void)
 {
@@ -815,6 +937,7 @@ main(void)
   int small_chunked_passed;
   int tls_chunked_passed;
   int framed_methods_passed;
+  int framing_headers_passed;
   char cert_path[128];
   char key_path[128];
 
@@ -880,6 +1003,17 @@ main(void)
   small_chunked_passed = check_small_chunked_ingress(port, 0);
   framed_methods_passed = check_framed_method_handoff(port, "GET", 0);
   framed_methods_passed &= check_framed_method_handoff(port, "OPTIONS", 0);
+  framing_headers_passed = check_framing_header_visibility(port,
+      "/framing-cl-te", "1.1",
+      "Content-Length: 4\r\nTransfer-Encoding: chunked\r\n", 0);
+  framing_headers_passed &= check_framing_header_visibility(port,
+      "/framing-duplicate-cl", "1.1",
+      "Content-Length: 4\r\nContent-Length: 5\r\n", 0);
+  framing_headers_passed &= check_framing_header_visibility(port,
+      "/framing-duplicate-host", "1.1",
+      "Host: attacker.invalid\r\n", 0);
+  framing_headers_passed &= check_framing_header_visibility(port,
+      "/framing-http10", "1.0", "", 0);
   reject_passed = check_local_rejection(port, "/reject", 400);
   reject_passed &= check_local_rejection(port, "/forbidden", 403);
   assert(vectis_stop(app, &error) == VECTIS_OK);
@@ -917,6 +1051,17 @@ main(void)
   tls_chunked_passed = check_small_chunked_ingress(port, 1);
   framed_methods_passed &= check_framed_method_handoff(port, "GET", 1);
   framed_methods_passed &= check_framed_method_handoff(port, "OPTIONS", 1);
+  framing_headers_passed &= check_framing_header_visibility(port,
+      "/framing-cl-te", "1.1",
+      "Content-Length: 4\r\nTransfer-Encoding: chunked\r\n", 1);
+  framing_headers_passed &= check_framing_header_visibility(port,
+      "/framing-duplicate-cl", "1.1",
+      "Content-Length: 4\r\nContent-Length: 5\r\n", 1);
+  framing_headers_passed &= check_framing_header_visibility(port,
+      "/framing-duplicate-host", "1.1",
+      "Host: attacker.invalid\r\n", 1);
+  framing_headers_passed &= check_framing_header_visibility(port,
+      "/framing-http10", "1.0", "", 1);
   tls_raw_passed = check_raw_handoff(port, 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
@@ -926,5 +1071,6 @@ main(void)
   return count == 3 && split_count == 2 && tls_passed &&
       raw_passed && tls_raw_passed && reject_passed && chunked_passed &&
       small_chunked_passed && tls_chunked_passed && framed_methods_passed &&
+      framing_headers_passed &&
       strstr(output, "data") != NULL ? 0 : 1;
 }

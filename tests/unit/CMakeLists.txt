@@ -178,6 +178,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
   endif()
   vectis_add_unit_test(vectis_unit_kore_prebody_handoff
     test_kore_prebody_handoff.c)
+  target_compile_definitions(vectis_unit_kore_prebody_handoff PRIVATE
+    KORE_USE_CURL)
   target_include_directories(vectis_unit_kore_prebody_handoff PRIVATE
     "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
   target_compile_options(vectis_unit_kore_prebody_handoff PRIVATE -std=c99)
