@@ -4,6 +4,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+#include <nghttp2/nghttp2.h>
+#endif
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <poll.h>
@@ -139,6 +142,12 @@ struct loop_metrics {
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   unsigned shared_running_max;
 #endif
+  unsigned h2_negotiated;
+  unsigned h2_requests;
+  unsigned h2_completed;
+  size_t h2_generated;
+  size_t h2_down_received;
+  unsigned h2_down_done;
 };
 
 struct proxy_state;
@@ -173,6 +182,7 @@ struct proxy_state {
   int ws_reject_mode;
   int ws_rejected;
   int http_mode;
+  int h2_mode;
   int http_abort_mode;
   int http_queue_abort_mode;
   int http_queue_held;
@@ -187,6 +197,7 @@ struct proxy_state {
   size_t upload_length;
   size_t upload_offset;
   struct curl_slist *upload_headers;
+  char curl_error[CURL_ERROR_SIZE];
   int http_status_seen;
   int http_headers_ready;
   int http_headers_sent;
@@ -240,6 +251,9 @@ static unsigned short sse_write_fail_port;
 static unsigned short sse_reset_port;
 static unsigned short sse_reset_before_port;
 static unsigned short upload_port;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+static unsigned short h2_port;
+#endif
 static char tls_cert_path[128];
 static char tls_key_path[128];
 
@@ -654,6 +668,157 @@ sse_byte(size_t offset)
     return '\n';
   return 'x';
 }
+
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+struct h2_fixture_connection {
+  SSL *ssl;
+  size_t generated;
+};
+
+static int
+h2_select_alpn(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+    const unsigned char *in, unsigned int inlen, void *arg)
+{
+  unsigned int offset;
+  unsigned int length;
+
+  (void)ssl;
+  (void)arg;
+  offset = 0;
+  while (offset < inlen) {
+    length = in[offset++];
+    if (length > inlen - offset)
+      break;
+    if (length == 2 && memcmp(in + offset, "h2", 2) == 0) {
+      *out = in + offset;
+      *outlen = 2;
+      metrics->h2_negotiated++;
+      return SSL_TLSEXT_ERR_OK;
+    }
+    offset += length;
+  }
+  return SSL_TLSEXT_ERR_NOACK;
+}
+
+static ssize_t
+h2_send(nghttp2_session *session, const uint8_t *data, size_t length,
+    int flags, void *arg)
+{
+  struct h2_fixture_connection *connection;
+  int sent;
+
+  (void)session;
+  (void)flags;
+  connection = (struct h2_fixture_connection *)arg;
+  sent = SSL_write(connection->ssl, data, (int)length);
+  assert(sent == (int)length);
+  return sent;
+}
+
+static ssize_t
+h2_body(nghttp2_session *session, int32_t stream_id, uint8_t *data,
+    size_t length, uint32_t *flags, nghttp2_data_source *source, void *arg)
+{
+  struct h2_fixture_connection *connection;
+  size_t index;
+
+  (void)session;
+  (void)stream_id;
+  (void)source;
+  connection = (struct h2_fixture_connection *)arg;
+  if (length > SSE_BODY_SIZE - connection->generated)
+    length = SSE_BODY_SIZE - connection->generated;
+  assert(length > 0);
+  for (index = 0; index < length; index++)
+    data[index] = sse_byte(connection->generated + index);
+  connection->generated += length;
+  metrics->h2_generated += length;
+  if (connection->generated == SSE_BODY_SIZE)
+    *flags |= NGHTTP2_DATA_FLAG_EOF;
+  return (ssize_t)length;
+}
+
+static int
+h2_request(nghttp2_session *session, const nghttp2_frame *frame,
+    void *arg)
+{
+  static uint8_t status_name[] = ":status";
+  static uint8_t status_value[] = "200";
+  static uint8_t type_name[] = "content-type";
+  static uint8_t type_value[] = "text/event-stream";
+  nghttp2_nv headers[] = {
+    {status_name, status_value, sizeof(status_name) - 1,
+      sizeof(status_value) - 1, NGHTTP2_NV_FLAG_NONE},
+    {type_name, type_value, sizeof(type_name) - 1,
+      sizeof(type_value) - 1, NGHTTP2_NV_FLAG_NONE}
+  };
+  nghttp2_data_provider provider;
+
+  (void)arg;
+  if (frame->hd.type != NGHTTP2_HEADERS ||
+      frame->headers.cat != NGHTTP2_HCAT_REQUEST)
+    return 0;
+  metrics->h2_requests++;
+  memset(&provider, 0, sizeof(provider));
+  provider.read_callback = h2_body;
+  return nghttp2_submit_response(session, frame->hd.stream_id,
+      headers, sizeof(headers) / sizeof(headers[0]), &provider);
+}
+
+static void *
+h2_main(void *arg)
+{
+  struct echo_server *server;
+  struct h2_fixture_connection connection;
+  nghttp2_session_callbacks *callbacks;
+  nghttp2_session *session;
+  struct timeval timeout;
+  unsigned char input[16384];
+  int fd;
+  int received;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  memset(&connection, 0, sizeof(connection));
+  connection.ssl = SSL_new(server->tls_ctx);
+  assert(connection.ssl != NULL);
+  assert(SSL_set_fd(connection.ssl, fd) == 1);
+  assert(SSL_accept(connection.ssl) == 1);
+  assert(nghttp2_session_callbacks_new(&callbacks) == 0);
+  nghttp2_session_callbacks_set_send_callback(callbacks, h2_send);
+  nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, h2_request);
+  assert(nghttp2_session_server_new(&session, callbacks, &connection) == 0);
+  nghttp2_session_callbacks_del(callbacks);
+  assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE,
+      NULL, 0) == 0);
+  assert(nghttp2_session_send(session) == 0);
+  while (connection.generated < SSE_BODY_SIZE) {
+    received = SSL_read(connection.ssl, input, sizeof(input));
+    assert(received > 0);
+    assert(nghttp2_session_mem_recv(session, input,
+        (size_t)received) == received);
+    assert(nghttp2_session_send(session) == 0);
+  }
+  metrics->h2_completed++;
+  for (received = 0; received < 1000 &&
+      __sync_fetch_and_add(&metrics->h2_down_done, 0) == 0;
+      received++)
+    usleep(10000u);
+  assert(__sync_fetch_and_add(&metrics->h2_down_done, 0) == 1);
+  nghttp2_session_del(session);
+  assert(SSL_shutdown(connection.ssl) >= 0);
+  SSL_free(connection.ssl);
+  assert(close(fd) == 0);
+  return NULL;
+}
+#endif
 
 static void *
 sse_main(void *arg)
@@ -1450,8 +1615,13 @@ http_header(char *data, size_t size, size_t count, void *arg)
   state = (struct proxy_state *)arg;
   amount = size * count;
   if (!state->http_status_seen) {
-    assert(amount >= 13);
-    assert(memcmp(data, "HTTP/1.1 200 ", 13) == 0);
+    if (state->h2_mode) {
+      assert(amount >= sizeof("HTTP/2 200") - 1);
+      assert(memcmp(data, "HTTP/2 200", sizeof("HTTP/2 200") - 1) == 0);
+    } else {
+      assert(amount >= 13);
+      assert(memcmp(data, "HTTP/1.1 200 ", 13) == 0);
+    }
     state->http_status_seen = 1;
   } else if (amount == 2 && memcmp(data, "\r\n", 2) == 0) {
     state->http_headers_ready = 1;
@@ -1629,13 +1799,19 @@ static void
 curl_done(struct proxy_state *state, CURLMsg *msg)
 {
   long verify_result;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  long http_version;
+#endif
 
   assert(state != NULL && msg != NULL && msg->msg == CURLMSG_DONE);
   assert(state->phase == 0);
   if (msg->data.result != CURLE_OK)
-    fprintf(stderr, "curl transfer failed: %s phase=%d upload_left=%zu "
-        "read_wait=%d pending=%d paused=%d\n",
-        curl_easy_strerror(msg->data.result), state->phase,
+    fprintf(stderr, "curl transfer failed: %s detail=%s h2=%d "
+        "h2_generated=%zu down_received=%zu "
+        "phase=%d upload_left=%zu read_wait=%d pending=%d paused=%d\n",
+        curl_easy_strerror(msg->data.result), state->curl_error,
+        state->h2_mode, metrics->h2_generated,
+        metrics->h2_down_received, state->phase,
         state->upload_remaining, state->upload_read_wait,
         state->downstream->tls != NULL
             ? SSL_pending(state->downstream->tls) : 0,
@@ -1654,6 +1830,16 @@ curl_done(struct proxy_state *state, CURLMsg *msg)
   }
   assert(msg->data.result == CURLE_OK);
   if (state->http_mode) {
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+    if (state->h2_mode) {
+      assert(curl_easy_getinfo(state->easy, CURLINFO_HTTP_VERSION,
+          &http_version) == CURLE_OK);
+      assert(http_version == CURL_HTTP_VERSION_2_0);
+      assert(curl_easy_getinfo(state->easy, CURLINFO_SSL_VERIFYRESULT,
+          &verify_result) == CURLE_OK);
+      assert(verify_result == 0);
+    }
+#endif
     state->http_transfer_done = 1;
     state->phase = 1;
     http_schedule(state);
@@ -1921,6 +2107,9 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/ws") != 0 &&
       strcmp(req->path, "/ws-reject") != 0 &&
       strcmp(req->path, "/sse") != 0 &&
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+      strcmp(req->path, "/sse-h2") != 0 &&
+#endif
       strcmp(req->path, "/sse-abort") != 0 &&
       strcmp(req->path, "/sse-queue-abort") != 0 &&
       strcmp(req->path, "/sse-write-fail") != 0 &&
@@ -1945,12 +2134,16 @@ takeover(struct http_request *req, const void *data, size_t len)
   state->relay_tls = strcmp(req->path, "/relay-tls") == 0 ||
       state->ws_mode;
   state->upload_mode = strcmp(req->path, "/upload") == 0;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  state->h2_mode = strcmp(req->path, "/sse-h2") == 0;
+#endif
   state->http_abort_mode = strcmp(req->path, "/sse-abort") == 0;
   state->http_queue_abort_mode =
       strcmp(req->path, "/sse-queue-abort") == 0;
   state->http_write_fail_mode =
       strcmp(req->path, "/sse-write-fail") == 0;
   state->http_mode = strcmp(req->path, "/sse") == 0 ||
+      state->h2_mode ||
       strcmp(req->path, "/sse-reset") == 0 ||
       strcmp(req->path, "/sse-reset-before") == 0 ||
       state->http_abort_mode ||
@@ -2026,6 +2219,8 @@ takeover(struct http_request *req, const void *data, size_t len)
 #endif
   state->easy = curl_easy_init();
   assert(state->multi != NULL && state->easy != NULL);
+  assert(curl_easy_setopt(state->easy, CURLOPT_ERRORBUFFER,
+      state->curl_error) == CURLE_OK);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   assert(curl_easy_setopt(state->easy, CURLOPT_PRIVATE, state) == CURLE_OK);
 #else
@@ -2058,13 +2253,18 @@ takeover(struct http_request *req, const void *data, size_t len)
   else if (strcmp(req->path, "/sse-reset-before") == 0)
     target_port = sse_reset_before_port;
   else if (state->http_mode)
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+    target_port = state->h2_mode ? h2_port : sse_port;
+#else
     target_port = sse_port;
+#endif
   else if (state->relay_mode)
     target_port = relay_port;
   assert(snprintf(url, sizeof(url), "%s://%s:%u/",
-      strcmp(req->path, "/pending") == 0 || state->relay_tls
+      strcmp(req->path, "/pending") == 0 || state->relay_tls ||
+          state->h2_mode
           ? "https" : "http",
-      state->relay_tls ? "localhost" : "127.0.0.1",
+      state->relay_tls || state->h2_mode ? "localhost" : "127.0.0.1",
       (unsigned)target_port) > 0);
   assert(curl_easy_setopt(state->easy, CURLOPT_URL, url) == CURLE_OK);
   if (!state->http_mode)
@@ -2083,6 +2283,7 @@ takeover(struct http_request *req, const void *data, size_t len)
     assert(curl_easy_setopt(state->easy, CURLOPT_BUFFERSIZE,
         8192L) == CURLE_OK);
     assert(curl_easy_setopt(state->easy, CURLOPT_HTTP_VERSION,
+        state->h2_mode ? CURL_HTTP_VERSION_2TLS :
         CURL_HTTP_VERSION_1_1) == CURLE_OK);
     assert(curl_easy_setopt(state->easy, CURLOPT_NOPROXY,
         "*") == CURLE_OK);
@@ -2103,6 +2304,14 @@ takeover(struct http_request *req, const void *data, size_t len)
       assert(curl_easy_setopt(state->easy, CURLOPT_READDATA,
           state) == CURLE_OK);
     }
+  }
+  if (state->h2_mode) {
+    assert(curl_easy_setopt(state->easy, CURLOPT_CAINFO,
+        tls_cert_path) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_SSL_VERIFYPEER,
+        1L) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_SSL_VERIFYHOST,
+        2L) == CURLE_OK);
   }
   if (state->relay_tls) {
     assert(curl_easy_setopt(state->easy, CURLOPT_CAINFO,
@@ -2183,10 +2392,12 @@ sse_read_line(int fd, char *line, size_t capacity)
 
 static void
 check_sse(unsigned short port, struct echo_server *server,
-    int early_halfclose)
+    int early_halfclose, int use_h2)
 {
   static const char request[] =
       "GET /sse HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char h2_request[] =
+      "GET /sse-h2 HTTP/1.1\r\nHost: localhost\r\n\r\n";
   struct sockaddr_in addr;
   struct timeval timeout;
   unsigned char body[HTTP_BODY_BUFFER_SIZE];
@@ -2210,7 +2421,10 @@ check_sse(unsigned short port, struct echo_server *server,
   timeout.tv_usec = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
       &timeout, sizeof(timeout)) == 0);
-  send_all(fd, request, sizeof(request) - 1);
+  if (use_h2)
+    send_all(fd, h2_request, sizeof(h2_request) - 1);
+  else
+    send_all(fd, request, sizeof(request) - 1);
   if (early_halfclose)
     assert(shutdown(fd, SHUT_WR) == 0);
   sse_read_line(fd, line, sizeof(line));
@@ -2242,6 +2456,8 @@ check_sse(unsigned short port, struct echo_server *server,
     for (i = 0; i < chunk; i++)
       assert(body[i] == sse_byte(received + i));
     received += chunk;
+    if (use_h2)
+      metrics->h2_down_received = received;
     sse_read_exact(fd, ending, sizeof(ending));
     assert(memcmp(ending, "\r\n", 2) == 0);
     usleep(1000u);
@@ -2250,6 +2466,8 @@ check_sse(unsigned short port, struct echo_server *server,
   sse_read_line(fd, line, sizeof(line));
   assert(strcmp(line, "\r\n") == 0);
   assert(recv(fd, ending, sizeof(ending), 0) == 0);
+  if (use_h2)
+    __sync_lock_test_and_set(&metrics->h2_down_done, 1);
   assert(close(fd) == 0);
 }
 
@@ -2265,7 +2483,7 @@ concurrent_sse_main(void *arg)
   struct concurrent_sse_client *client;
 
   client = (struct concurrent_sse_client *)arg;
-  check_sse(client->port, client->server, 0);
+  check_sse(client->port, client->server, 0, 0);
   return NULL;
 }
 #endif
@@ -2752,7 +2970,7 @@ check_ws(unsigned short port, struct echo_server *sse_server)
   assert(memcmp(bytes + sizeof(ws_response) - 1,
       ws_server_early, sizeof(ws_server_early)) == 0);
   if (sse_server != NULL)
-    check_sse(port, sse_server, 0);
+    check_sse(port, sse_server, 0, 0);
   send_all(fd, ws_client_later, sizeof(ws_client_later));
   sse_read_exact(fd, bytes, sizeof(ws_server_later));
   assert(memcmp(bytes, ws_server_later,
@@ -3030,6 +3248,9 @@ main(void)
   struct echo_server upload;
   struct echo_server upload_tls;
   struct echo_server stalled;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  struct echo_server h2;
+#endif
   struct sockaddr_in addr;
   struct timeval timeout;
   vectis_app_config config;
@@ -3068,6 +3289,10 @@ main(void)
   prepare_echo(&upload);
   prepare_echo(&upload_tls);
   prepare_echo(&stalled);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  prepare_echo(&h2);
+  h2_port = h2.port;
+#endif
   upstream_port = upstream.port;
   relay_port = relay.port;
   relay_tls_port = relay_tls.port;
@@ -3183,17 +3408,29 @@ main(void)
   check_ws_reject(port);
   assert(pthread_join(ws_reject.thread, NULL) == 0);
   assert(close(ws_reject.listener) == 0);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  h2.tls_ctx = relay_tls.tls_ctx;
+  SSL_CTX_set_alpn_select_cb(h2.tls_ctx, h2_select_alpn, NULL);
+  assert(pthread_create(&h2.thread, NULL, h2_main, &h2) == 0);
+  check_sse(port, &h2, 0, 1);
+  assert(pthread_join(h2.thread, NULL) == 0);
+  assert(close(h2.listener) == 0);
+  assert(metrics->h2_negotiated == 1);
+  assert(metrics->h2_requests == 1);
+  assert(metrics->h2_completed == 1);
+  assert(metrics->h2_generated == SSE_BODY_SIZE);
+#endif
   SSL_CTX_free(relay_tls.tls_ctx);
 
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   __sync_lock_test_and_set(&sse.allow_body, 0);
 #endif
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
-  check_sse(port, &sse, 0);
+  check_sse(port, &sse, 0, 0);
   assert(pthread_join(sse.thread, NULL) == 0);
   __sync_lock_test_and_set(&sse.allow_body, 0);
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
-  check_sse(port, &sse, 1);
+  check_sse(port, &sse, 1, 0);
   assert(pthread_join(sse.thread, NULL) == 0);
 #if !defined(VECTIS_PROXY_SHARED_MULTI)
   assert(close(sse.listener) == 0);
@@ -3361,7 +3598,7 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 19);
+  assert(metrics->disconnects == 20);
 #else
   assert(metrics->disconnects == 17);
 #endif
@@ -3370,8 +3607,10 @@ main(void)
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->http_done == 6);
-  assert(metrics->http_headers_ready == 11);
+  assert(metrics->http_done == 7);
+  assert(metrics->http_headers_ready == 12);
+  assert(metrics->h2_down_received == SSE_BODY_SIZE);
+  assert(metrics->h2_down_done == 1);
 #else
   assert(metrics->http_done == 4);
   assert(metrics->http_headers_ready == 9);
