@@ -411,8 +411,8 @@ for the entire HTTP/SSE/WebSocket exchange.
 
 The full candidate is **not proved**. Kqueue still needs an equivalent
 interest helper and test. The TLS probes cover ordinary retry directions;
-neither has forced a cross-direction retry. The per-event budget has not
-exercised continuation after OpenSSL holds decrypted bytes. The earlier
+neither has forced a cross-direction retry. The downstream TLS upload now
+exercises continuation after OpenSSL holds decrypted bytes. The earlier
 queue-drain probe covers a buffered response and a cleartext live stream
 completion callback, but not stream abort during takeover. The new bounded
 Kore-output path passes the predecessor/keepalive sequence over cleartext and
