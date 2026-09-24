@@ -410,10 +410,13 @@ case, both below half the total response volume. In representative runs,
 whole-process RSS moved from 9.0 to 11.1 MiB with four connections and
 from 6.7 to 13.0 MiB with sixteen. RSS stayed level during the pause, then
 all 256 MiB of body bytes were verified after resume. Both variants passed
-five serial repetitions. The test enforces a whole-process observed-peak
+five serial repetitions. The test enforces a whole-process sampled-peak
 RSS delta of at most 4 MiB per transfer and at most 4 MiB additional growth
-after all transfers pause. Observed peak uses the larger of current RSS and
-Linux `ru_maxrss`, since `ru_maxrss` alone read below current RSS in one run.
+after all transfers pause. It samples current RSS in each download callback
+and at the pause, wait, completion, and cleanup boundaries. It separately
+checks growth in Linux `ru_maxrss` from its pre-transfer value. The latter
+can already exceed current RSS before the test begins, so its absolute value
+is not a valid transfer peak baseline.
 The server and client share the process, so this includes both sides. These
 are regression ceilings for the pinned build, not an enforceable libcurl
 allocation bound or a production per-connection allowance. Large headers,
@@ -448,6 +451,19 @@ client descriptor count returned from 7 to 5. The test enforces a wider
 That ceiling is not a hard libcurl allocation cap. It measures the pinned
 Linux debug bundle under this one header pattern and connection lifetime.
 
+The same isolated sixteen-connection test was compiled against the pinned
+x86_64 Linux GNU release `c.pkt.systems` archive, then run with resume and
+cancellation. Both pass: the release client RSS rose about 4.1 MiB above its
+pre-transfer value and stayed level while paused, and all sixteen connections
+closed after cancellation. This also executes the release archive's libcurl
+feature checks for asynchronous DNS, HTTP/2, and TLS. The first manual release
+run exposed a probe error: the process began with a roughly 230 MiB inherited
+`ru_maxrss` high-water mark despite only about 13 MiB of current RSS, so an
+absolute high-water assertion failed despite no further high-water growth. The
+callback sampling and high-water-delta checks above correct that false
+failure. They do not make the 16 MiB regression ceiling a hard allocation
+bound or prove other target archives.
+
 The [tagged libcurl 8.22.0 HTTP/2 source](https://github.com/curl/curl/blob/curl-8_22_0/lib/http2.c)
 sets a 64 KiB initial stream window, a 10 MiB maximum stream window, and a
 16 KiB chunk pool with room for up to 10 MiB of network input. It sets the
@@ -460,13 +476,12 @@ resource policy. A client-only measurement in a Kore worker, with header and
 reuse stress, is still required before choosing a numerical admission
 reserve.
 
-The HTTP/2 probe now also asserts the pinned runtime libcurl reports
-`AsynchDNS`, `HTTP2`, and `SSL`. The host-debug and x86_64 Linux GNU release
-presets in [`scripts/deps.sh`](../scripts/deps.sh) select the same
-`c.pkt.systems-0.10.0-x86_64-linux-gnu` archive by the same SHA-256, so this
-feature check applies to that exact release dependency payload. It does not
-establish the capabilities of the distinct musl, ARM, or Darwin archives;
-those need an explicit release-target check before a proxy route is available.
+The HTTP/2 probe asserts that runtime libcurl reports `AsynchDNS`, `HTTP2`,
+and `SSL`. The host-debug and x86_64 Linux GNU release presets in
+[`scripts/deps.sh`](../scripts/deps.sh) select the same
+`c.pkt.systems-0.10.0-x86_64-linux-gnu` archive by SHA-256; both were
+executed above. The distinct musl, ARM, and Darwin archives still need
+explicit checks before a proxy route is available on those targets.
 
 ## Executable finding: pre-body handoff and replay
 

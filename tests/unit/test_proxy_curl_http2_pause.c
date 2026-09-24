@@ -36,6 +36,9 @@
 #define MAX_RSS_DELTA_KB (CONCURRENT_TRANSFERS * 4096u)
 #define ISOLATED_RSS_DELTA_KB (CONCURRENT_TRANSFERS * 1024u)
 
+static unsigned long sampled_peak_rss_kb;
+static unsigned long rss_kb(void);
+
 struct h2_counts {
   size_t generated;
   unsigned accepted;
@@ -331,10 +334,14 @@ static size_t
 pause_download(char *data, size_t size, size_t count, void *arg)
 {
   struct client_state *state;
+  unsigned long current_rss;
   size_t amount;
   size_t i;
 
   state = (struct client_state *)arg;
+  current_rss = rss_kb();
+  if (current_rss > sampled_peak_rss_kb)
+    sampled_peak_rss_kb = current_rss;
   amount = size * count;
   if (!state->resume) {
     state->paused = 1;
@@ -384,14 +391,20 @@ open_fd_count(void)
 }
 
 static unsigned long
-observed_peak_rss_kb(unsigned long current, unsigned long previous)
+high_water_rss_kb(void)
 {
   struct rusage usage;
 
   assert(getrusage(RUSAGE_SELF, &usage) == 0);
   assert(usage.ru_maxrss > 0);
-  if ((unsigned long)usage.ru_maxrss > current)
-    current = (unsigned long)usage.ru_maxrss;
+  return (unsigned long)usage.ru_maxrss;
+}
+
+static unsigned long
+observed_peak_rss_kb(unsigned long current, unsigned long previous)
+{
+  if (sampled_peak_rss_kb > current)
+    current = sampled_peak_rss_kb;
   if (previous > current)
     return previous;
   return current;
@@ -426,13 +439,16 @@ main(void)
   unsigned after_cleanup_fds;
   int i;
   unsigned long baseline;
+  unsigned long baseline_hwm;
   unsigned long after_pause;
   unsigned long after_wait;
   unsigned long after_resume;
   unsigned long after_cleanup;
+  unsigned long after_hwm;
   unsigned long peak_at_pause;
   unsigned long peak_after_wait;
   unsigned long peak_after_resume;
+  unsigned long peak_after_cleanup;
   size_t generated_at_pause;
   size_t generated_after_wait;
   time_t resume_start;
@@ -500,6 +516,8 @@ main(void)
     assert(curl_easy_setopt(easy[i], CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   }
   baseline = rss_kb();
+  baseline_hwm = high_water_rss_kb();
+  sampled_peak_rss_kb = baseline;
   baseline_fds = open_fd_count();
   for (i = 0; i < CONCURRENT_TRANSFERS; i++)
     assert(curl_multi_add_handle(multi, easy[i]) == CURLM_OK);
@@ -578,16 +596,21 @@ main(void)
   X509_free(cert);
   EVP_PKEY_free(key);
   after_cleanup = rss_kb();
+  peak_after_cleanup = observed_peak_rss_kb(after_cleanup,
+      peak_after_resume);
+  after_hwm = high_water_rss_kb();
   after_cleanup_fds = open_fd_count();
   assert(after_cleanup_fds <= baseline_fds);
   if (cancel_after_pause)
     assert(time(NULL) - cleanup_start < 10);
   fprintf(stderr, "curl h2 pause: baseline=%luKB paused=%luKB later=%luKB "
       "resumed=%luKB cleanup=%luKB cancel=%d isolated=%d fds=%u,%u "
-      "peaks=%lu,%lu,%luKB generated=%lu,%lu,%lu\n",
+      "peaks=%lu,%lu,%lu,%luKB hwm=%lu,%luKB generated=%lu,%lu,%lu\n",
       baseline, after_pause, after_wait, after_resume, after_cleanup,
       cancel_after_pause, isolated_server, baseline_fds, after_cleanup_fds,
       peak_at_pause, peak_after_wait, peak_after_resume,
+      peak_after_cleanup,
+      baseline_hwm, after_hwm,
       (unsigned long)generated_at_pause,
       (unsigned long)generated_after_wait,
       (unsigned long)counts->generated);
@@ -613,8 +636,12 @@ main(void)
   assert(peak_after_resume >= after_resume);
   assert(peak_after_resume >= baseline);
   assert(peak_after_resume - baseline <= MAX_RSS_DELTA_KB);
+  assert(peak_after_cleanup >= after_cleanup);
+  assert(peak_after_cleanup - baseline <= MAX_RSS_DELTA_KB);
+  assert(after_hwm >= baseline_hwm);
+  assert(after_hwm - baseline_hwm <= MAX_RSS_DELTA_KB);
   if (isolated_server)
-    assert(peak_after_resume - baseline <= ISOLATED_RSS_DELTA_KB);
+    assert(peak_after_cleanup - baseline <= ISOLATED_RSS_DELTA_KB);
   assert(munmap(counts, sizeof(*counts)) == 0);
   return 0;
 }
