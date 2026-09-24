@@ -178,8 +178,8 @@ the downstream finishes: closing it immediately after generating the final
 HTTP/2 DATA frame caused a TCP reset from unread client control frames, which
 the test caught as a truncated response. This proves one HTTP/2 SSE transfer
 through the worker loop, not a production libcurl memory cap. The spec's
-separate `auto` and forced-HTTP/1.1 pools, HTTP/2 cancellation under load,
-connection reuse under load, and BSD kqueue behavior remain
+separate `auto` and forced-HTTP/1.1 pools, connection reuse under load, and
+BSD kqueue behavior remain
 open.
 
 The worker-shared probe now also runs sixteen concurrent HTTP/2 SSE downloads
@@ -196,8 +196,8 @@ enforces a 32 MiB regression ceiling for the sixteen transfers, and keeps
 Kore's output queue to one bounded netbuf per exchange. Five serial runs pass;
 all 256 MiB arrive after resume. This proves coupled worker backpressure and
 a measured memory envelope for this pinned Linux debug fixture. It does not
-cover cancellation during those paused HTTP/2 transfers, adverse headers,
-reuse under load, other target bundles, or a production admission reserve.
+cover adverse headers, reuse under load, other target bundles, or a production
+admission reserve.
 
 A separate worker-loop probe receives one 4 KiB chunk from a live HTTP/2
 response, resets the downstream socket, and checks that the proxy cancels its
@@ -205,8 +205,21 @@ easy handle. The HTTP/2 peer observes `RST_STREAM` promptly. The proxy then
 completes a second SSE request through the same HTTP/2 session and TLS
 connection; the fixture accepts only one upstream socket and verifies two
 request stream IDs. Five serial runs passed. This establishes cancellation
-and sequential reuse of one HTTP/2 connection, but does not establish
-simultaneous cancellation of paused streams or reuse under load.
+and sequential reuse of one HTTP/2 connection.
+
+The worker-shared probe also starts sixteen separate verified HTTP/2 TLS
+connections and holds all downstream readers until every curl download
+callback has paused. It then resets all sixteen downstream sockets. Every
+exchange is canceled, and each HTTP/2 peer receives `RST_STREAM` before
+closing; five serial runs pass. The fixture defers its body producer after
+2 MiB per connection so it can keep reading control frames. An earlier
+fixture version blocked in `SSL_write()` and could not observe resets until
+its write timeout; this is a server-side observation limit, not evidence
+that the worker failed to cancel. The worker's RSS rises about 3 MiB over
+this batch in the pinned Linux debug build, below the probe's 32 MiB
+regression ceiling. This validates simultaneous cancellation with
+multiplexing disabled, but does not establish behavior for multiplexed
+streams, connection reuse under load, or a production memory allowance.
 
 Source inspection exposed a watcher lifetime difference that the Linux
 probe had missed. [`bsd.c`](../vendor/kore/upstream/src/bsd.c) returns separate
@@ -775,7 +788,7 @@ harness and production proxy cancellation paths still need their own proof.
 | Response output | `net_send_stream()` callbacks need an independent lifetime because Kore can invoke them during connection removal after freeing `hdlr_extra`. `net_send_queue()` instead copies a bounded chunk and needs no proxy completion callback. The proxy detects queue drain in its connection event handler before resuming upstream reads. Its first flush is deferred beyond the pre-body hook to avoid reentering a predecessor stream callback. | One 8 KiB Kore netbuf and one 8 KiB scratch buffer suffice for the 1 MiB slow-peer probe over cleartext and double TLS. The queue-based writer preserves a live streamed predecessor, its own response, and an ordinary successor over cleartext and TLS. A reset with a queued cleartext or TLS netbuf and a fault-injected cleartext write error cancel cleanly. A TLS write-call failure remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) still enforces the header timer after pre-body takeover unless the proxy clears it. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis exposes the worker teardown hook through its static-runtime symbol table. | A one-second timer killed an idle takeover before the fix; clearing `http_timeout` preserved it. Active downstream connection was observed at teardown and disconnected once. A stalled upstream TLS handshake was cancelled with its curl handle, Kore socket watchers, and deadline timer before event-loop cleanup. TCP upstream resets before and after response commitment, queued output abort over cleartext and TLS, and a fault-injected cleartext write error pass worker-loop probes. Other callback phases and timeout policies remain open. |
-| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, same-origin ordinary HTTPS on a multi retaining a connect-only tunnel, early response during paused HTTP/1.1 and HTTP/2 uploads, Linux Kore worker-loop connect-only/tunnel handoff, worker-shared HTTP/1.1 multi with overlapping SSE/upload and retained WebSocket tunnel, one completed HTTP/2 SSE download and sixteen concurrently paused and resumed HTTP/2 SSE downloads in that worker multi, 1 MiB coupled cleartext and double-TLS relays, a fixed split-header WebSocket `403` with a 1 MiB body, and standalone four- and sixteen-connection paused/resumed HTTPS HTTP/2 probes pass. A downstream reset of a live HTTP/2 stream sends `RST_STREAM`; a second SSE response completes on that same TLS connection in the worker loop. Separate protocol pools in Kore, general HTTP framing, other WebSocket rejection cases, other target bundles, simultaneous HTTP/2 cancellation and reuse under load, and a production HTTP/2 memory allowance remain open. |
+| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, same-origin ordinary HTTPS on a multi retaining a connect-only tunnel, early response during paused HTTP/1.1 and HTTP/2 uploads, Linux Kore worker-loop connect-only/tunnel handoff, worker-shared HTTP/1.1 multi with overlapping SSE/upload and retained WebSocket tunnel, one completed HTTP/2 SSE download and sixteen concurrently paused and resumed HTTP/2 SSE downloads in that worker multi, 1 MiB coupled cleartext and double-TLS relays, a fixed split-header WebSocket `403` with a 1 MiB body, and standalone four- and sixteen-connection paused/resumed HTTPS HTTP/2 probes pass. A downstream reset of a live HTTP/2 stream sends `RST_STREAM`; a second SSE response completes on that same TLS connection in the worker loop. Sixteen paused HTTP/2 transfers on separate TLS connections also cancel with one `RST_STREAM` each when all downstreams reset. Separate protocol pools in Kore, general HTTP framing, other WebSocket rejection cases, other target bundles, multiplexed HTTP/2 cancellation, reuse under load, and a production HTTP/2 memory allowance remain open. |
 
 ## Minimum executable proof before architecture commitment
 

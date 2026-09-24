@@ -95,6 +95,7 @@ struct echo_server {
   volatile int release_final;
   size_t h2_body_size;
   int h2_abort_mode;
+  int h2_cancel_mode;
 };
 
 struct loop_metrics {
@@ -184,6 +185,11 @@ struct loop_metrics {
   unsigned h2_abort_terminal;
   unsigned h2_abort_cancelled;
   unsigned h2_abort_reuse_done;
+  unsigned h2_cancel_headers;
+  unsigned h2_cancel_paused;
+  unsigned h2_cancel_cancelled;
+  unsigned h2_cancel_rst_seen;
+  unsigned h2_cancel_terminal;
   pid_t h2_scale_worker_pid;
   unsigned long h2_scale_worker_baseline_kb;
   unsigned long h2_scale_worker_peak_kb;
@@ -229,6 +235,8 @@ struct proxy_state {
   int h2_scale_mode;
   int h2_scale_pause_seen;
   int h2_abort_mode;
+  int h2_cancel_mode;
+  int h2_cancel_pause_seen;
   int http_abort_mode;
   int http_queue_abort_mode;
   int http_queue_held;
@@ -301,6 +309,7 @@ static struct worker_curl_loop worker_curl;
 static struct loop_metrics *metrics;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
 static volatile int h2_scale_release;
+static volatile int h2_cancel_release;
 #endif
 static struct curl_watch *retired_watches;
 static struct kore_timer *retired_watches_timer;
@@ -322,6 +331,7 @@ static unsigned short upload_chunked_port;
 static unsigned short h2_port;
 static unsigned short h2_scale_port;
 static unsigned short h2_abort_port;
+static unsigned short h2_cancel_port;
 #endif
 static char tls_cert_path[128];
 static char tls_key_path[128];
@@ -870,6 +880,8 @@ struct h2_fixture_connection {
   size_t generated;
   size_t body_size;
   int abort_mode;
+  int cancel_mode;
+  int cancel_rst_seen;
   int32_t aborted_stream_id;
   int32_t reused_stream_id;
   size_t reuse_generated;
@@ -917,6 +929,11 @@ h2_send(nghttp2_session *session, const uint8_t *data, size_t length,
   (void)flags;
   connection = (struct h2_fixture_connection *)arg;
   sent = SSL_write(connection->ssl, data, (int)length);
+  if (sent != (int)length && connection->cancel_mode)
+    fprintf(stderr, "h2 cancel send: sent=%d ssl_error=%d errno=%d "
+        "generated=%zu cancelled=%u rst=%u\n", sent,
+        SSL_get_error(connection->ssl, sent), errno, connection->generated,
+        metrics->h2_cancel_cancelled, metrics->h2_cancel_rst_seen);
   assert(sent == (int)length);
   return sent;
 }
@@ -931,7 +948,12 @@ h2_body(nghttp2_session *session, int32_t stream_id, uint8_t *data,
   (void)session;
   (void)source;
   connection = (struct h2_fixture_connection *)arg;
-  if (connection->abort_mode) {
+  if (connection->cancel_mode) {
+    if (connection->generated == 2u * 1024u * 1024u)
+      return NGHTTP2_ERR_DEFERRED;
+    if (length > 2u * 1024u * 1024u - connection->generated)
+      length = 2u * 1024u * 1024u - connection->generated;
+  } else if (connection->abort_mode) {
     if (stream_id == connection->aborted_stream_id) {
       if (connection->generated == SSE_CHUNK_SIZE)
         return NGHTTP2_ERR_DEFERRED;
@@ -981,6 +1003,11 @@ h2_request(nghttp2_session *session, const nghttp2_frame *frame,
   struct h2_fixture_connection *connection;
 
   connection = (struct h2_fixture_connection *)arg;
+  if (connection->cancel_mode && frame->hd.type == NGHTTP2_RST_STREAM) {
+    connection->cancel_rst_seen = 1;
+    __sync_fetch_and_add(&metrics->h2_cancel_rst_seen, 1);
+    return 0;
+  }
   if (connection->abort_mode && frame->hd.type == NGHTTP2_RST_STREAM) {
     __sync_fetch_and_add(&metrics->h2_abort_rst_seen, 1);
     return 0;
@@ -1025,6 +1052,7 @@ h2_connection_main(void *arg)
   memset(&connection, 0, sizeof(connection));
   connection.body_size = args->server->h2_body_size;
   connection.abort_mode = args->server->h2_abort_mode;
+  connection.cancel_mode = args->server->h2_cancel_mode;
   connection.ssl = SSL_new(args->server->tls_ctx);
   assert(connection.ssl != NULL);
   assert(SSL_set_fd(connection.ssl, args->fd) == 1);
@@ -1037,13 +1065,14 @@ h2_connection_main(void *arg)
   assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE,
       NULL, 0) == 0);
   assert(nghttp2_session_send(session) == 0);
-  while ((!connection.abort_mode &&
+  while ((!connection.abort_mode && !connection.cancel_mode &&
       connection.generated < connection.body_size) ||
+      (connection.cancel_mode && !connection.cancel_rst_seen) ||
       (connection.abort_mode &&
       (__sync_fetch_and_add(&metrics->h2_abort_rst_seen, 0) == 0 ||
       connection.reuse_generated < SSE_BODY_SIZE))) {
     received = SSL_read(connection.ssl, input, sizeof(input));
-    if (connection.abort_mode && received <= 0) {
+    if ((connection.abort_mode || connection.cancel_mode) && received <= 0) {
       fprintf(stderr, "h2 abort upstream read: result=%d ssl_error=%d "
           "errno=%d generated=%zu\n", received,
           SSL_get_error(connection.ssl, received), errno,
@@ -1056,6 +1085,14 @@ h2_connection_main(void *arg)
     assert(nghttp2_session_mem_recv(session, input,
         (size_t)received) == received);
     assert(nghttp2_session_send(session) == 0);
+  }
+  if (connection.cancel_mode) {
+    assert(connection.cancel_rst_seen == 1);
+    __sync_fetch_and_add(&metrics->h2_cancel_terminal, 1);
+    nghttp2_session_del(session);
+    SSL_free(connection.ssl);
+    assert(close(args->fd) == 0);
+    return NULL;
   }
   if (connection.abort_mode) {
     assert(connection.generated == SSE_CHUNK_SIZE + SSE_BODY_SIZE);
@@ -1378,6 +1415,7 @@ prepare_echo(struct echo_server *server)
   server->release_final = 0;
   server->h2_body_size = 0;
   server->h2_abort_mode = 0;
+  server->h2_cancel_mode = 0;
   server->listener = socket(AF_INET, SOCK_STREAM, 0);
   assert(server->listener >= 0);
   memset(&addr, 0, sizeof(addr));
@@ -2148,6 +2186,10 @@ http_download(char *data, size_t size, size_t count, void *arg)
       state->h2_scale_pause_seen = 1;
       metrics->h2_scale_paused++;
     }
+    if (state->h2_cancel_mode && !state->h2_cancel_pause_seen) {
+      state->h2_cancel_pause_seen = 1;
+      metrics->h2_cancel_paused++;
+    }
 #endif
     return CURL_WRITEFUNC_PAUSE;
   }
@@ -2602,8 +2644,10 @@ downstream_disconnect(struct connection *connection)
   metrics->disconnects++;
   if (state != NULL) {
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-    if (state->h2_abort_mode && state->multi != NULL)
+    if (state->h2_abort_mode && !state->http_transfer_done)
       metrics->h2_abort_cancelled++;
+    if (state->h2_cancel_mode && state->multi != NULL)
+      metrics->h2_cancel_cancelled++;
 #endif
     if (state->http_abort_mode && state->multi != NULL)
       metrics->http_abort_cancelled++;
@@ -2746,6 +2790,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/sse-h2") != 0 &&
       strcmp(req->path, "/sse-h2-scale") != 0 &&
       strcmp(req->path, "/sse-h2-abort") != 0 &&
+      strcmp(req->path, "/sse-h2-cancel") != 0 &&
 #endif
       strcmp(req->path, "/sse-abort") != 0 &&
       strcmp(req->path, "/sse-queue-abort") != 0 &&
@@ -2784,8 +2829,10 @@ takeover(struct http_request *req, const void *data, size_t len)
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   state->h2_scale_mode = strcmp(req->path, "/sse-h2-scale") == 0;
   state->h2_abort_mode = strcmp(req->path, "/sse-h2-abort") == 0;
+  state->h2_cancel_mode = strcmp(req->path, "/sse-h2-cancel") == 0;
   state->h2_mode = strcmp(req->path, "/sse-h2") == 0 ||
-      state->h2_scale_mode || state->h2_abort_mode;
+      state->h2_scale_mode || state->h2_abort_mode ||
+      state->h2_cancel_mode;
   if (state->h2_scale_mode) {
     if (metrics->h2_scale_admitted == 0) {
       metrics->h2_scale_worker_pid = getpid();
@@ -2918,7 +2965,8 @@ takeover(struct http_request *req, const void *data, size_t len)
     target_port = sse_reset_before_port;
   else if (state->http_mode)
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-    target_port = state->h2_abort_mode ? h2_abort_port :
+    target_port = state->h2_cancel_mode ? h2_cancel_port :
+        state->h2_abort_mode ? h2_abort_port :
         state->h2_scale_mode ? h2_scale_port :
         state->h2_mode ? h2_port : sse_port;
 #else
@@ -3292,6 +3340,52 @@ h2_scale_client_main(void *arg)
   assert(recv(fd, ending, sizeof(ending), 0) == 0);
   __sync_fetch_and_add(&metrics->h2_scale_received, received);
   __sync_fetch_and_add(&metrics->h2_scale_done, 1);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void *
+h2_cancel_client_main(void *arg)
+{
+  static const char request[] =
+      "GET /sse-h2-cancel HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct h2_scale_client *client;
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  struct linger reset;
+  char line[256];
+  int attempt;
+  int fd;
+
+  client = (struct h2_scale_client *)arg;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(client->port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  send_all(fd, request, sizeof(request) - 1);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  for (;;) {
+    sse_read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+  }
+  __sync_fetch_and_add(&metrics->h2_cancel_headers, 1);
+  for (attempt = 0; attempt < 10000 &&
+      __sync_fetch_and_add(&h2_cancel_release, 0) == 0; attempt++)
+    usleep(1000u);
+  assert(__sync_fetch_and_add(&h2_cancel_release, 0) == 1);
+  reset.l_onoff = 1;
+  reset.l_linger = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
+      &reset, sizeof(reset)) == 0);
   assert(close(fd) == 0);
   return NULL;
 }
@@ -4479,6 +4573,7 @@ main(void)
   struct echo_server h2;
   struct echo_server h2_scale;
   struct echo_server h2_abort;
+  struct echo_server h2_cancel;
 #endif
   struct sockaddr_in addr;
   struct timeval timeout;
@@ -4499,6 +4594,11 @@ main(void)
   pthread_t concurrent_client;
   struct h2_scale_client h2_scale_clients[H2_SCALE_CONNECTIONS];
   pthread_t h2_scale_threads[H2_SCALE_CONNECTIONS];
+  struct h2_scale_client h2_cancel_clients[H2_SCALE_CONNECTIONS];
+  pthread_t h2_cancel_threads[H2_SCALE_CONNECTIONS];
+  size_t h2_cancel_generated_before;
+  unsigned long h2_cancel_rss_before;
+  unsigned long h2_cancel_rss_after;
   unsigned long h2_scale_rss_at_pause;
   unsigned long h2_scale_rss_after_wait;
   unsigned h2_scale_pumps_before;
@@ -4542,9 +4642,11 @@ main(void)
   prepare_echo(&h2);
   prepare_echo(&h2_scale);
   prepare_echo(&h2_abort);
+  prepare_echo(&h2_cancel);
   h2_port = h2.port;
   h2_scale_port = h2_scale.port;
   h2_abort_port = h2_abort.port;
+  h2_cancel_port = h2_cancel.port;
 #endif
   upstream_port = upstream.port;
   relay_port = relay.port;
@@ -4778,6 +4880,7 @@ main(void)
       metrics->h2_generated - SSE_BODY_SIZE -
       H2_SCALE_CONNECTIONS * H2_SCALE_BODY_SIZE);
   assert(metrics->h2_abort_terminal == 1);
+  assert(metrics->h2_abort_cancelled == 1);
   assert(metrics->h2_abort_reuse_done == 1);
   assert(metrics->h2_abort_tcp_closed == 0);
   assert(pthread_join(h2_abort.thread, NULL) == 0);
@@ -4788,6 +4891,54 @@ main(void)
   assert(metrics->h2_generated == SSE_BODY_SIZE +
       H2_SCALE_CONNECTIONS * H2_SCALE_BODY_SIZE + SSE_CHUNK_SIZE +
       SSE_BODY_SIZE);
+
+  h2_cancel.tls_ctx = relay_tls.tls_ctx;
+  h2_cancel.h2_body_size = H2_SCALE_BODY_SIZE;
+  h2_cancel.h2_cancel_mode = 1;
+  h2_cancel_generated_before = metrics->h2_generated;
+  h2_cancel_rss_before = process_rss_kb(metrics->h2_scale_worker_pid);
+  assert(pthread_create(&h2_cancel.thread, NULL,
+      h2_scale_main, &h2_cancel) == 0);
+  for (i = 0; i < H2_SCALE_CONNECTIONS; i++) {
+    h2_cancel_clients[i].port = port;
+    assert(pthread_create(&h2_cancel_threads[i], NULL,
+        h2_cancel_client_main, &h2_cancel_clients[i]) == 0);
+  }
+  for (attempt = 0; attempt < 10000 &&
+      (__sync_fetch_and_add(&metrics->h2_cancel_headers, 0) <
+          H2_SCALE_CONNECTIONS ||
+      __sync_fetch_and_add(&metrics->h2_cancel_paused, 0) <
+          H2_SCALE_CONNECTIONS); attempt++)
+    usleep(1000u);
+  fprintf(stderr, "worker h2 cancel ready: headers=%u paused=%u "
+      "requests=%u generated=%zu wait=%d\n",
+      metrics->h2_cancel_headers, metrics->h2_cancel_paused,
+      metrics->h2_requests,
+      metrics->h2_generated - h2_cancel_generated_before, attempt);
+  assert(metrics->h2_cancel_headers == H2_SCALE_CONNECTIONS);
+  assert(metrics->h2_cancel_paused == H2_SCALE_CONNECTIONS);
+  __sync_lock_test_and_set(&h2_cancel_release, 1);
+  for (i = 0; i < H2_SCALE_CONNECTIONS; i++)
+    assert(pthread_join(h2_cancel_threads[i], NULL) == 0);
+  fprintf(stderr, "worker h2 cancel clients joined: cancelled=%u rst=%u "
+      "terminal=%u\n", metrics->h2_cancel_cancelled,
+      metrics->h2_cancel_rst_seen, metrics->h2_cancel_terminal);
+  assert(pthread_join(h2_cancel.thread, NULL) == 0);
+  assert(close(h2_cancel.listener) == 0);
+  h2_cancel_rss_after = process_rss_kb(metrics->h2_scale_worker_pid);
+  fprintf(stderr, "worker h2 cancel: cancelled=%u rst=%u terminal=%u "
+      "rss=%lu,%luKB generated=%zu\n", metrics->h2_cancel_cancelled,
+      metrics->h2_cancel_rst_seen, metrics->h2_cancel_terminal,
+      h2_cancel_rss_before, h2_cancel_rss_after,
+      metrics->h2_generated - h2_cancel_generated_before);
+  assert(metrics->h2_cancel_cancelled == H2_SCALE_CONNECTIONS);
+  assert(metrics->h2_cancel_rst_seen == H2_SCALE_CONNECTIONS);
+  assert(metrics->h2_cancel_terminal == H2_SCALE_CONNECTIONS);
+  assert(h2_cancel_rss_after <= h2_cancel_rss_before + 32768u);
+  assert(metrics->h2_generated - h2_cancel_generated_before <
+      H2_SCALE_CONNECTIONS * H2_SCALE_BODY_SIZE);
+  assert(metrics->h2_negotiated == 2 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->h2_requests == 3 + 2 * H2_SCALE_CONNECTIONS);
 #endif
   SSL_CTX_free(relay_tls.tls_ctx);
 
@@ -5015,7 +5166,7 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 24 + H2_SCALE_CONNECTIONS);
+  assert(metrics->disconnects == 24 + 2 * H2_SCALE_CONNECTIONS);
 #else
   assert(metrics->disconnects == 19);
 #endif
@@ -5025,7 +5176,7 @@ main(void)
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   assert(metrics->http_done == 14 + H2_SCALE_CONNECTIONS);
-  assert(metrics->http_headers_ready == 20 + H2_SCALE_CONNECTIONS);
+  assert(metrics->http_headers_ready == 20 + 2 * H2_SCALE_CONNECTIONS);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
