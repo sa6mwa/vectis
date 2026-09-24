@@ -73,6 +73,32 @@ modify the outbound request. See the [Go ReverseProxy contract](https://pkg.go.d
 
 ## Wire behavior
 
+### HTTP version scope
+
+The proxy accepts downstream HTTP/1.1 and speaks HTTP/1.1 to upstreams for
+ordinary HTTP, SSE, and WebSocket. The bundled Kore server parser handles only
+HTTP/1.0 and HTTP/1.1; the linked nghttp2 library belongs to the libcurl
+client dependency and does not add HTTP/2 ingress to Kore. The proxy rejects
+downstream HTTP/1.0 as specified below. It does not negotiate HTTP/2 on the
+inbound listener, and an upstream offering both `h2` and `http/1.1` must use
+`http/1.1` for this route. An HTTP/2-only upstream fails before downstream
+headers are committed, with `502`.
+
+The supported WebSocket handshake is HTTP/1.1 `Upgrade: websocket` followed
+by a bounded raw byte relay. Reject `Upgrade: h2c` at header admission; it
+does not create a proxy tunnel. WebSocket over HTTP/2 is a different handshake:
+RFC 8441 uses extended `CONNECT` with `:protocol=websocket` on an HTTP/2
+stream, not HTTP/1.1 `Upgrade` and `101`. Neither HTTP/2 ingress nor RFC 8441
+WebSocket proxying is part of this design.
+
+HTTP/2 remains possible only as a separately specified transport change. It
+needs HTTP/2 server support, per-stream flow-control and memory accounting
+that enforce the route's limit, plus an RFC 8441 adapter for WebSockets.
+libcurl can buffer up to an HTTP/2 flow-control window for a paused stream
+while other streams on the connection remain active; its documented default
+is up to 10 MB, which exceeds a small chunk budget. A finite protocol window
+alone therefore does not prove this proxy's `buffer_limit` guarantee.
+
 ### Requests and responses
 
 - Forward the method, path/query, status, and end-to-end headers without
@@ -91,7 +117,7 @@ modify the outbound request. See the [Go ReverseProxy contract](https://pkg.go.d
 - Preserve `Content-Type`, content encoding, and entity bytes. Disable curl
   automatic decompression, cookie storage, automatic authentication, redirects,
   environment proxy selection, and implicit protocol fallbacks. Restrict the
-  upstream protocol to HTTP/1.1 initially, including connection reuse and TLS
+  upstream protocol to HTTP/1.1, including connection reuse and TLS
   ALPN negotiation, so pausing a transfer cannot hide a large HTTP/2 or HTTP/3
   multiplexing buffer.
 - Select libcurl's actual request behavior from the presence of an upload and
@@ -175,6 +201,15 @@ The tunnel therefore uses curl only to establish a raw TCP/TLS upstream
 connection, then sends and reads the opening HTTP handshake and tunneled bytes
 through curl's connect-only send/receive interface. No blocking
 `curl_easy_perform()` call runs in a Kore worker.
+
+A Go `net/http` WebSocket backend using an HTTP/1.1 upgrader is compatible
+with this route, even if its server also offers HTTP/2 for ordinary requests.
+Go's default HTTP/1.x response writer permits connection hijacking; its
+HTTP/2 response writer does not. Keep the proxy's upstream WebSocket leg on
+HTTP/1.1. When an upgrader checks `Origin` against `Host`, configure the
+backend's allowed public origins or explicitly preserve the validated public
+Host in the proxy rewrite; the default outbound Host is the target authority.
+Do not disable origin checks merely to make the proxy handshake pass.
 
 ## Kore transport integration
 
@@ -390,10 +425,10 @@ evidence is integration and end-to-end behavior.
 | --- | --- |
 | Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed framing and handshake rejection; proxy and ordinary route precedence. |
 | Parser and readiness integration | Initial read containing headers plus body, exactly at and beyond declared length; pipelined next request in the same read; split and malformed chunk boundaries; conflicting lengths; trailers; pausing midway through a chunk; resume without a new epoll edge and with pending writes; TLS `WANT_READ`/`WANT_WRITE` progress on Linux and BSD. Assert byte ownership and no desynchronization or spin. |
-| HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; trailers with declared and undeclared fields, verifying upload EOF and final-chunk ordering; exactly one local `100`, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Assert upstream receives the expected bytes and metadata. |
+| HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; trailers with declared and undeclared fields, verifying upload EOF and final-chunk ordering; exactly one local `100`, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Verify HTTP/1.1 selection when HTTPS upstream offers both `h2` and `http/1.1`, and `502` before response commitment for an HTTP/2-only upstream. Assert upstream receives the expected bytes and metadata. |
 | Streaming integration | Upstream emits the first chunk, then waits before finishing; client must receive that chunk before upstream completion. Request chunks must arrive upstream before client EOF. Repeat with slow upstream, slow downstream, simultaneous upload/download, and a response that starts while upload is active. Assert bounded application and libcurl queue depths, active backpressure, and no spool files or full-body allocations. Use multi-gigabyte logical generators in the opt-in stress run. |
 | SSE integration | Headers and first event arrive before upstream completion; periodic comments and events arrive at their production cadence; idle timeout behavior is explicit; downstream disconnect cancels upstream promptly. |
-| WebSocket integration | Successful `ws`/`wss`, selected subprotocol, offered extension pass-through, fragmented messages larger than Kore's normal frame limit, interleaved ping/pong, close code/reason, non-`101` rejection with a streamed body, and client/server disconnect. Include handshake and first frame in one read on either leg; exceed the bounded pre-upgrade buffer with a paused client; test TLS upstream that offers HTTP/2; verify exact byte relay after the handshake, including masking. |
+| WebSocket integration | Successful HTTP/1.1 `ws`/`wss`, selected subprotocol, offered extension pass-through, fragmented messages larger than Kore's normal frame limit, interleaved ping/pong, close code/reason, non-`101` rejection with a streamed body, and client/server disconnect. Include handshake and first frame in one read on either leg; exceed the bounded pre-upgrade buffer with a paused client; reject `Upgrade: h2c`; test TLS upstream that offers HTTP/2 and verify HTTP/1.1 selection; verify exact byte relay after the handshake, including masking. Run a Go `net/http` upgrader fixture with public `Origin`/rewritten `Host`, subprotocol negotiation, and sustained bidirectional traffic. |
 | Failure and lifecycle | DNS/connect/TLS failure, upstream reset before and after headers, malformed upstream headers, slowloris, callback rejection, partial request body, downstream disconnect, worker shutdown, app stop, and connection limits. Assert no orphan transfer, retained curl handle, leaked fd, hanging test process, or accidentally reusable connection with unread request bytes. |
 | Sanitizers and fuzzing | ASan/UBSan integration runs; bounded fuzz targets for URL/header rewrite, chunk parser, trailer parser, and upgrade response validation. |
 
@@ -482,6 +517,12 @@ documents libcurl's fallback expect timer.
 The [libcurl WebSocket interface](https://curl.se/libcurl/c/libcurl-ws.html)
 does not support extensions, which is why transparent upgrades use a raw
 tunnel instead of its frame API.
+The distinct HTTP/2 WebSocket handshake is defined by
+[RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html).
+Go's [`http.Hijacker`](https://pkg.go.dev/net/http#Hijacker) documents the
+HTTP/1.x and HTTP/2 response-writer distinction. The
+[`gorilla/websocket` upgrader](https://github.com/gorilla/websocket/blob/main/server.go)
+illustrates the HTTP/1.1 handshake and its default origin check.
 The downstream bodyless-response and representation-length rules follow
 [HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html) and
 [HTTP/1.1 framing](https://www.rfc-editor.org/rfc/rfc9112.html).
