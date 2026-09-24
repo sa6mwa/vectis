@@ -35,6 +35,7 @@ static vectis_app *make_app(int proxy_first, vectis_error *error) {
   vectis_app_config config;
   vectis_route_config ordinary;
   vectis_route_config proxy;
+  vectis_route_config second_proxy;
   vectis_app *app;
 
   vectis_app_config_init(&config);
@@ -46,18 +47,19 @@ static vectis_app *make_app(int proxy_first, vectis_error *error) {
   proxy =
       vectis_route(VECTIS_HTTP_GET, "/proxy/:id", proxy_marker, &proxy_config);
   proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
+  second_proxy = vectis_route(VECTIS_HTTP_GET, "/proxy/other/:id", proxy_marker,
+                              &second_proxy_config);
+  second_proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
   if (proxy_first) {
     assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
+    assert(vectis_register_route(app, &second_proxy, error) == VECTIS_OK);
     assert(vectis_register_route(app, &ordinary, error) == VECTIS_OK);
   } else {
     assert(vectis_register_route(app, &ordinary, error) == VECTIS_OK);
     assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
+    assert(vectis_register_route(app, &second_proxy, error) == VECTIS_OK);
   }
   assert(vectis_register_route(app, &proxy, error) == VECTIS_ERR_CONFLICT);
-  proxy = vectis_route(VECTIS_HTTP_GET, "/proxy/other/:id", proxy_marker,
-                       &second_proxy_config);
-  proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
-  assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
   return app;
 }
 
@@ -80,21 +82,49 @@ static void check_order(int proxy_first) {
   assert(request != NULL);
   selected = NULL;
   selected_userdata = NULL;
-  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_GET, "/proxy/a",
-                                             &policy, NULL, &selected,
-                                             &selected_userdata, &error);
+  status = vectis_internal_route_body_policy(
+      app, VECTIS_HTTP_GET, "/proxy/a", &policy, NULL, &selected,
+      &selected_userdata, request, &error);
   assert(status == VECTIS_OK);
   assert(selected == (proxy_first ? proxy_marker : ordinary_handler));
   assert(selected_userdata == (proxy_first ? &proxy_config : &ordinary_config));
+  assert((vectis_request_path_param(request, "id") != NULL) == proxy_first);
+  if (proxy_first) {
+    assert(strcmp(vectis_request_path_param(request, "id"), "a") == 0);
+  }
 
   selected = proxy_marker;
   selected_userdata = &proxy_config;
   status = vectis_internal_route_body_policy(
       app, VECTIS_HTTP_GET, "/proxy/a%2Fb", &policy, NULL, &selected,
-      &selected_userdata, &error);
+      &selected_userdata, request, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(selected == NULL);
   assert(selected_userdata == NULL);
+  assert((vectis_request_path_param(request, "id") != NULL) == proxy_first);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_route_body_policy(
+      app, VECTIS_HTTP_GET, "/proxy/other/a", &policy, NULL, &selected,
+      &selected_userdata, request, &error);
+  assert(status == VECTIS_OK);
+  assert(selected_userdata ==
+         (proxy_first ? &second_proxy_config : &ordinary_config));
+  assert((vectis_request_path_param(request, "id") != NULL) == proxy_first);
+  if (proxy_first) {
+    assert(strcmp(vectis_request_path_param(request, "id"), "a") == 0);
+  }
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_route_body_policy(
+      app, VECTIS_HTTP_GET, "/proxy/other/a/extra", &policy, NULL, &selected,
+      &selected_userdata, request, &error);
+  assert(status == VECTIS_OK);
+  assert(selected == ordinary_handler);
+  assert(selected_userdata == &ordinary_config);
+  assert(vectis_request_path_param(request, "id") == NULL);
+  vectis_internal_request_cleanup(request);
+
   status = vectis_internal_proxy_raw_path_match(
       app, VECTIS_HTTP_GET, "/proxy/a%2Fb", proxy_marker, request,
       &selected_userdata, &error);
@@ -172,9 +202,9 @@ static void check_static_overlap(void) {
   assert(vectis_register_route(app, &proxy, &error) == VECTIS_OK);
 
   selected = NULL;
-  status =
-      vectis_internal_route_body_policy(app, VECTIS_HTTP_GET, "/assets/a:b/",
-                                        &policy, NULL, &selected, NULL, &error);
+  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_GET,
+                                             "/assets/a:b/", &policy, NULL,
+                                             &selected, NULL, NULL, &error);
   assert(status == VECTIS_OK);
   assert(selected != NULL && selected != proxy_marker);
   allow = NULL;

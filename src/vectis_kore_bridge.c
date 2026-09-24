@@ -2686,7 +2686,7 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
     }
     status = vectis_internal_route_body_policy(
         app, method, path, &state->policy, &state->live_upload, NULL, NULL,
-        &error);
+        NULL, &error);
     if (status != VECTIS_OK) {
       vectis_kore_reject_body_chunk(req, state, 404, NULL);
       free(path);
@@ -3412,6 +3412,7 @@ int vectis_kore_route(struct http_request *req) {
   if (status == VECTIS_OK) {
     status = vectis_internal_route_body_policy(app, method, path, &body_policy,
                                                &body_is_live_upload, NULL, NULL,
+                                               NULL,
                                                &error);
     if (status == VECTIS_OK) {
       route_matched = 1;

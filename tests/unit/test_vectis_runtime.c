@@ -5122,6 +5122,7 @@ static void assert_kore_smoke(void) {
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST,
                                              "/upload-overlap", &policy,
                                              &overlap_live_upload, NULL, NULL,
+                                             NULL,
                                              &error);
   assert(status == VECTIS_OK);
   assert(policy.max_bytes == 4u);
@@ -5144,7 +5145,7 @@ static void assert_kore_smoke(void) {
   reverse_overlap_live_upload = 0;
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST,
       "/upload-overlap-reverse", &policy, &reverse_overlap_live_upload,
-      NULL, NULL, &error);
+      NULL, NULL, NULL, &error);
   assert(status == VECTIS_OK);
   assert(policy.max_bytes == 4u);
   assert(reverse_overlap_live_upload == 1);
@@ -9637,7 +9638,7 @@ int main(int argc, char **argv) {
   assert(vectis_internal_max_request_body_bytes(app) ==
          VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
   status = vectis_internal_route_body_policy(
-      app, VECTIS_HTTP_POST, "/upload-default", &policy, NULL, NULL, NULL,
+      app, VECTIS_HTTP_POST, "/upload-default", &policy, NULL, NULL, NULL, NULL,
       &error);
   assert(status == VECTIS_OK);
   assert(policy.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);

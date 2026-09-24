@@ -327,9 +327,11 @@ error if normal dispatch reaches it, rather than accidentally serving a
 buffered response.
 The pre-body hook uses that result after the application WebSocket check.
 Ordinary dispatch and upload handling keep their current selection paths.
-Production selection must also retain the winning route's captured parameters
-for `preflight` and `rewrite`; the current body-policy scratch request discards
-them. Extend that result without repeating route matching.
+The body-policy query now accepts an optional request in which it retains the
+winning route's captured parameters for `preflight` and `rewrite`. Existing
+callers can continue using its scratch request. The production pre-body
+selector must pass an exchange-owned request and preserve it through both
+hooks without repeating route matching.
 Evaluate proxy WebSocket mode only for a validated HTTP/1.1 upgrade; a proxy
 route may still handle an ordinary GET through its HTTP mode. Return path
 validation and allocation errors locally before contacting upstream. Preserve

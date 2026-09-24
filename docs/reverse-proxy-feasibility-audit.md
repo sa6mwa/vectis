@@ -812,9 +812,12 @@ first-match behavior, encoded-unreserved decoding, raw fallback admission,
 and rejection of malformed escapes in both route orders. The production
 selector still needs these pieces composed with application WebSocket
 priority, live-upload overlap, static overlap, and complete header framing.
-For normal decoded-path matches, the body-policy probe currently discards
-captured route parameters with its scratch request; production admission must
-return those captures to `preflight` and `rewrite` without a second match.
+The body-policy query now optionally retains captured parameters in a
+caller-owned request. The focused test proves that a failed parameter route
+does not leak its capture into the following winner, while the live pre-body
+probe observes the winning parameter after decoded-path selection over TLS.
+Production admission must carry that request through `preflight` and
+`rewrite` without repeating route matching.
 
 The [Kore worker curl-loop probe](../tests/unit/test_kore_proxy_curl_loop.c)
 now covers the next transport boundary. Its pre-body hook receives

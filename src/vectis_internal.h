@@ -220,6 +220,7 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
                                   int *is_live_upload,
                                   vectis_route_handler_fn *selected_handler,
                                   void **selected_userdata,
+                                  vectis_request *matched_request,
                                   vectis_error *error);
 vectis_status vectis_internal_proxy_raw_path_match(
     vectis_app *app, vectis_http_method method, const char *raw_path,

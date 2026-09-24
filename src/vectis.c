@@ -26668,10 +26668,13 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
                                   int *is_live_upload,
                                   vectis_route_handler_fn *selected_handler,
                                   void **selected_userdata,
+                                  vectis_request *matched_request,
                                   vectis_error *error) {
   vectis_app_impl *impl;
   vectis_request scratch;
+  vectis_request *route_request;
   vectis_status status;
+  size_t saved_count;
   size_t i;
 
   if (app == NULL || app->impl == NULL) {
@@ -26694,6 +26697,8 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
   }
   impl = (vectis_app_impl *)app->impl;
   vectis_internal_request_init(&scratch);
+  route_request = matched_request != NULL ? matched_request : &scratch;
+  saved_count = route_request->path_param_count;
   if (vectis_validate_request_path(path, error) != VECTIS_OK) {
     if (!vectis_request_path_has_trailing_slash(path) ||
         !vectis_trailing_slash_targets_static_site(impl, method, path, &scratch,
@@ -26714,11 +26719,12 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
 
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
-    vectis_kv_truncate(&scratch.path_params, &scratch.path_param_count, 0u);
+    vectis_kv_truncate(&route_request->path_params,
+                       &route_request->path_param_count, saved_count);
     if (!vectis_route_method_matches(&impl->routes[i], method)) {
       continue;
     }
-    if (vectis_route_path_matches(&impl->routes[i], path, &scratch, error)) {
+    if (vectis_route_path_matches(&impl->routes[i], path, route_request, error)) {
       *policy = impl->routes[i].body;
       if (is_live_upload != NULL) {
         *is_live_upload =
@@ -26743,6 +26749,10 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
       status = VECTIS_ERR_INVALID;
       break;
     }
+  }
+  if (status != VECTIS_OK) {
+    vectis_kv_truncate(&route_request->path_params,
+                       &route_request->path_param_count, saved_count);
   }
   (void)pthread_mutex_unlock(&impl->mutex);
 

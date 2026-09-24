@@ -298,7 +298,7 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
       if (status == VECTIS_OK && !denied)
         status = vectis_internal_route_body_policy(
             probe_app, VECTIS_HTTP_GET, decoded, &policy, NULL, &selected,
-            NULL, &probe_error);
+            NULL, probe_request, &probe_error);
     }
     if (status == VECTIS_ERR_INVALID) {
       status = vectis_internal_proxy_raw_path_match(
@@ -311,6 +311,10 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
         selected == proxy_marker_reply) {
       static const char marker[] = "proxy-prebody-selected";
 
+      if (strcmp(req->path, "/proxy-select/a") == 0 ||
+          strcmp(req->path, "/proxy-select/%41") == 0)
+        assert(strcmp(vectis_request_path_param(probe_request, "id"),
+            strcmp(req->path, "/proxy-select/a") == 0 ? "a" : "A") == 0);
       if (strcmp(req->path, "/proxy-select/a%2Fb") == 0)
         assert(strcmp(vectis_request_path_param(probe_request, "id"),
             "a%2Fb") == 0);
