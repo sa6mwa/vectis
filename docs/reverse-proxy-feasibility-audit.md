@@ -408,9 +408,47 @@ The server and client share the process, so this includes both sides. These
 are regression ceilings for the pinned build, not an enforceable libcurl
 allocation bound or a production per-connection allowance. Large headers,
 adversarial compression, connection reuse, much longer idle periods, and
-cancellation still need admission and stress tests before that allowance is
-final. Automatic decompression must stay disabled for the proxy because
+worker-integrated cancellation still need admission and stress tests before
+that allowance is final. Automatic decompression must stay disabled for the
+proxy because
 [libcurl can cache uncompressed data while paused](https://curl.se/libcurl/c/curl_easy_pause.html).
+
+A cancellation variant now pauses sixteen 16 MiB HTTP/2 responses, lets the
+upstream run for two seconds, then removes all easy handles without resuming
+them. It verifies each transfer still had zero delivered body bytes, all
+sixteen TLS connections and server threads close within ten seconds, and
+the process descriptor count returns from 8 to 5 in the local fixture.
+Five serial runs pass. In those runs, the server generated about 60 MiB in
+total while process RSS rose roughly 6 MiB above baseline and stayed flat
+during the pause; post-cleanup RSS was about 4.5 MiB above baseline. This
+proves cancellation progress and a measured regression envelope in the pinned
+Linux bundle. The server is in the same process, so it still cannot establish
+a client-only reserve.
+
+The same sixteen-connection probe now also runs with its nghttp2/TLS server
+in a separate child process. The child exits if its controller dies, and
+the controller waits for its termination after every run. Five resume and
+five cancellation runs pass. In those runs, client-process RSS peaked at
+most 4.3 MiB above its pre-transfer baseline while the separate server
+generated about 60 MiB before resume or cancellation. Client RSS stayed
+level during each two-second pause; all 256 MiB arrived after resume, or
+all sixteen transfers cancelled before any body bytes were delivered. The
+client descriptor count returned from 7 to 5. The test enforces a wider
+16 MiB aggregate client RSS regression ceiling for sixteen connections.
+That ceiling is not a hard libcurl allocation cap. It measures the pinned
+Linux debug bundle under this one header pattern and connection lifetime.
+
+The [tagged libcurl 8.22.0 HTTP/2 source](https://github.com/curl/curl/blob/curl-8_22_0/lib/http2.c)
+sets a 64 KiB initial stream window, a 10 MiB maximum stream window, and a
+16 KiB chunk pool with room for up to 10 MiB of network input. It sets the
+stream's local receive window to zero while output is paused. Those limits
+explain why pausing can halt ingress, but they do not cover all nghttp2,
+OpenSSL, header, allocator, or connection-reuse allocations. The same source
+sets a much larger connection-level flow-control window. We infer that the
+one-stream-per-connection invariant is essential to the proposed bounded
+resource policy. A client-only measurement in a Kore worker, with header and
+reuse stress, is still required before choosing a numerical admission
+reserve.
 
 The HTTP/2 probe now also asserts the pinned runtime libcurl reports
 `AsynchDNS`, `HTTP2`, and `SSL`. The host-debug and x86_64 Linux GNU release

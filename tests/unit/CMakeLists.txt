@@ -101,6 +101,25 @@ if(VECTIS_WITH_KORE_RUNTIME)
       test_proxy_curl_http2_pause.c)
     target_compile_definitions(vectis_unit_proxy_curl_http2_pause_many PRIVATE
       VECTIS_HTTP2_SCALE_PROBE=1)
+    add_test(NAME vectis_unit_proxy_curl_http2_pause_cancel
+      COMMAND $<TARGET_FILE:vectis_unit_proxy_curl_http2_pause_many>)
+    set_tests_properties(vectis_unit_proxy_curl_http2_pause_cancel PROPERTIES
+      ENVIRONMENT "VECTIS_H2_CANCEL_AFTER_PAUSE=1"
+      LABELS "unit;local"
+      TIMEOUT 180)
+    add_test(NAME vectis_unit_proxy_curl_http2_pause_isolated
+      COMMAND $<TARGET_FILE:vectis_unit_proxy_curl_http2_pause_many>)
+    set_tests_properties(vectis_unit_proxy_curl_http2_pause_isolated PROPERTIES
+      ENVIRONMENT "VECTIS_H2_ISOLATED_SERVER=1"
+      LABELS "unit;local"
+      TIMEOUT 180)
+    add_test(NAME vectis_unit_proxy_curl_http2_pause_isolated_cancel
+      COMMAND $<TARGET_FILE:vectis_unit_proxy_curl_http2_pause_many>)
+    set_tests_properties(vectis_unit_proxy_curl_http2_pause_isolated_cancel
+      PROPERTIES
+      ENVIRONMENT "VECTIS_H2_ISOLATED_SERVER=1;VECTIS_H2_CANCEL_AFTER_PAUSE=1"
+      LABELS "unit;local"
+      TIMEOUT 180)
     vectis_add_unit_test(vectis_unit_proxy_curl_http2_duplex
       test_proxy_curl_http2_duplex.c)
     vectis_add_unit_test(vectis_unit_proxy_curl_http2_duplex_unknown

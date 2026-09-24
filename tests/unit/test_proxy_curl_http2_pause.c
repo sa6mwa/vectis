@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <curl/curl.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <nghttp2/nghttp2.h>
@@ -13,11 +14,15 @@
 #include <openssl/x509v3.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -29,16 +34,21 @@
 #define CONCURRENT_TRANSFERS 4
 #endif
 #define MAX_RSS_DELTA_KB (CONCURRENT_TRANSFERS * 4096u)
+#define ISOLATED_RSS_DELTA_KB (CONCURRENT_TRANSFERS * 1024u)
+
+struct h2_counts {
+  size_t generated;
+  unsigned accepted;
+  unsigned saw_request;
+  unsigned negotiated_h2;
+};
 
 struct h2_server {
   int listener;
   unsigned short port;
   pthread_t thread;
-  size_t generated;
-  unsigned accepted;
-  unsigned saw_request;
   SSL_CTX *ctx;
-  unsigned negotiated_h2;
+  struct h2_counts *counts;
 };
 
 struct h2_connection {
@@ -140,7 +150,7 @@ select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
     if (length == 2 && memcmp(in + offset, "h2", 2) == 0) {
       *out = in + offset;
       *outlen = 2;
-      __sync_fetch_and_add(&server->negotiated_h2, 1);
+      __sync_fetch_and_add(&server->counts->negotiated_h2, 1);
       return SSL_TLSEXT_ERR_OK;
     }
     offset += length;
@@ -164,7 +174,7 @@ produce_body(nghttp2_session *session, int32_t stream_id, uint8_t *data,
     len = remaining;
   memset(data, 'x', len);
   connection->generated += len;
-  __sync_fetch_and_add(&connection->server->generated, len);
+  __sync_fetch_and_add(&connection->server->counts->generated, len);
   if (connection->generated == RESPONSE_SIZE)
     *flags |= NGHTTP2_DATA_FLAG_EOF;
   return (ssize_t)len;
@@ -189,7 +199,7 @@ request_received(nghttp2_session *session, const nghttp2_frame *frame,
   if (frame->hd.type != NGHTTP2_HEADERS ||
       frame->headers.cat != NGHTTP2_HCAT_REQUEST)
     return 0;
-  __sync_fetch_and_add(&connection->server->saw_request, 1);
+  __sync_fetch_and_add(&connection->server->counts->saw_request, 1);
   memset(&provider, 0, sizeof(provider));
   provider.read_callback = produce_body;
   return nghttp2_submit_response(session, frame->hd.stream_id,
@@ -279,7 +289,7 @@ server_main(void *arg)
     connection->server = server;
     connection->fd = accept(server->listener, NULL, NULL);
     assert(connection->fd >= 0);
-    server->accepted++;
+    server->counts->accepted++;
     assert(pthread_create(&threads[i], NULL, connection_main,
         connection) == 0);
   }
@@ -289,12 +299,14 @@ server_main(void *arg)
 }
 
 static void
-start_server(struct h2_server *server, X509 *cert, EVP_PKEY *key)
+start_server(struct h2_server *server, struct h2_counts *counts,
+    X509 *cert, EVP_PKEY *key, int isolated)
 {
   struct sockaddr_in addr;
   socklen_t size;
 
   memset(server, 0, sizeof(*server));
+  server->counts = counts;
   server->ctx = SSL_CTX_new(TLS_server_method());
   assert(server->ctx != NULL);
   assert(SSL_CTX_use_certificate(server->ctx, cert) == 1);
@@ -310,7 +322,9 @@ start_server(struct h2_server *server, X509 *cert, EVP_PKEY *key)
   size = sizeof(addr);
   assert(getsockname(server->listener, (struct sockaddr *)&addr, &size) == 0);
   server->port = ntohs(addr.sin_port);
-  assert(pthread_create(&server->thread, NULL, server_main, server) == 0);
+  if (!isolated)
+    assert(pthread_create(&server->thread, NULL,
+        server_main, server) == 0);
 }
 
 static size_t
@@ -351,6 +365,24 @@ rss_kb(void)
   return amount;
 }
 
+static unsigned
+open_fd_count(void)
+{
+  DIR *dir;
+  struct dirent *entry;
+  unsigned count;
+
+  dir = opendir("/proc/self/fd");
+  assert(dir != NULL);
+  count = 0;
+  while ((entry = readdir(dir)) != NULL) {
+    if (entry->d_name[0] != '.')
+      count++;
+  }
+  assert(closedir(dir) == 0);
+  return count;
+}
+
 static unsigned long
 observed_peak_rss_kb(unsigned long current, unsigned long previous)
 {
@@ -369,6 +401,7 @@ int
 main(void)
 {
   struct h2_server server;
+  struct h2_counts *counts;
   struct client_state states[CONCURRENT_TRANSFERS];
   struct curl_blob ca;
   curl_version_info_data *curl_info;
@@ -384,17 +417,26 @@ main(void)
   int numfds;
   int attempt;
   int paused;
+  int cancel_after_pause;
+  int isolated_server;
+  int child_status;
+  pid_t server_pid;
+  pid_t parent_pid;
+  unsigned baseline_fds;
+  unsigned after_cleanup_fds;
   int i;
   unsigned long baseline;
   unsigned long after_pause;
   unsigned long after_wait;
   unsigned long after_resume;
+  unsigned long after_cleanup;
   unsigned long peak_at_pause;
   unsigned long peak_after_wait;
   unsigned long peak_after_resume;
   size_t generated_at_pause;
   size_t generated_after_wait;
   time_t resume_start;
+  time_t cleanup_start;
 
   key = make_key();
   cert = make_cert(key);
@@ -406,7 +448,26 @@ main(void)
   ca.data = pem_data->data;
   ca.len = pem_data->length;
   ca.flags = CURL_BLOB_COPY;
-  start_server(&server, cert, key);
+  isolated_server = getenv("VECTIS_H2_ISOLATED_SERVER") != NULL;
+  counts = mmap(NULL, sizeof(*counts), PROT_READ | PROT_WRITE,
+      MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  assert(counts != MAP_FAILED);
+  memset(counts, 0, sizeof(*counts));
+  start_server(&server, counts, cert, key, isolated_server);
+  server_pid = -1;
+  if (isolated_server) {
+    parent_pid = getpid();
+    server_pid = fork();
+    assert(server_pid >= 0);
+    if (server_pid == 0) {
+      assert(prctl(PR_SET_PDEATHSIG, SIGKILL) == 0);
+      if (getppid() != parent_pid)
+        _exit(125);
+      server_main(&server);
+      _exit(0);
+    }
+    assert(close(server.listener) == 0);
+  }
   memset(states, 0, sizeof(states));
   assert(curl_global_init(CURL_GLOBAL_ALL) == CURLE_OK);
   curl_info = curl_version_info(CURLVERSION_NOW);
@@ -414,6 +475,8 @@ main(void)
   assert(curl_info->features & CURL_VERSION_ASYNCHDNS);
   assert(curl_info->features & CURL_VERSION_HTTP2);
   assert(curl_info->features & CURL_VERSION_SSL);
+  cancel_after_pause =
+      getenv("VECTIS_H2_CANCEL_AFTER_PAUSE") != NULL;
   multi = curl_multi_init();
   assert(multi != NULL);
   assert(curl_multi_setopt(multi, CURLMOPT_PIPELINING,
@@ -437,6 +500,7 @@ main(void)
     assert(curl_easy_setopt(easy[i], CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   }
   baseline = rss_kb();
+  baseline_fds = open_fd_count();
   for (i = 0; i < CONCURRENT_TRANSFERS; i++)
     assert(curl_multi_add_handle(multi, easy[i]) == CURLM_OK);
   assert(curl_multi_perform(multi, &running) == CURLM_OK);
@@ -457,64 +521,91 @@ main(void)
   }
   after_pause = rss_kb();
   peak_at_pause = observed_peak_rss_kb(after_pause, baseline);
-  generated_at_pause = __sync_fetch_and_add(&server.generated, 0);
+  generated_at_pause = __sync_fetch_and_add(&counts->generated, 0);
   for (attempt = 0; attempt < 20 && running; attempt++) {
     assert(curl_multi_poll(multi, NULL, 0, 100, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
   }
   after_wait = rss_kb();
   peak_after_wait = observed_peak_rss_kb(after_wait, peak_at_pause);
-  generated_after_wait = __sync_fetch_and_add(&server.generated, 0);
-  for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
-    states[i].resume = 1;
-    assert(curl_easy_pause(easy[i], CURLPAUSE_CONT) == CURLE_OK);
+  generated_after_wait = __sync_fetch_and_add(&counts->generated, 0);
+  if (!cancel_after_pause) {
+    for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
+      states[i].resume = 1;
+      assert(curl_easy_pause(easy[i], CURLPAUSE_CONT) == CURLE_OK);
+    }
+    resume_start = time(NULL);
+    for (attempt = 0; running && time(NULL) - resume_start < 15;
+        attempt++) {
+      assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
+      assert(curl_multi_perform(multi, &running) == CURLM_OK);
+    }
+    fprintf(stderr, "h2 resume: running=%d attempts=%d received=",
+        running, attempt);
+    for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+      fprintf(stderr, "%s%lu", i == 0 ? "" : ",",
+          (unsigned long)states[i].received);
+    fprintf(stderr, "\n");
+    assert(running == 0);
+    for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+      assert(states[i].received == RESPONSE_SIZE);
+    after_resume = rss_kb();
+    peak_after_resume = observed_peak_rss_kb(after_resume,
+        peak_after_wait);
+  } else {
+    assert(running == CONCURRENT_TRANSFERS);
+    for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+      assert(states[i].received == 0);
+    after_resume = after_wait;
+    peak_after_resume = peak_after_wait;
   }
-  resume_start = time(NULL);
-  for (attempt = 0; running && time(NULL) - resume_start < 15;
-      attempt++) {
-    assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
-    assert(curl_multi_perform(multi, &running) == CURLM_OK);
-  }
-  fprintf(stderr, "h2 resume: running=%d attempts=%d received=",
-      running, attempt);
-  for (i = 0; i < CONCURRENT_TRANSFERS; i++)
-    fprintf(stderr, "%s%lu", i == 0 ? "" : ",",
-        (unsigned long)states[i].received);
-  fprintf(stderr, "\n");
-  assert(running == 0);
-  for (i = 0; i < CONCURRENT_TRANSFERS; i++)
-    assert(states[i].received == RESPONSE_SIZE);
-  after_resume = rss_kb();
-  peak_after_resume = observed_peak_rss_kb(after_resume, peak_after_wait);
+  cleanup_start = time(NULL);
   for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
     assert(curl_multi_remove_handle(multi, easy[i]) == CURLM_OK);
     curl_easy_cleanup(easy[i]);
   }
   assert(curl_multi_cleanup(multi) == CURLM_OK);
   curl_global_cleanup();
-  assert(pthread_join(server.thread, NULL) == 0);
-  assert(close(server.listener) == 0);
+  if (isolated_server) {
+    assert(waitpid(server_pid, &child_status, 0) == server_pid);
+    assert(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+  } else {
+    assert(pthread_join(server.thread, NULL) == 0);
+    assert(close(server.listener) == 0);
+  }
   SSL_CTX_free(server.ctx);
   BIO_free(pem);
   X509_free(cert);
   EVP_PKEY_free(key);
+  after_cleanup = rss_kb();
+  after_cleanup_fds = open_fd_count();
+  assert(after_cleanup_fds <= baseline_fds);
+  if (cancel_after_pause)
+    assert(time(NULL) - cleanup_start < 10);
   fprintf(stderr, "curl h2 pause: baseline=%luKB paused=%luKB later=%luKB "
-      "resumed=%luKB peaks=%lu,%lu,%luKB generated=%lu,%lu,%lu\n",
-      baseline, after_pause, after_wait, after_resume,
+      "resumed=%luKB cleanup=%luKB cancel=%d isolated=%d fds=%u,%u "
+      "peaks=%lu,%lu,%luKB generated=%lu,%lu,%lu\n",
+      baseline, after_pause, after_wait, after_resume, after_cleanup,
+      cancel_after_pause, isolated_server, baseline_fds, after_cleanup_fds,
       peak_at_pause, peak_after_wait, peak_after_resume,
       (unsigned long)generated_at_pause,
       (unsigned long)generated_after_wait,
-      (unsigned long)server.generated);
-  assert(server.accepted == CONCURRENT_TRANSFERS);
-  assert(server.saw_request == CONCURRENT_TRANSFERS);
-  assert(server.negotiated_h2 == CONCURRENT_TRANSFERS);
+      (unsigned long)counts->generated);
+  assert(counts->accepted == CONCURRENT_TRANSFERS);
+  assert(counts->saw_request == CONCURRENT_TRANSFERS);
+  assert(counts->negotiated_h2 == CONCURRENT_TRANSFERS);
   assert(generated_at_pause > CONCURRENT_TRANSFERS * 65536u);
   assert(generated_at_pause < CONCURRENT_TRANSFERS * RESPONSE_SIZE);
   assert(generated_after_wait < CONCURRENT_TRANSFERS * RESPONSE_SIZE / 2);
-  assert(server.generated == CONCURRENT_TRANSFERS * RESPONSE_SIZE);
+  if (cancel_after_pause)
+    assert(counts->generated < CONCURRENT_TRANSFERS * RESPONSE_SIZE / 2);
+  else
+    assert(counts->generated == CONCURRENT_TRANSFERS * RESPONSE_SIZE);
   assert(after_wait >= baseline);
   assert(after_wait - baseline <= MAX_RSS_DELTA_KB);
   assert(after_wait <= after_pause + 4096u);
+  if (cancel_after_pause && after_cleanup >= baseline)
+    assert(after_cleanup - baseline <= MAX_RSS_DELTA_KB);
   assert(after_resume >= baseline);
   assert(after_resume - baseline <= MAX_RSS_DELTA_KB);
   assert(peak_at_pause >= after_pause);
@@ -522,5 +613,8 @@ main(void)
   assert(peak_after_resume >= after_resume);
   assert(peak_after_resume >= baseline);
   assert(peak_after_resume - baseline <= MAX_RSS_DELTA_KB);
+  if (isolated_server)
+    assert(peak_after_resume - baseline <= ISOLATED_RSS_DELTA_KB);
+  assert(munmap(counts, sizeof(*counts)) == 0);
   return 0;
 }
