@@ -119,6 +119,7 @@ struct loop_metrics {
   unsigned http_queue_abort_cancelled;
   unsigned http_queue_abort_upstream_closed;
   unsigned http_queue_pending_at_disconnect;
+  unsigned http_tls_queue_cancelled;
   unsigned http_write_failures;
   unsigned http_write_fail_cancelled;
   unsigned http_write_fail_pending_at_disconnect;
@@ -1698,6 +1699,9 @@ downstream_disconnect(struct connection *connection)
       metrics->http_queue_abort_cancelled++;
       if (!TAILQ_EMPTY(&connection->send_queue))
         metrics->http_queue_pending_at_disconnect++;
+      if (connection->tls != NULL &&
+          !TAILQ_EMPTY(&connection->send_queue))
+        metrics->http_tls_queue_cancelled++;
     }
     if (state->http_write_fail_mode && state->multi != NULL) {
       metrics->http_write_fail_cancelled++;
@@ -2196,6 +2200,70 @@ check_sse_queue_abort(unsigned short port, struct echo_server *server)
   reset.l_linger = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
       &reset, sizeof(reset)) == 0);
+  assert(close(fd) == 0);
+}
+
+static void
+check_tls_sse_queue_abort(unsigned short port, struct echo_server *server)
+{
+  static const char request[] =
+      "GET /sse-queue-abort HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  struct linger reset;
+  SSL_CTX *ctx;
+  SSL *ssl;
+  char response[256];
+  size_t used;
+  int attempt;
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  assert(SSL_CTX_load_verify_locations(ctx, tls_cert_path, NULL) == 1);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_set1_host(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_get_verify_result(ssl) == X509_V_OK);
+  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+      (int)(sizeof(request) - 1));
+  used = 0;
+  response[0] = '\0';
+  while (strstr(response, "\r\n\r\n") == NULL) {
+    assert(used < sizeof(response) - 1);
+    assert(SSL_read(ssl, response + used, 1) == 1);
+    response[++used] = '\0';
+  }
+  assert(strstr(response, "HTTP/1.1 200 OK\r\n") == response);
+  assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
+  __sync_lock_test_and_set(&server->allow_body, 1);
+  for (attempt = 0; attempt < 500 &&
+      __sync_fetch_and_add(&metrics->http_queue_held, 0) < 2;
+      attempt++)
+    usleep(10000u);
+  assert(__sync_fetch_and_add(&metrics->http_queue_held, 0) == 2);
+  reset.l_onoff = 1;
+  reset.l_linger = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
+      &reset, sizeof(reset)) == 0);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
   assert(close(fd) == 0);
 }
 
@@ -2971,7 +3039,6 @@ main(void)
       sse_abort_main, &sse_queue_abort) == 0);
   check_sse_queue_abort(port, &sse_queue_abort);
   assert(pthread_join(sse_queue_abort.thread, NULL) == 0);
-  assert(close(sse_queue_abort.listener) == 0);
   assert(metrics->http_queue_abort_cancelled == 1);
   assert(metrics->http_queue_abort_upstream_closed == 1);
   assert(metrics->http_queue_pending_at_disconnect == 1);
@@ -3060,6 +3127,16 @@ main(void)
   check_tls_upload(port, &upload_tls);
   assert(pthread_join(upload_tls.thread, NULL) == 0);
   assert(close(upload_tls.listener) == 0);
+  __sync_lock_test_and_set(&sse_queue_abort.allow_body, 0);
+  assert(pthread_create(&sse_queue_abort.thread, NULL,
+      sse_abort_main, &sse_queue_abort) == 0);
+  check_tls_sse_queue_abort(port, &sse_queue_abort);
+  assert(pthread_join(sse_queue_abort.thread, NULL) == 0);
+  assert(close(sse_queue_abort.listener) == 0);
+  assert(metrics->http_queue_abort_cancelled == 2);
+  assert(metrics->http_queue_abort_upstream_closed == 2);
+  assert(metrics->http_queue_pending_at_disconnect == 2);
+  assert(metrics->http_tls_queue_cancelled == 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   SSL_CTX_free(relay_tls.tls_ctx);
@@ -3091,13 +3168,13 @@ main(void)
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 16);
+  assert(metrics->disconnects == 17);
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
   assert(metrics->http_done == 4);
-  assert(metrics->http_headers_ready == 8);
+  assert(metrics->http_headers_ready == 9);
   assert(metrics->upload_done == 2);
   assert(metrics->upload_pauses > 0);
   assert(metrics->upload_max_queued <= RELAY_BUFFER_SIZE);
