@@ -29,6 +29,11 @@ shared; application WebSocket message callbacks are a separate Vectis feature.
 
 ## Public contract
 
+The installed libvectis C headers and the proxy route API must compile under
+strict C89. Kore and libcurl types stay out of the public proxy API; their
+language mode must not leak into installed headers or consumer compile flags.
+The installed SDK consumer is a C89 compilation and link gate for this API.
+
 The proposed C registration is `app->proxy_route(config, error)` with a
 corresponding Lua `app:proxy(opts)`. The exact C identifiers are illustrative
 until implementation, but the following fields and callback phases are the

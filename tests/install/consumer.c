@@ -11,11 +11,13 @@
 #include <openssl/ssl.h>
 #include <pslog.h>
 #include <softline/softline.h>
+#include <vectis/proxy.h>
 #include <vectis/vectis.h>
 
 int main(void) {
   vectis_app_config config;
   vectis_http_client_config http_config;
+  vectis_proxy_route_config proxy_config;
   vectis_error error;
   vectis_app *app;
   vectis_http_client *http;
@@ -33,6 +35,11 @@ int main(void) {
   memset(&logger, 0, sizeof(logger));
 
   vectis_app_config_init(&config);
+  vectis_proxy_route_config_init(&proxy_config);
+  if (proxy_config.path != NULL ||
+      proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO) {
+    return 11;
+  }
   if (config.app_name == NULL || strcmp(config.app_name, "vectis") != 0) {
     return 1;
   }
