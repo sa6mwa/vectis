@@ -1,6 +1,6 @@
 set(cli_file "${VECTIS_SOURCE_DIR}/src/vectis_cli.c")
 set(curl_lua_file "${VECTIS_SOURCE_DIR}/lua/curl/init.lua")
-set(curl_doc "${VECTIS_SOURCE_DIR}/docs/lua-curl.md")
+set(curl_doc "${VECTIS_SOURCE_DIR}/manual/lua-curl.md")
 set(readme_file "${VECTIS_SOURCE_DIR}/README.md")
 
 file(READ "${cli_file}" cli_text)

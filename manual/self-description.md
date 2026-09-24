@@ -1,10 +1,10 @@
 # Self-contained documentation and Lua source
 
-The `vectis` binary embeds the documentation and public Lua facade source
-that shipped with that exact build. This is intended for offline inspection and
-for coding agents that begin with only a Vectis binary.
+The `vectis` binary embeds the curated public manual and public Lua facade
+source that shipped with that exact build. This is intended for offline
+inspection and for coding agents that begin with only a Vectis binary.
 
-`vectis -a docs` writes the complete documentation bundle to standard output.
+`vectis -a docs` writes the embedded manual to standard output.
 Each document begins with a visible Markdown blockquote that records its
 embedded path and SHA-256 digest. This keeps the output Markdown-only while
 preserving the provenance needed to inspect the exact shipped documentation.

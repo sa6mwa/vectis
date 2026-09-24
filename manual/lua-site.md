@@ -225,5 +225,6 @@ table and file-backed message bodies.
 - Exercise the generic-binary E2E scenario with `make test-e2e` after changing
   the serving, auth, or WebDAV composition.
 
-For packed, self-contained site deployments, see
-[Pack embedded filesystem and auth](pack-embedded-filesystem-auth-spec.md).
+For packed, self-contained site deployments, combine the
+[embedded assets](lua-embedded.md), [Lua WebDAV](lua-webdav.md), and
+[Lua auth](lua-auth.md) guides.

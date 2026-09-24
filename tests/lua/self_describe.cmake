@@ -82,11 +82,25 @@ if(NOT docs_result EQUAL 0)
   message(FATAL_ERROR "vectis -a docs failed: ${docs_stdout}${docs_stderr}")
 endif()
 if(NOT docs_stdout MATCHES "Vectis document:.*README.md" OR
-   NOT docs_stdout MATCHES "Vectis document:.*docs/lua.md" OR
+   NOT docs_stdout MATCHES "Vectis document:.*manual/lua.md" OR
    docs_stdout MATCHES "<!-- vectis docs:" OR
    NOT docs_stdout MATCHES "Self-contained documentation and Lua source")
   message(FATAL_ERROR "vectis -a docs omitted embedded documentation")
 endif()
+string(REGEX MATCHALL "Vectis document:[*][*] [`][^`]+[`]"
+       docs_entries "${docs_stdout}")
+file(GLOB manual_documents "${VECTIS_SOURCE_DIR}/manual/*.md")
+list(LENGTH docs_entries docs_count)
+list(LENGTH manual_documents manual_count)
+math(EXPR expected_docs_count "${manual_count} + 1")
+if(NOT docs_count EQUAL expected_docs_count)
+  message(FATAL_ERROR "vectis -a docs has ${docs_count} documents; expected README plus ${manual_count} manual files")
+endif()
+foreach(docs_entry IN LISTS docs_entries)
+  if(NOT docs_entry MATCHES "^Vectis document:[*][*] [`](README[.]md|manual/[^`]+[.]md)[`]$")
+    message(FATAL_ERROR "vectis -a docs embedded an unapproved path: ${docs_entry}")
+  endif()
+endforeach()
 
 execute_process(COMMAND "${VECTIS_BIN}" --action docs --help
                 RESULT_VARIABLE docs_help_result

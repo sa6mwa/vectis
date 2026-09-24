@@ -2,14 +2,14 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname -- "$0")/.." && pwd)
-lua_index="$repo_root/docs/lua.md"
+lua_index="$repo_root/manual/lua.md"
 matrix="$repo_root/docs/lua-coverage-matrix.md"
 smoke="$repo_root/tests/lua/smoke.lua"
 top_level="$repo_root/lua/vectis.lua"
-api_index="$repo_root/docs/api.md"
+api_index="$repo_root/manual/api.md"
 app_header="$repo_root/include/vectis/vectis.h"
 app_binding="$repo_root/src/vectis_cli.c"
-app_docs="$repo_root/docs/lua-app.md"
+app_docs="$repo_root/manual/lua-app.md"
 
 fail() {
   printf 'lua facade matrix contract failed: %s\n' "$*" >&2
@@ -87,7 +87,7 @@ for entry in "${dependency_modules[@]}"; do
   if [ -n "$doc" ]; then
     require_fixed "$lua_index" "($doc)" "dependency doc link"
     require_fixed "$api_index" "($doc)" "C API Lua doc link"
-    require_file "$repo_root/docs/$doc"
+    require_file "$repo_root/manual/$doc"
   fi
 done
 
@@ -99,7 +99,7 @@ for entry in "${workflow_modules[@]}"; do
   require_fixed "$smoke" "$top_alias" "workflow top-level alias"
   require_fixed "$lua_index" "($doc)" "workflow doc link"
   require_fixed "$api_index" "($doc)" "C API Lua doc link"
-  require_file "$repo_root/docs/$doc"
+  require_file "$repo_root/manual/$doc"
 
   field=${module#vectis.}
   if [ "$field" = "status" ]; then

@@ -204,12 +204,12 @@ configuration, and packaging story.
 The `vectis -a smith` action hosts CAI's interactive Smith coding preset with
 LockDC-backed durable sessions, streaming Markdown terminal output, and a
 workspace-rooted terminal tool. Its non-TUI Lua counterpart is
-`require("vectis.smith")`. See [Agent Smith](docs/agent-smith.md).
+`require("vectis.smith")`. See [Agent Smith](manual/agent-smith.md).
 
 libmdf and softline provide the Markdown rendering, terminal paging, and line
 editing facilities used by the executable and exposed through their bundled Lua
 modules. Vectis does not present unimplemented protocol integrations as SDK
-features; the current public surface is documented in [the API index](docs/api.md).
+features; the current public surface is documented in [the API index](manual/api.md).
 
 ## Lua Runtime
 
@@ -246,7 +246,7 @@ is passed to the embedded Lua script; use `./packed-app --vectis unpack` (or
 another Vectis action) to invoke runner management instead. The `vectis.cli`
 module provides commands, generated help, short/GNU-style options, and explicit
 command-line/environment/default precedence for Lua applications. See [Lua
-command-line applications](docs/lua-cli.md).
+command-line applications](manual/lua-cli.md).
 
 `vectis -a pack` can append a Lua script, optional site/template assets, and
 optionally a lockd client bundle to the Linux executable with hashes and trailer
@@ -255,8 +255,8 @@ Lua can use `vectis.embedded.has_assets()`, `stat()`,
 `list()`, `read()`, `chunks()`, and `extract()` to serve read-only assets or
 initialize, verify, or repair an extracted WebDAV docroot.
 
-Use [Lua surface](docs/lua.md) for the shipped Lua modules and ownership rules.
-Use [the API index](docs/api.md) for the C SDK and cross-surface contract.
+Use [Lua surface](manual/lua.md) for the shipped Lua modules and ownership rules.
+Use [the API index](manual/api.md) for the C SDK and cross-surface contract.
 
 ## Local Development
 

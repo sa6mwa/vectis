@@ -14,13 +14,13 @@ Current deterministic coverage includes:
 - `require("audio")` constants/result strings, format capability checks,
   decoder file/URL/callback open, encoder file/callback open, callback
   reader/writer error propagation, VOX, PTT, and capture/playback receiver
-  shells with opt-in live device tests, documented in `docs/lua-audio.md`;
+  shells with opt-in live device tests, documented in `manual/lua-audio.md`;
 - `require("sus")` constants/result strings, backend/facade metadata, model
   catalog lookup, path/cache open error handling, model handles, and offline
   cache status callback propagation, model-created transcriber handles,
   PCM table transcription methods, transcriber callback registration, and
   process-wide backend log sink configuration, documented in
-  `docs/lua-sus.md`.
+  `manual/lua-sus.md`.
 
 The audio/SUS Lua interop boundary lets `sus` borrow `audio.decoder` and
 `audio.segment` handles without exposing private userdata layouts. Loaded-model

@@ -826,12 +826,12 @@ endif()
 
 if(VECTIS_BUILD_BINARY)
   file(GLOB_RECURSE vectis_cli_doc_files CONFIGURE_DEPENDS
-       RELATIVE "${CMAKE_SOURCE_DIR}/docs" "${CMAKE_SOURCE_DIR}/docs/*.md")
+       RELATIVE "${CMAKE_SOURCE_DIR}/manual" "${CMAKE_SOURCE_DIR}/manual/*.md")
   set(vectis_cli_doc_resources
     "${CMAKE_SOURCE_DIR}/README.md|README.md||vectis")
   foreach(vectis_cli_doc_file IN LISTS vectis_cli_doc_files)
     list(APPEND vectis_cli_doc_resources
-      "${CMAKE_SOURCE_DIR}/docs/${vectis_cli_doc_file}|docs/${vectis_cli_doc_file}||vectis")
+      "${CMAKE_SOURCE_DIR}/manual/${vectis_cli_doc_file}|manual/${vectis_cli_doc_file}||vectis")
   endforeach()
   vectis_generate_cli_resource_header(
     "${CMAKE_BINARY_DIR}/generated/include/vectis_cli_docs.h"

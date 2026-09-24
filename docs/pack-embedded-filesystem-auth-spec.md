@@ -2,7 +2,7 @@
 
 This document describes the shipped Vectis contract for packed services. It is
 current product documentation, not a design history. See [Lua embedded
-assets](lua-embedded.md), [Lua WebDAV](lua-webdav.md), and [Lua auth](lua-auth.md)
+assets](../manual/lua-embedded.md), [Lua WebDAV](../manual/lua-webdav.md), and [Lua auth](../manual/lua-auth.md)
 for API-level detail.
 
 ## Packed executable

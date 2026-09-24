@@ -83,9 +83,8 @@ Major groups:
 
 ## Lua Surface
 
-The Lua surface is tracked by [Lua surface](lua.md) and
-[Lua coverage matrix](lua-coverage-matrix.md). Dependency-native facades should
-stay thin over their upstream C implementations. Vectis-owned modules should
+The Lua surface is documented in [Lua surface](lua.md). Dependency-native
+facades stay thin over their upstream C implementations. Vectis-owned modules
 cover service workflows where Vectis owns the cross-library DX.
 
 Lua docs:
@@ -127,8 +126,7 @@ Lua docs:
 
 Before release, new public C SDK groups must be represented here and declared in
 `include/vectis/vectis.h`. New Lua modules or workflow helpers must be linked
-from `docs/lua.md` and represented in `docs/lua-coverage-matrix.md`.
+from `manual/lua.md`.
 
-The embedded Kore runtime is a private release-packaging implementation detail,
-documented in [Kore runtime packaging](kore-runtime-packaging.md). It is not a
-standalone public `libkore` ABI shipped by the Vectis SDK.
+The embedded Kore runtime is a private implementation detail. The Vectis SDK
+does not ship a standalone public `libkore` ABI.

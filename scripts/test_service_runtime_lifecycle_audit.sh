@@ -209,7 +209,7 @@ assert_lua_runtime_evidence() {
   require_egrep "$repo_root/tests/lua/smoke.lua" \
     'pump_callback_failures' \
     "Lua mailbox pump callback failures are observable"
-  require_egrep "$repo_root/docs/lua-app.md" \
+  require_egrep "$repo_root/manual/lua-app.md" \
     'not shell commands or external sleep loops' \
     "Lua app docs require Vectis waits"
 }

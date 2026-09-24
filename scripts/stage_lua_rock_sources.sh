@@ -46,9 +46,9 @@ copy_file scripts/stage_lua_rock_sources.sh scripts/stage_lua_rock_sources.sh
 copy_file scripts/test_lua_rock.sh scripts/test_lua_rock.sh
 copy_file scripts/validate_luarocks.sh scripts/validate_luarocks.sh
 
-for lua_doc in "$repo_root"/docs/lua*.md; do
-  [ -f "$lua_doc" ] || continue
-  copy_file "docs/$(basename -- "$lua_doc")" "docs/$(basename -- "$lua_doc")"
+for manual_doc in "$repo_root"/manual/*.md; do
+  [ -f "$manual_doc" ] || continue
+  copy_file "manual/$(basename -- "$manual_doc")" "manual/$(basename -- "$manual_doc")"
 done
 
 mkdir -p "$stage_root/lua"

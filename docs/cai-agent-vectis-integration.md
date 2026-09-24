@@ -121,7 +121,7 @@ CAI callbacks from multiple runtimes.
 The default CLI store is a user-owned encrypted Pouch directory. Deployments
 can choose a different lockdc endpoint and namespace. ChatGPT OAuth state is
 not agent session state and remains CAI-owned, as described in
-[Agent Smith](agent-smith.md).
+[Agent Smith](../manual/agent-smith.md).
 
 ## Host integration
 

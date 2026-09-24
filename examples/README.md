@@ -156,7 +156,7 @@ same code works in scratch containers where `vectis` is the only executable.
   filesystem roots rather than packed assets and requires a manual TLS bundle;
   provide the
   `VECTIS_LUA_SITE_*` paths when running it. See
-  [`docs/lua-site.md`](../docs/lua-site.md) for the deployment shape and auth
+  [`manual/lua-site.md`](../manual/lua-site.md) for the deployment shape and auth
   template contract.
 - `lua/api_server.lua`: packable Lua API server script using direct
   `app:json()`/`app:auth_json()` receivers, OpenAPI generation,

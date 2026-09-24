@@ -91,10 +91,10 @@ check_lua_module_files() {
 check_lua_docs() {
   root=$1
   artifact=$2
-  index="$root/docs/lua.md"
+  index="$root/manual/lua.md"
   manifest="$root/RELEASE_MANIFEST"
 
-  [ -f "$index" ] || fail "Lua source archive missing docs/lua.md" "$artifact"
+  [ -f "$index" ] || fail "Lua source archive missing manual/lua.md" "$artifact"
   [ -f "$manifest" ] || fail "Lua source archive missing RELEASE_MANIFEST" "$artifact"
   sed -n 's/.*](\(lua[^)]*\.md\)).*/\1/p' "$index" |
   while IFS= read -r linked_doc; do
@@ -104,11 +104,11 @@ check_lua_docs() {
         fail "Lua documentation link is not package-relative" "$linked_doc"
         ;;
     esac
-    [ -f "$root/docs/$linked_doc" ] ||
-      fail "Lua source archive missing linked documentation" "docs/$linked_doc"
-    grep -Fx "docs/$linked_doc" "$manifest" >/dev/null ||
+    [ -f "$root/manual/$linked_doc" ] ||
+      fail "Lua source archive missing linked documentation" "manual/$linked_doc"
+    grep -Fx "manual/$linked_doc" "$manifest" >/dev/null ||
       fail "Lua source archive manifest missing linked documentation" \
-        "docs/$linked_doc"
+        "manual/$linked_doc"
   done
 }
 
