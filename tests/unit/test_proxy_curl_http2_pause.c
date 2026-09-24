@@ -16,13 +16,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
+#ifdef VECTIS_HTTP2_SCALE_PROBE
+#define RESPONSE_SIZE (16u * 1024u * 1024u)
+#define CONCURRENT_TRANSFERS 16
+#else
 #define RESPONSE_SIZE (64u * 1024u * 1024u)
 #define CONCURRENT_TRANSFERS 4
-#define MAX_RSS_DELTA_KB (16u * 1024u)
+#endif
+#define MAX_RSS_DELTA_KB (CONCURRENT_TRANSFERS * 4096u)
 
 struct h2_server {
   int listener;
@@ -345,6 +351,20 @@ rss_kb(void)
   return amount;
 }
 
+static unsigned long
+observed_peak_rss_kb(unsigned long current, unsigned long previous)
+{
+  struct rusage usage;
+
+  assert(getrusage(RUSAGE_SELF, &usage) == 0);
+  assert(usage.ru_maxrss > 0);
+  if ((unsigned long)usage.ru_maxrss > current)
+    current = (unsigned long)usage.ru_maxrss;
+  if (previous > current)
+    return previous;
+  return current;
+}
+
 int
 main(void)
 {
@@ -369,7 +389,11 @@ main(void)
   unsigned long after_pause;
   unsigned long after_wait;
   unsigned long after_resume;
+  unsigned long peak_at_pause;
+  unsigned long peak_after_wait;
+  unsigned long peak_after_resume;
   size_t generated_at_pause;
+  size_t generated_after_wait;
   time_t resume_start;
 
   key = make_key();
@@ -432,12 +456,15 @@ main(void)
     assert(version == CURL_HTTP_VERSION_2_0);
   }
   after_pause = rss_kb();
+  peak_at_pause = observed_peak_rss_kb(after_pause, baseline);
+  generated_at_pause = __sync_fetch_and_add(&server.generated, 0);
   for (attempt = 0; attempt < 20 && running; attempt++) {
     assert(curl_multi_poll(multi, NULL, 0, 100, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
   }
   after_wait = rss_kb();
-  generated_at_pause = __sync_fetch_and_add(&server.generated, 0);
+  peak_after_wait = observed_peak_rss_kb(after_wait, peak_at_pause);
+  generated_after_wait = __sync_fetch_and_add(&server.generated, 0);
   for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
     states[i].resume = 1;
     assert(curl_easy_pause(easy[i], CURLPAUSE_CONT) == CURLE_OK);
@@ -448,15 +475,17 @@ main(void)
     assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
   }
-  fprintf(stderr, "h2 resume: running=%d attempts=%d received=%lu,%lu,%lu,%lu\n",
-      running, attempt, (unsigned long)states[0].received,
-      (unsigned long)states[1].received,
-      (unsigned long)states[2].received,
-      (unsigned long)states[3].received);
+  fprintf(stderr, "h2 resume: running=%d attempts=%d received=",
+      running, attempt);
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+    fprintf(stderr, "%s%lu", i == 0 ? "" : ",",
+        (unsigned long)states[i].received);
+  fprintf(stderr, "\n");
   assert(running == 0);
   for (i = 0; i < CONCURRENT_TRANSFERS; i++)
     assert(states[i].received == RESPONSE_SIZE);
   after_resume = rss_kb();
+  peak_after_resume = observed_peak_rss_kb(after_resume, peak_after_wait);
   for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
     assert(curl_multi_remove_handle(multi, easy[i]) == CURLM_OK);
     curl_easy_cleanup(easy[i]);
@@ -470,19 +499,28 @@ main(void)
   X509_free(cert);
   EVP_PKEY_free(key);
   fprintf(stderr, "curl h2 pause: baseline=%luKB paused=%luKB later=%luKB "
-      "resumed=%luKB generated_at_pause=%lu server_generated=%lu\n",
+      "resumed=%luKB peaks=%lu,%lu,%luKB generated=%lu,%lu,%lu\n",
       baseline, after_pause, after_wait, after_resume,
-      (unsigned long)generated_at_pause, (unsigned long)server.generated);
+      peak_at_pause, peak_after_wait, peak_after_resume,
+      (unsigned long)generated_at_pause,
+      (unsigned long)generated_after_wait,
+      (unsigned long)server.generated);
   assert(server.accepted == CONCURRENT_TRANSFERS);
   assert(server.saw_request == CONCURRENT_TRANSFERS);
   assert(server.negotiated_h2 == CONCURRENT_TRANSFERS);
   assert(generated_at_pause > CONCURRENT_TRANSFERS * 65536u);
   assert(generated_at_pause < CONCURRENT_TRANSFERS * RESPONSE_SIZE);
+  assert(generated_after_wait < CONCURRENT_TRANSFERS * RESPONSE_SIZE / 2);
   assert(server.generated == CONCURRENT_TRANSFERS * RESPONSE_SIZE);
   assert(after_wait >= baseline);
   assert(after_wait - baseline <= MAX_RSS_DELTA_KB);
   assert(after_wait <= after_pause + 4096u);
   assert(after_resume >= baseline);
   assert(after_resume - baseline <= MAX_RSS_DELTA_KB);
+  assert(peak_at_pause >= after_pause);
+  assert(peak_after_wait >= after_wait);
+  assert(peak_after_resume >= after_resume);
+  assert(peak_after_resume >= baseline);
+  assert(peak_after_resume - baseline <= MAX_RSS_DELTA_KB);
   return 0;
 }

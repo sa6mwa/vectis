@@ -97,6 +97,10 @@ if(VECTIS_WITH_KORE_RUNTIME)
       test_proxy_curl_socket_handoff.c)
     vectis_add_unit_test(vectis_unit_proxy_curl_http2_pause
       test_proxy_curl_http2_pause.c)
+    vectis_add_unit_test(vectis_unit_proxy_curl_http2_pause_many
+      test_proxy_curl_http2_pause.c)
+    target_compile_definitions(vectis_unit_proxy_curl_http2_pause_many PRIVATE
+      VECTIS_HTTP2_SCALE_PROBE=1)
     vectis_add_unit_test(vectis_unit_kore_proxy_curl_loop
       test_kore_proxy_curl_loop.c)
     target_include_directories(vectis_unit_kore_proxy_curl_loop PRIVATE

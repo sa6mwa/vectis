@@ -320,23 +320,29 @@ release-wide production allowance has been established yet. If that allowance
 cannot satisfy the streaming memory budget, the architecture needs a
 different HTTP/2 client transport or a narrower supported contract.
 
-The Linux [HTTPS HTTP/2 pause probe](../tests/unit/test_proxy_curl_http2_pause.c)
-uses a local nghttp2 server over certificate-verified TLS. ALPN selects `h2`;
+The Linux [HTTPS HTTP/2 pause probes](../tests/unit/test_proxy_curl_http2_pause.c)
+use a local nghttp2 server over certificate-verified TLS. ALPN selects `h2`;
 the client reports HTTP/2, disables multiplexing, and limits concurrent
-streams to one per connection. Four transfers to the same origin each open a
-separate TLS connection. Each server response is generated incrementally and
-is 64 MiB long. All four download callbacks pause after their first chunk;
-the local servers generated about 15.8 MiB total while paused. In one run,
-whole-process RSS moved from 9.0 MiB to 11.2 MiB and did not grow over the
-next two seconds. After unpausing, all four clients verified every byte of
-their 64 MiB responses; RSS remained about 11.2 MiB. Five serial repetitions
-of pause and completion passed. The test enforces a 16 MiB whole-process
-RSS-delta ceiling and a 4 MiB post-pause growth ceiling. The server and client
-share the process, so this measurement includes both. It establishes the
-paused/resumed four-connection case in the pinned debug bundle, not a hard
-libcurl allocation bound. Release bundles, larger concurrency, large headers,
-adversarial compression, connection reuse, and cancellation still need an
-admission and stress test before the HTTP/2 allowance is final.
+streams to one per connection. Separate TLS connections carry either four
+64 MiB responses or sixteen 16 MiB responses from the same origin. Each
+response is generated incrementally. Every download callback pauses after
+its first chunk. During the two-second pause the server generated about
+15 MiB in the four-connection case and 60 MiB in the sixteen-connection
+case, both below half the total response volume. In representative runs,
+whole-process RSS moved from 9.0 to 11.1 MiB with four connections and
+from 6.7 to 13.0 MiB with sixteen. RSS stayed level during the pause, then
+all 256 MiB of body bytes were verified after resume. Both variants passed
+five serial repetitions. The test enforces a whole-process observed-peak
+RSS delta of at most 4 MiB per transfer and at most 4 MiB additional growth
+after all transfers pause. Observed peak uses the larger of current RSS and
+Linux `ru_maxrss`, since `ru_maxrss` alone read below current RSS in one run.
+The server and client share the process, so this includes both sides. These
+are regression ceilings for the pinned build, not an enforceable libcurl
+allocation bound or a production per-connection allowance. Large headers,
+adversarial compression, connection reuse, much longer idle periods, and
+cancellation still need admission and stress tests before that allowance is
+final. Automatic decompression must stay disabled for the proxy because
+[libcurl can cache uncompressed data while paused](https://curl.se/libcurl/c/curl_easy_pause.html).
 
 The HTTP/2 probe now also asserts the pinned runtime libcurl reports
 `AsynchDNS`, `HTTP2`, and `SSL`. The host-debug and x86_64 Linux GNU release
@@ -564,7 +570,7 @@ harness and production proxy cancellation paths still need their own proof.
 | Response output | `net_send_stream()` callbacks need an independent lifetime because Kore can invoke them during connection removal after freeing `hdlr_extra`. `net_send_queue()` instead copies a bounded chunk and needs no proxy completion callback. The proxy detects queue drain in its connection event handler before resuming upstream reads. Its first flush is deferred beyond the pre-body hook to avoid reentering a predecessor stream callback. | One 8 KiB Kore netbuf and one 8 KiB scratch buffer suffice for the 1 MiB slow-peer probe over cleartext and double TLS. The queue-based writer preserves a live streamed predecessor, its own response, and an ordinary successor over cleartext and TLS. A reset with a queued cleartext or TLS netbuf and a fault-injected cleartext write error cancel cleanly. A TLS write-call failure remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) still enforces the header timer after pre-body takeover unless the proxy clears it. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis exposes the worker teardown hook through its static-runtime symbol table. | A one-second timer killed an idle takeover before the fix; clearing `http_timeout` preserved it. Active downstream connection was observed at teardown and disconnected once. A stalled upstream TLS handshake was cancelled with its curl handle, Kore socket watchers, and deadline timer before event-loop cleanup. TCP upstream resets before and after response commitment, queued output abort over cleartext and TLS, and a fault-injected cleartext write error pass worker-loop probes. Other callback phases and timeout policies remain open. |
-| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, a 1 MiB coupled fixed-length HTTP/1.1 upload with an early response over both cleartext and downstream TLS, Linux Kore worker-loop connect-only/tunnel handoff, 1 MiB coupled cleartext and double-TLS relays, a live 1 MiB HTTP/1.1 SSE stream, a fixed split-header WebSocket `403` with a 1 MiB body, and four paused/resumed HTTPS HTTP/2 connections pass. General HTTP framing, other WebSocket rejection cases, release-bundle features, and a production HTTP/2 memory allowance remain open. |
+| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, a 1 MiB coupled fixed-length HTTP/1.1 upload with an early response over both cleartext and downstream TLS, Linux Kore worker-loop connect-only/tunnel handoff, 1 MiB coupled cleartext and double-TLS relays, a live 1 MiB HTTP/1.1 SSE stream, a fixed split-header WebSocket `403` with a 1 MiB body, and four- and sixteen-connection paused/resumed HTTPS HTTP/2 probes pass. General HTTP framing, other WebSocket rejection cases, other target bundles, and a production HTTP/2 memory allowance remain open. |
 
 ## Minimum executable proof before architecture commitment
 
