@@ -750,6 +750,26 @@ generic syntax, value, and trailer validation remain unproved. The test must
 compile with `KORE_USE_CURL` to match Kore's `struct http_request` layout when
 it enumerates the header list.
 
+The pre-body view also retains the raw path `/raw-target/a%2Fb/%2e/c` and
+query `q=1&q=2&plus=%2B&empty=` byte-for-byte over cleartext and downstream
+TLS. This gives the proxy enough inbound data to construct an origin-form
+upstream target without reconstructing escaping or repeated query fields
+from Vectis's decoded route parameters. Target validation, base-path joining,
+and forwarding to libcurl still need their own integrated tests.
+
+That visibility does not imply a proxy route can admit the same request today:
+an ordinary regex route on `/ordinary-raw-target/.*` returns `400` for
+escaped slash (`%2F`), percent (`%25`), colon (`%3A`), and parent segment
+(`%2e%2e`) targets over both cleartext and TLS. The bridge's shared decoder
+rejects escaped slash; ordinary path validation rejects the other decoded
+forms. A proxy selector that simply calls the existing decoded-path query
+would therefore discard some syntactically valid raw targets before the
+director can see them. The least intrusive candidate is proxy-specific
+matching over a validated raw segment view while leaving ordinary route
+validation and registration order intact. Its overlap
+semantics and security checks need executable proof; widening the shared
+ordinary decoder would change unrelated routes.
+
 The same handoff probe now accepts a 1 MiB chunked POST with no
 `Content-Length`, before Kore's ordinary `411` path. Its temporary framer
 validates each body byte without storing the body, uses later receive windows

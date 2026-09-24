@@ -52,6 +52,9 @@ struct chunk_state {
 extern void vectis_kore_set_prebody_probe(
     int (*probe)(struct http_request *, const void *, size_t));
 
+static const char raw_path[] = "/raw-target/a%2Fb/%2e/c";
+static const char raw_query[] = "q=1&q=2&plus=%2B&empty=";
+
 static int
 probe_connection_handle(struct connection *c)
 {
@@ -263,6 +266,19 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
   int framing_seen;
   size_t first;
 
+  if (strncmp(req->path, "/raw-target", 11) == 0) {
+    static const char marker[] = "raw-target-preserved";
+    int preserved;
+
+    preserved = strcmp(req->path, raw_path) == 0 &&
+        req->query_string != NULL &&
+        strcmp(req->query_string, raw_query) == 0;
+    req->owner->flags |= CONN_CLOSE_EMPTY;
+    http_response(req, preserved ? 200 : 400,
+        preserved ? marker : "raw-target-changed",
+        preserved ? sizeof(marker) - 1 : sizeof("raw-target-changed") - 1);
+    return KORE_RESULT_ERROR;
+  }
   if (strncmp(req->path, "/framing-", 9) == 0) {
     first_length = NULL;
     second_length = NULL;
@@ -838,8 +854,9 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
 }
 
 static int
-check_framing_header_visibility(unsigned short port, const char *path,
-    const char *version, const char *headers, int tls)
+check_prebody_header_result(unsigned short port, const char *path,
+    const char *version, const char *headers, int tls, int status,
+    const char *marker)
 {
   SSL_CTX *ctx;
   SSL *ssl;
@@ -851,6 +868,7 @@ check_framing_header_visibility(unsigned short port, const char *path,
   int length;
   int fd;
   int ok;
+  char status_text[16];
 
   length = snprintf(wire, sizeof(wire),
       "GET %s HTTP/%s\r\nHost: localhost\r\n%s\r\n",
@@ -876,8 +894,9 @@ check_framing_header_visibility(unsigned short port, const char *path,
   watch.events = POLLIN;
   used = 0;
   output[0] = '\0';
+  assert(snprintf(status_text, sizeof(status_text), " %d ", status) > 0);
   while (used < sizeof(output) - 1 &&
-      strstr(output, "prebody-framing-reject") == NULL) {
+      strstr(output, marker) == NULL) {
     if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
       break;
     if (tls)
@@ -890,8 +909,8 @@ check_framing_header_visibility(unsigned short port, const char *path,
     used += (size_t)got;
     output[used] = '\0';
   }
-  ok = strstr(output, " 400 ") != NULL &&
-      strstr(output, "prebody-framing-reject") != NULL;
+  ok = strstr(output, status_text) != NULL &&
+      strstr(output, marker) != NULL;
   fprintf(stderr, "%s %s admission visibility: %s\n",
       tls ? "TLS" : "cleartext", path, ok ? "passed" : "failed");
   assert(ok);
@@ -901,6 +920,14 @@ check_framing_header_visibility(unsigned short port, const char *path,
     SSL_CTX_free(ctx);
   assert(close(fd) == 0);
   return ok;
+}
+
+static int
+check_framing_header_visibility(unsigned short port, const char *path,
+    const char *version, const char *headers, int tls)
+{
+  return check_prebody_header_result(port, path, version, headers, tls,
+      400, "prebody-framing-reject");
 }
 
 int
@@ -919,6 +946,7 @@ main(void)
   vectis_app_config config;
   vectis_cert_bundle_config certs;
   vectis_route_config route;
+  vectis_route_config raw_route;
   vectis_error error;
   vectis_app *app;
   struct pollfd watch;
@@ -938,6 +966,7 @@ main(void)
   int tls_chunked_passed;
   int framed_methods_passed;
   int framing_headers_passed;
+  int raw_target_passed;
   char cert_path[128];
   char key_path[128];
 
@@ -953,6 +982,10 @@ main(void)
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/two", reply, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  raw_route = vectis_route(VECTIS_HTTP_GET,
+      "^/ordinary-raw-target/.*$", reply, NULL);
+  raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
   if (getenv("VECTIS_KORE_PREBODY_EXIT_AFTER_START") != NULL)
     _exit(71);
@@ -1014,6 +1047,21 @@ main(void)
       "Host: attacker.invalid\r\n", 0);
   framing_headers_passed &= check_framing_header_visibility(port,
       "/framing-http10", "1.0", "", 0);
+  raw_target_passed = check_prebody_header_result(port,
+      "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
+      "1.1", "", 0, 200, "raw-target-preserved");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/a%2Fb", "1.1", "", 0,
+      400, "unsafe percent escape");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/a%25b", "1.1", "", 0,
+      400, "percent escapes or backslashes");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/a%3Ab", "1.1", "", 0,
+      400, "request path must not contain ':'");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/%2e%2e/child", "1.1", "", 0,
+      400, "dot segments");
   reject_passed = check_local_rejection(port, "/reject", 400);
   reject_passed &= check_local_rejection(port, "/forbidden", 403);
   assert(vectis_stop(app, &error) == VECTIS_OK);
@@ -1046,6 +1094,10 @@ main(void)
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/two", reply, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  raw_route = vectis_route(VECTIS_HTTP_GET,
+      "^/ordinary-raw-target/.*$", reply, NULL);
+  raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
   tls_passed = check_tls_handoff(port, wire);
   tls_chunked_passed = check_small_chunked_ingress(port, 1);
@@ -1062,6 +1114,21 @@ main(void)
       "Host: attacker.invalid\r\n", 1);
   framing_headers_passed &= check_framing_header_visibility(port,
       "/framing-http10", "1.0", "", 1);
+  raw_target_passed &= check_prebody_header_result(port,
+      "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
+      "1.1", "", 1, 200, "raw-target-preserved");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/a%2Fb", "1.1", "", 1,
+      400, "unsafe percent escape");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/a%25b", "1.1", "", 1,
+      400, "percent escapes or backslashes");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/a%3Ab", "1.1", "", 1,
+      400, "request path must not contain ':'");
+  raw_target_passed &= check_prebody_header_result(port,
+      "/ordinary-raw-target/%2e%2e/child", "1.1", "", 1,
+      400, "dot segments");
   tls_raw_passed = check_raw_handoff(port, 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
@@ -1071,6 +1138,6 @@ main(void)
   return count == 3 && split_count == 2 && tls_passed &&
       raw_passed && tls_raw_passed && reject_passed && chunked_passed &&
       small_chunked_passed && tls_chunked_passed && framed_methods_passed &&
-      framing_headers_passed &&
+      framing_headers_passed && raw_target_passed &&
       strstr(output, "data") != NULL ? 0 : 1;
 }

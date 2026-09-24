@@ -60,15 +60,25 @@ redirect responses by default and never follows upstream redirects itself.
 The proxy rejects a rewrite to an unconfigured scheme or authority. A route
 that needs several backends declares those targets up front; a director may
 select among them without becoming an unrestricted outbound request facility.
-Route matching uses Vectis's validated decoded path; forwarding and rewriting
-start from a separately retained, validated raw path and raw query. The proxy
-must not reconstruct the upstream target from decoded route parameters or
-parsed query pairs, which can change escaping or repeated query fields. Build
+For paths accepted by the existing Vectis decoder, route matching uses its
+validated decoded path; forwarding and rewriting start from a separately
+retained, validated raw path and raw query. The proxy must not reconstruct the
+upstream target from decoded route parameters or parsed query pairs, which
+can change escaping or repeated query fields. Build
 the outbound origin-form request target from those validated raw components
 and pass it with `CURLOPT_REQUEST_TARGET`; the configured URL still selects
 the connection authority and TLS peer. Reject absolute-form targets, fragments,
 control characters, and ambiguous escaping before passing that target to
 libcurl, which sends it verbatim.
+
+This route-selection rule has an unresolved feasibility gate: the current
+Vectis decoder rejects escaped slashes, and its ordinary path validator can
+reject other escaped forms before route matching. Kore's pre-body hook does
+retain the raw bytes. To support Go-like raw target fidelity without changing
+ordinary routes, a proxy-specific validated raw segment match may be needed.
+Prove its overlap order against ordinary, upload, static, and application
+WebSocket routes before committing to the public route contract. Until then,
+the spec does not claim that every escaped inbound path reaches a proxy route.
 
 This follows Go's newer `Rewrite(in, out)` model rather than copying the
 behavior of its older `Director`: sanitize first, then let application code
@@ -677,6 +687,10 @@ Treat these as feasibility gates before committing to the full implementation:
 7. The pinned libcurl build sustains HTTP/2 uploads, downloads, and SSE with
    multiplexing disabled and a measured stable memory envelope under paused
    slow-consumer load.
+8. A proxy route can admit and forward validated escaped raw paths, including
+   an encoded slash, without changing ordinary route rejection behavior or
+   registration order. Prove the raw target reaches the director intact and
+   is sent upstream intact after an allowed rewrite.
 
 A failed gate requires revisiting the transport design or dependency, not
 substituting a worker thread per stream, full-body buffer, or hidden spool
