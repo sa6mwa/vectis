@@ -221,6 +221,15 @@ regression ceiling. This validates simultaneous cancellation with
 multiplexing disabled, but does not establish behavior for multiplexed
 streams, connection reuse under load, or a production memory allowance.
 
+Libcurl's [total connection limit](https://curl.se/libcurl/c/CURLMOPT_MAX_TOTAL_CONNECTIONS.html)
+queues excess easy handles internally, while its [multi connection cache](https://curl.se/libcurl/c/CURLMOPT_MAXCONNECTS.html)
+grows with added handles by default. A connection limit alone therefore does
+not bound outstanding proxy exchanges or retained idle TLS connections. The
+spec now requires Vectis admission before `curl_multi_add_handle()` and
+explicit active/cache limits on both proxy pools. The worker probe has no
+configured production admission ceiling yet; a saturation test and pinned
+release-bundle allowance remain open.
+
 Source inspection exposed a watcher lifetime difference that the Linux
 probe had missed. [`bsd.c`](../vendor/kore/upstream/src/bsd.c) returns separate
 read and write kqueue results with the same event pointer in one batch, while
