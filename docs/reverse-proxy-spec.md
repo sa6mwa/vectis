@@ -280,6 +280,31 @@ later dispatch so two code paths cannot disagree. Keep proxy state separate
 from the bridge's current body-state type because its `on_free` hook assumes
 that type.
 
+The existing bridge asks for an application WebSocket route before ordinary
+dispatch for every GET, regardless of whether `Connection` and `Upgrade`
+tokens form a valid upgrade. Preserve that precedence: if an application
+WebSocket route matches, return `CONTINUE` and let its current handshake path
+produce the response, including malformed-handshake responses. Only after
+that check may a proxy route be considered. For remaining requests, resolve
+the first matching route in registration order using the same method, path,
+parameter, and regex matcher used by body policy. Take over only when that
+winner is a proxy route. An ordinary handler, static handler, or live upload
+winner continues through its existing path. Evaluate proxy WebSocket mode
+only for a validated HTTP/1.1 upgrade; a proxy route may still handle an
+ordinary GET through its HTTP mode. Return path-validation and allocation
+errors locally before contacting upstream.
+
+Exact duplicate method/path-kind/path registrations already conflict, but
+literal, parameter, and regex patterns can overlap. Test both registration
+orders for overlaps so header-time admission and later route dispatch agree.
+The selector must not reuse the current body-policy return value alone:
+it contains the policy and a live-upload flag, but no route identity. Body
+policy scans all route kinds, ordinary dispatch skips non-handler kinds, and
+application WebSocket matching runs first. Introduce a shared route
+resolution result or equivalent common matching helper in Vectis, then make
+pre-body admission consume that result;
+this adds no further Kore transport surface.
+
 Kore's current request-body behavior is method-based: GET, HEAD, OPTIONS,
 COPY, and MOVE are marked complete at request creation; most other methods
 require `Content-Length`; there is no incoming chunked decoder. Its
@@ -608,7 +633,7 @@ evidence is integration and end-to-end behavior.
 
 | Layer | Required cases and assertions |
 | --- | --- |
-| Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed proxy framing and handshake rejection; pre-body proxy selection agreeing with later non-proxy dispatch and preserving ordinary, static, upload, and application WebSocket precedence. |
+| Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed proxy framing and handshake rejection; pre-body proxy selection agreeing with later non-proxy dispatch. Cover both registration orders for proxy literal versus ordinary regex, proxy regex versus static or live upload, and an application WebSocket route overlapping a proxy route. The application WebSocket route must keep its current priority for GET with valid, missing, or malformed upgrade headers; exact duplicate route registration must still fail. |
 | Parser and readiness integration | For a proxy takeover, initial read containing headers plus body, bodyless or `Content-Length: 0` request followed by another request, exactly and beyond declared length, and an early WebSocket frame; split and malformed chunk boundaries; duplicate/conflicting lengths and `Content-Length`/`Transfer-Encoding` ambiguity; trailers; pausing midway through a chunk; resume without a new epoll edge and with pending writes; downstream TLS `WANT_READ`/`WANT_WRITE` progress on Linux and BSD. For `CONTINUE`, compare ordinary route, live-upload, and application WebSocket behavior to existing fixtures, including current body limits and dispatch timing; also send ordinary header-only and fixed-length requests immediately followed by a proxy request in one read. Assert byte ownership, exactly one dispatch per request, and no desynchronization, spin, or premature next-request read. |
 | HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; declared request trailers, rejection of undeclared request trailers, and relay of permitted undeclared response trailers, verifying upload EOF and final-chunk ordering; exactly one local `100` even when upstream also sends `100`, bounded upload while upstream connects, `100` followed by `502` on connection failure, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; exact upstream `4xx`/`5xx` status, headers, and body with Kore pretty errors enabled; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Assert upstream receives the expected bytes and metadata. |
 | HTTP/2 upstream integration | A local HTTPS upstream offers `h2` and `http/1.1`, then `h2` only: ordinary HTTP and SSE negotiate `h2`, while forced-HTTP/1.1 routes and WebSocket handshakes stay on HTTP/1.1 and fail with `502` against an `h2`-only peer. Verify HTTP/1.1 fallback still produces downstream chunked framing in the auto pool, TLS 1.2 minimum, no h2c, no concurrent streams per connection, server push refusal, `:path`/`:authority` rewrites, known/unknown upload length, early response, HEAD, and selected HTTP/1.1 pool for request trailers. Verify an HTTP/2 response with both `Content-Length` and undeclared trailers is sent downstream with chunked framing, intact trailer fields, and declared-length validation. Under many slow downstream readers and concurrent long-lived SSE streams, assert both the per-transfer application queue limit and the separately budgeted libcurl/TLS worker-memory envelope. Repeat with much larger response sizes and durations; memory must not track payload size. |

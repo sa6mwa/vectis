@@ -319,6 +319,21 @@ setter in the Vectis bridge; the eventual route selector must replace it.
 The raw upgrade response is a byte-ownership probe, not a complete WebSocket
 handshake or relay.
 
+Route selection needs a Vectis-specific resolution step before the proxy
+claims the connection. The bridge currently calls
+[`vectis_internal_match_websocket()`](../src/vectis.c) first for every GET;
+that matcher uses method and path, not the incoming upgrade tokens. Kore's
+application WebSocket handshake then accepts or rejects the request. For
+remaining requests, `vectis_internal_route_body_policy()` scans every route
+kind in registration order, while `vectis_internal_dispatch_route()` scans
+handler kinds only. Exact duplicate method/path-kind/path registrations are
+rejected, but regex and literal paths may overlap. A header-time selector
+that merely repeats the body-policy lookup can therefore disagree with the
+eventual ordinary dispatcher. The spec now preserves application WebSocket
+precedence, then resolves proxy versus non-proxy routes with shared matching
+logic and explicit overlap tests. This is a Vectis change; it does not require
+another Kore hook. No executable proxy admission selector exists yet.
+
 ## Transport candidate under test
 
 The direct-output candidate gave the proxy exchange its own downstream
@@ -468,7 +483,7 @@ harness and production proxy cancellation paths still need their own proof.
 
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
-| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe; actual Vectis proxy route precedence remains untested. |
+| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe. The bridge gives application WebSocket routes priority for every GET; body policy scans all route kinds in registration order, while ordinary dispatch scans handler kinds only. Exact duplicate routes conflict, but regex/literal overlaps are allowed. A shared proxy admission selector and overlap tests remain unproved. |
 | Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. | Coalesced and split input passes on Linux, including downstream TLS. A 1 MiB chunked POST and a same-write chunked body with a pipelined GET also pass, including the latter over TLS. Direct-I/O ordinary HTTP takeover restores Kore's event handler and serves two subsequent ordinary requests. Full framer/backpressure integration and cleanup races remain open. |
 | Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` covers ordinary byte boundaries. A bounded chunked probe now validates 1 MiB incrementally, parses a trailer, and replays a following GET from both borrowed and later socket bytes. General framing policy, malformed-input handling, and libcurl backpressure composition remain unproved. |
 | Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, so taken-over input uses direct nonblocking fd/`SSL *` reads. Output copies one bounded chunk into Kore's send queue and uses its TLS writer; `SSL_want()` identifies queued output's retry direction. The worker probe measures an 8 KiB scratch queue plus one 8 KiB Kore netbuf. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Slow cleartext, HTTPS-upstream, and double-TLS relays pass on Linux. Forced cross-direction retries and kqueue remain open. |
