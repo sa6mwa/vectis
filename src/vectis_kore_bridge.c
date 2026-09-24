@@ -54,12 +54,14 @@ void vectis_kore_ws_message(struct connection *connection, u_int8_t opcode,
 void vectis_kore_ws_disconnect(struct connection *connection);
 void kore_parent_configure(int argc, char **argv);
 void kore_parent_teardown(void);
+void kore_worker_teardown(void);
 void vectis_kore_parent_timers(void);
 
 #if defined(KORE_VECTIS_STATIC_RUNTIME)
 const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[] = {
     {"kore_parent_configure", (void *)kore_parent_configure},
     {"kore_parent_teardown", (void *)kore_parent_teardown},
+    {"kore_worker_teardown", (void *)kore_worker_teardown},
     {"vectis_kore_route", (void *)vectis_kore_route},
     {"vectis_kore_http_redirect_route",
      (void *)vectis_kore_http_redirect_route},
@@ -109,6 +111,17 @@ static u_int64_t vectis_kore_curl_recv_max_default = 0u;
 static vectis_kore_runtime_config vectis_kore_current;
 static int (*vectis_kore_prebody_probe)(struct http_request *, const void *,
                                        size_t);
+static void (*vectis_kore_worker_teardown_probe)(void);
+
+void vectis_kore_set_worker_teardown_probe(void (*probe)(void)) {
+  vectis_kore_worker_teardown_probe = probe;
+}
+
+void kore_worker_teardown(void) {
+  if (vectis_kore_worker_teardown_probe != NULL) {
+    vectis_kore_worker_teardown_probe();
+  }
+}
 
 void vectis_kore_set_prebody_probe(int (*probe)(struct http_request *,
                                                 const void *, size_t)) {

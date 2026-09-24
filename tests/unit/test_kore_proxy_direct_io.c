@@ -37,6 +37,8 @@ struct direct_metrics {
   unsigned tls_write_want_write;
   unsigned prior_queue_seen;
   unsigned prior_queue_drained;
+  unsigned worker_teardown_active;
+  unsigned worker_teardown_calls;
   size_t max_queued;
 };
 
@@ -61,6 +63,7 @@ static struct direct_metrics *metrics;
 
 extern void vectis_kore_set_prebody_probe(
     int (*probe)(struct http_request *, const void *, size_t));
+extern void vectis_kore_set_worker_teardown_probe(void (*probe)(void));
 
 static void direct_pump(struct connection *c);
 
@@ -270,6 +273,18 @@ direct_event(void *arg, int error)
   (void)error;
   direct_pump(c);
   c->evt.flags = 0;
+}
+
+static void
+direct_worker_teardown(void)
+{
+  struct connection *c;
+
+  metrics->worker_teardown_calls++;
+  TAILQ_FOREACH(c, &connections, list) {
+    if (c->evt.handle == direct_event)
+      metrics->worker_teardown_active++;
+  }
 }
 
 static int
@@ -484,6 +499,9 @@ main(void)
       "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"
       "GET /direct HTTP/1.1\r\nHost: localhost\r\n"
       "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+  static const char direct_request[] =
+      "GET /direct HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
   vectis_app_config config;
   vectis_cert_bundle_config certs;
   vectis_route_config route;
@@ -518,8 +536,10 @@ main(void)
     payload[i] = (unsigned char)(i % 251);
   port = available_port();
   vectis_kore_set_prebody_probe(direct_prebody);
+  vectis_kore_set_worker_teardown_probe(direct_worker_teardown);
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.worker_count = 1u;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
   app = vectis_app_new(&config, &error);
@@ -583,7 +603,23 @@ main(void)
   assert(poll(&watch, 1, 5000) > 0);
   assert(recv(fd, recvbuf, sizeof(recvbuf), 0) == 0);
   assert(close(fd) == 0);
+
+  fd = connect_local(port);
+  assert(send(fd, direct_request, sizeof(direct_request) - 1, 0) ==
+      (ssize_t)(sizeof(direct_request) - 1));
+  watch.fd = fd;
+  header_used = 0;
+  response_header[0] = '\0';
+  while (strstr(response_header, "\r\n\r\n") == NULL) {
+    assert(header_used < sizeof(response_header) - 1);
+    assert(poll(&watch, 1, 5000) > 0);
+    assert(recv(fd, &ch, 1, 0) == 1);
+    response_header[header_used++] = ch;
+    response_header[header_used] = '\0';
+  }
+  assert(strstr(response_header, " 101 ") != NULL);
   assert(vectis_stop(app, &error) == VECTIS_OK);
+  assert(close(fd) == 0);
   app->close(app);
   fprintf(stderr,
       "direct io: events=%u continuations=%u pauses=%u eof=%u "
@@ -594,7 +630,9 @@ main(void)
   assert(metrics->events < 10000);
   assert(metrics->write_pauses > 0);
   assert(metrics->read_eofs == 1);
-  assert(metrics->disconnects == 1);
+  assert(metrics->disconnects == 2);
+  assert(metrics->worker_teardown_calls == 1);
+  assert(metrics->worker_teardown_active == 1);
   assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
   assert(metrics->prior_queue_seen == 1);
   assert(metrics->prior_queue_drained == 1);
@@ -615,6 +653,7 @@ main(void)
   port = available_port();
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_MANUAL;
+  config.server.worker_count = 1u;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
   config.tls.domain = "localhost";
@@ -630,6 +669,7 @@ main(void)
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   vectis_kore_set_prebody_probe(NULL);
+  vectis_kore_set_worker_teardown_probe(NULL);
   assert(remove(cert_path) == 0);
   assert(remove(key_path) == 0);
   fprintf(stderr,
