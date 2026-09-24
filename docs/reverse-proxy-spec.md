@@ -267,11 +267,16 @@ read pause and resume; stalled writes cannot accumulate frames.
 
 The existing Kore WebSocket server API cannot provide this transparency: it
 completes the client handshake, handles ping and close itself, and rejects
-continuation frames. libcurl's WebSocket API does not negotiate extensions.
-The tunnel therefore uses curl only to establish a raw TCP/TLS upstream
-connection, then sends and reads the opening HTTP handshake and tunneled bytes
-through curl's connect-only send/receive interface. No blocking
-`curl_easy_perform()` call runs in a Kore worker.
+continuation frames. The pinned libcurl raw WebSocket mode passes opaque frames
+with a caller-supplied key and extension header, but reports an upstream
+non-`101` as `CURLE_HTTP_RETURNED_ERROR` without delivering its response body;
+it also accepts a `101` with an invalid `Sec-WebSocket-Accept`. Its documented
+WebSocket API does not support extension negotiation. The tunnel therefore
+uses curl only to establish a raw TCP/TLS upstream connection, then sends and
+reads the opening HTTP handshake and tunneled bytes through curl's connect-only
+send/receive interface. The proxy validates the `101` itself and incrementally
+parses and streams a non-`101` HTTP response. No blocking `curl_easy_perform()`
+call runs in a Kore worker.
 
 A Go `net/http` WebSocket backend using an HTTP/1.1 upgrader is compatible
 with this route, even if its server also offers HTTP/2 for ordinary requests.

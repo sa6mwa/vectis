@@ -197,6 +197,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
     test_proxy_curl_connect_only.c)
   vectis_add_unit_test(vectis_unit_proxy_curl_connect_only_tls
     test_proxy_curl_connect_only_tls.c)
+  vectis_add_unit_test(vectis_unit_proxy_curl_ws_raw
+    test_proxy_curl_ws_raw.c)
   vectis_add_unit_test(vectis_unit_proxy_curl_chunked_trailers
     test_proxy_curl_chunked_trailers.c)
   vectis_add_unit_test(vectis_unit_kore_pipelining test_kore_pipelining.c)

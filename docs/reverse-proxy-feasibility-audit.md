@@ -573,6 +573,21 @@ header; a general bounded HTTP/1.1 status/header parser, hop-by-hop header
 translation, response rewrite policy, other rejection statuses, and premature
 upstream close remain open.
 
+The focused [raw WebSocket API probe](../tests/unit/test_proxy_curl_ws_raw.c)
+checks the pinned libcurl 8.22.0 build against a local HTTP/1.1 server. With
+`CURLOPT_CONNECT_ONLY=2` and `CURLWS_RAW_MODE`, libcurl sends a caller-supplied
+WebSocket key, extension offer, and subprotocol; a valid `101` with the offered
+extension completes, and both directions pass frames with the RSV1 bit and
+masking bytes unchanged through `curl_easy_recv`/`curl_easy_send`. However,
+libcurl also reports `CURLE_OK` for a `101` carrying an invalid
+`Sec-WebSocket-Accept`. For a `403` with a body, it reports
+`CURLE_HTTP_RETURNED_ERROR`, passes the response headers to the header
+callback, and delivers zero body bytes to the write callback. The probe
+checks one small rejection body, not the full response-framing matrix. This
+rules out raw WebSocket mode as the complete proxy transport under the
+required handshake validation and streamed-rejection contract; the raw
+connect-only path and a bounded non-`101` HTTP parser remain necessary.
+
 This output choice came from a failed direct-TLS experiment in the same
 worker loop. Level-triggered writable interest generated more than 150,000
 callbacks in one 1 MiB run while `SSL_write()` repeatedly returned
