@@ -32,6 +32,16 @@
 #define SSE_BODY_SIZE (1024 * 1024)
 #define HTTP_BODY_BUFFER_SIZE 16384
 #define UPLOAD_BODY_SIZE (1024 * 1024)
+#define CHUNK_LINE_SIZE 128
+
+enum upload_chunk_phase {
+  UPLOAD_CHUNK_SIZE,
+  UPLOAD_CHUNK_DATA,
+  UPLOAD_CHUNK_DATA_CR,
+  UPLOAD_CHUNK_DATA_LF,
+  UPLOAD_CHUNK_TRAILERS,
+  UPLOAD_CHUNK_COMPLETE
+};
 
 static const char relay_response[] =
     "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n";
@@ -127,6 +137,10 @@ struct loop_metrics {
   unsigned http_write_fail_cancelled;
   unsigned http_write_fail_pending_at_disconnect;
   unsigned upload_done;
+  unsigned chunked_upload_done;
+  unsigned chunked_trailer_called;
+  unsigned chunked_upload_pauses;
+  unsigned chunked_input_pauses;
   unsigned upload_pauses;
   unsigned upload_tls_pending_resumes;
   size_t upload_max_queued;
@@ -190,12 +204,23 @@ struct proxy_state {
   int http_body_queued;
   int downstream_half_closed;
   int upload_mode;
+  int chunked_upload_mode;
   int upload_paused;
   int upload_read_wait;
   size_t upload_remaining;
   unsigned char upload_buffer[RELAY_BUFFER_SIZE];
   size_t upload_length;
   size_t upload_offset;
+  enum upload_chunk_phase chunk_phase;
+  size_t chunk_remaining;
+  size_t chunk_total;
+  size_t chunk_raw_length;
+  size_t chunk_raw_offset;
+  size_t chunk_line_length;
+  int chunk_line_cr;
+  int chunk_trailer_seen;
+  char chunk_line[CHUNK_LINE_SIZE];
+  unsigned char chunk_raw[RELAY_BUFFER_SIZE];
   struct curl_slist *upload_headers;
   char curl_error[CURL_ERROR_SIZE];
   int http_status_seen;
@@ -251,6 +276,7 @@ static unsigned short sse_write_fail_port;
 static unsigned short sse_reset_port;
 static unsigned short sse_reset_before_port;
 static unsigned short upload_port;
+static unsigned short upload_chunked_port;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
 static unsigned short h2_port;
 #endif
@@ -650,6 +676,123 @@ upload_main(void *arg)
     used = (size_t)got;
   }
   assert(early_sent);
+  send_all(fd, final, sizeof(final) - 1);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void
+upload_read_exact(int fd, unsigned char *data, size_t length)
+{
+  size_t offset;
+  ssize_t got;
+
+  offset = 0;
+  while (offset < length) {
+    got = recv(fd, data + offset, length - offset, 0);
+    assert(got > 0);
+    offset += (size_t)got;
+  }
+}
+
+static void
+upload_read_line(int fd, char *line, size_t length)
+{
+  size_t used;
+  ssize_t got;
+
+  used = 0;
+  for (;;) {
+    assert(used < length - 1);
+    got = recv(fd, line + used, 1, 0);
+    assert(got == 1);
+    used++;
+    if (used >= 2 && line[used - 2] == '\r' &&
+        line[used - 1] == '\n') {
+      line[used] = '\0';
+      return;
+    }
+  }
+}
+
+static void *
+upload_chunked_main(void *arg)
+{
+  static const char early[] =
+      "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+      "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+      "4\r\npong\r\n";
+  static const char final[] = "4\r\ndone\r\n0\r\n\r\n";
+  struct echo_server *server;
+  struct timeval timeout;
+  unsigned char data[4096];
+  char line[256];
+  char *end;
+  size_t total;
+  size_t chunk_size;
+  size_t amount;
+  size_t n;
+  int fd;
+  int saw_transfer;
+  int saw_trailer;
+  int early_sent;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  upload_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "POST /upload-chunked HTTP/1.1\r\n") == 0);
+  saw_transfer = 0;
+  saw_trailer = 0;
+  for (;;) {
+    upload_read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+    if (strcmp(line, "Transfer-Encoding: chunked\r\n") == 0)
+      saw_transfer = 1;
+    if (strcmp(line, "Trailer: X-Trace\r\n") == 0)
+      saw_trailer = 1;
+    assert(strcmp(line, "Expect: 100-continue\r\n") != 0);
+  }
+  assert(saw_transfer && saw_trailer);
+  total = 0;
+  early_sent = 0;
+  for (;;) {
+    upload_read_line(fd, line, sizeof(line));
+    errno = 0;
+    chunk_size = strtoul(line, &end, 16);
+    assert(errno == 0 && strcmp(end, "\r\n") == 0);
+    if (chunk_size == 0)
+      break;
+    assert(chunk_size <= UPLOAD_BODY_SIZE - total);
+    while (chunk_size != 0) {
+      amount = chunk_size;
+      if (amount > sizeof(data))
+        amount = sizeof(data);
+      upload_read_exact(fd, data, amount);
+      for (n = 0; n < amount; n++)
+        assert(data[n] == relay_byte(total + n));
+      total += amount;
+      chunk_size -= amount;
+      if (!early_sent && total >= RELAY_BUFFER_SIZE) {
+        assert(total < UPLOAD_BODY_SIZE);
+        send_all(fd, early, sizeof(early) - 1);
+        __sync_lock_test_and_set(&server->allow_body, 1);
+        early_sent = 1;
+      }
+    }
+    upload_read_exact(fd, data, 2);
+    assert(memcmp(data, "\r\n", 2) == 0);
+  }
+  assert(total == UPLOAD_BODY_SIZE && early_sent);
+  upload_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "X-Trace: done\r\n") == 0);
+  upload_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "\r\n") == 0);
   send_all(fd, final, sizeof(final) - 1);
   assert(close(fd) == 0);
   return NULL;
@@ -1542,7 +1685,12 @@ http_schedule(struct proxy_state *state)
     events |= EPOLLOUT;
   if (state->upload_mode && !state->http_transfer_done &&
       state->initial_offset == state->initial_length &&
-      state->upload_length == 0 && state->upload_remaining != 0)
+      (!state->chunked_upload_mode ||
+      state->chunk_raw_offset == state->chunk_raw_length) &&
+      state->upload_length == 0 &&
+      (state->chunked_upload_mode ?
+      state->chunk_phase != UPLOAD_CHUNK_COMPLETE :
+      state->upload_remaining != 0))
     events |= state->upload_read_wait != 0
         ? state->upload_read_wait : (int)(EPOLLIN | EPOLLRDHUP);
   if (events == 0)
@@ -1558,6 +1706,96 @@ http_schedule(struct proxy_state *state)
   state->downstream_interest = events;
 }
 
+static void
+chunked_decode(struct proxy_state *state, const unsigned char *data,
+    size_t length, size_t *consumed)
+{
+  unsigned long parsed;
+  size_t index;
+  size_t amount;
+  char *end;
+
+  index = 0;
+  while (index < length &&
+      state->upload_length < sizeof(state->upload_buffer) &&
+      state->chunk_phase != UPLOAD_CHUNK_COMPLETE) {
+    if (state->chunk_phase == UPLOAD_CHUNK_DATA) {
+      amount = length - index;
+      if (amount > state->chunk_remaining)
+        amount = state->chunk_remaining;
+      if (amount > sizeof(state->upload_buffer) - state->upload_length)
+        amount = sizeof(state->upload_buffer) - state->upload_length;
+      memcpy(state->upload_buffer + state->upload_length,
+          data + index, amount);
+      state->upload_length += amount;
+      state->chunk_total += amount;
+      assert(state->chunk_total <= UPLOAD_BODY_SIZE);
+      state->chunk_remaining -= amount;
+      index += amount;
+      if (state->chunk_remaining == 0)
+        state->chunk_phase = UPLOAD_CHUNK_DATA_CR;
+      continue;
+    }
+    if (state->chunk_phase == UPLOAD_CHUNK_DATA_CR) {
+      assert(data[index++] == '\r');
+      state->chunk_phase = UPLOAD_CHUNK_DATA_LF;
+      continue;
+    }
+    if (state->chunk_phase == UPLOAD_CHUNK_DATA_LF) {
+      assert(data[index++] == '\n');
+      state->chunk_phase = UPLOAD_CHUNK_SIZE;
+      continue;
+    }
+    if (state->chunk_line_cr) {
+      assert(data[index++] == '\n');
+      state->chunk_line_cr = 0;
+      state->chunk_line[state->chunk_line_length] = '\0';
+      if (state->chunk_phase == UPLOAD_CHUNK_SIZE) {
+        assert(state->chunk_line_length > 0);
+        errno = 0;
+        parsed = strtoul(state->chunk_line, &end, 16);
+        assert(errno == 0 && *end == '\0');
+        assert(parsed <= UPLOAD_BODY_SIZE - state->chunk_total);
+        state->chunk_remaining = (size_t)parsed;
+        state->chunk_phase = parsed == 0 ?
+            UPLOAD_CHUNK_TRAILERS : UPLOAD_CHUNK_DATA;
+      } else {
+        assert(state->chunk_phase == UPLOAD_CHUNK_TRAILERS);
+        if (state->chunk_line_length == 0) {
+          assert(state->chunk_total == UPLOAD_BODY_SIZE);
+          assert(state->chunk_trailer_seen == 1);
+          state->chunk_phase = UPLOAD_CHUNK_COMPLETE;
+        } else {
+          assert(strcmp(state->chunk_line, "X-Trace: done") == 0);
+          state->chunk_trailer_seen++;
+        }
+      }
+      state->chunk_line_length = 0;
+    } else if (data[index] == '\r') {
+      state->chunk_line_cr = 1;
+      index++;
+    } else {
+      assert(state->chunk_line_length < sizeof(state->chunk_line) - 1);
+      state->chunk_line[state->chunk_line_length++] = (char)data[index++];
+    }
+  }
+  *consumed = index;
+}
+
+static int
+chunked_trailer(struct curl_slist **list, void *arg)
+{
+  struct proxy_state *state;
+
+  state = (struct proxy_state *)arg;
+  assert(state->chunk_phase == UPLOAD_CHUNK_COMPLETE);
+  assert(state->chunk_trailer_seen == 1);
+  *list = curl_slist_append(NULL, "X-Trace: done");
+  assert(*list != NULL);
+  metrics->chunked_trailer_called++;
+  return CURL_TRAILERFUNC_OK;
+}
+
 static size_t
 http_upload(char *buffer, size_t size, size_t count, void *arg)
 {
@@ -1565,6 +1803,34 @@ http_upload(char *buffer, size_t size, size_t count, void *arg)
   size_t amount;
 
   state = (struct proxy_state *)arg;
+  if (state->chunked_upload_mode) {
+    amount = size * count;
+    if (amount > state->upload_length - state->upload_offset)
+      amount = state->upload_length - state->upload_offset;
+    if (amount > 0) {
+      memcpy(buffer, state->upload_buffer + state->upload_offset, amount);
+      state->upload_offset += amount;
+      if (state->upload_offset == state->upload_length) {
+        state->upload_offset = 0;
+        state->upload_length = 0;
+        if (state->chunk_phase != UPLOAD_CHUNK_COMPLETE &&
+            state->upload_continue_timer == NULL)
+          state->upload_continue_timer = kore_timer_add(upload_continue,
+              0, state, KORE_TIMER_ONESHOT);
+      }
+      http_schedule(state);
+      return amount;
+    }
+    if (state->chunk_phase == UPLOAD_CHUNK_COMPLETE) {
+      metrics->chunked_upload_done++;
+      return 0;
+    }
+    state->upload_paused = 1;
+    metrics->upload_pauses++;
+    metrics->chunked_upload_pauses++;
+    http_schedule(state);
+    return CURL_READFUNC_PAUSE;
+  }
   if (state->upload_remaining == 0)
     return 0;
   amount = size * count;
@@ -1754,12 +2020,78 @@ static void
 http_input_pump(struct proxy_state *state)
 {
   struct connection *downstream;
+  const unsigned char *data;
+  size_t available;
+  size_t consumed;
   size_t limit;
   ssize_t got;
   int ssl_error;
 
-  if (!state->upload_mode || state->http_transfer_done ||
-      state->initial_offset < state->initial_length ||
+  if (!state->upload_mode || state->http_transfer_done)
+    return;
+  if (state->chunked_upload_mode) {
+    if (state->upload_length != 0 ||
+        state->chunk_phase == UPLOAD_CHUNK_COMPLETE)
+      return;
+    if (state->initial_offset < state->initial_length) {
+      data = state->initial_data + state->initial_offset;
+      available = state->initial_length - state->initial_offset;
+      chunked_decode(state, data, available, &consumed);
+      state->initial_offset += consumed;
+    } else if (state->chunk_raw_offset < state->chunk_raw_length) {
+      data = state->chunk_raw + state->chunk_raw_offset;
+      available = state->chunk_raw_length - state->chunk_raw_offset;
+      chunked_decode(state, data, available, &consumed);
+      state->chunk_raw_offset += consumed;
+      if (state->chunk_raw_offset == state->chunk_raw_length) {
+        state->chunk_raw_offset = 0;
+        state->chunk_raw_length = 0;
+      }
+    } else {
+      downstream = state->downstream;
+      limit = sizeof(state->chunk_raw);
+      if (downstream->tls != NULL) {
+        ERR_clear_error();
+        got = SSL_read(downstream->tls, state->chunk_raw, (int)limit);
+      } else {
+        got = recv(downstream->fd, state->chunk_raw, limit, 0);
+      }
+      if (got > 0) {
+        state->upload_read_wait = 0;
+        state->chunk_raw_length = (size_t)got;
+        chunked_decode(state, state->chunk_raw,
+            state->chunk_raw_length, &consumed);
+        state->chunk_raw_offset = consumed;
+        if (state->chunk_raw_offset == state->chunk_raw_length) {
+          state->chunk_raw_offset = 0;
+          state->chunk_raw_length = 0;
+        }
+      } else if (downstream->tls != NULL) {
+        ssl_error = SSL_get_error(downstream->tls, (int)got);
+        assert(ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE);
+        state->upload_read_wait = ssl_error == SSL_ERROR_WANT_READ
+            ? EPOLLIN : EPOLLOUT;
+      } else if (got == 0) {
+        assert(0 && "downstream chunked upload closed before trailer");
+      } else {
+        assert(errno == EAGAIN || errno == EWOULDBLOCK);
+      }
+    }
+    if (state->upload_length > metrics->upload_max_queued)
+      metrics->upload_max_queued = state->upload_length;
+    if (state->upload_length == sizeof(state->upload_buffer))
+      metrics->chunked_input_pauses++;
+    if (state->upload_paused &&
+        (state->upload_length != 0 ||
+        state->chunk_phase == UPLOAD_CHUNK_COMPLETE)) {
+      state->upload_paused = 0;
+      assert(curl_easy_pause(state->easy, CURLPAUSE_CONT) == CURLE_OK);
+    }
+    http_schedule(state);
+    return;
+  }
+  if (state->initial_offset < state->initial_length ||
       state->upload_length != 0 || state->upload_remaining == 0)
     return;
   downstream = state->downstream;
@@ -2116,13 +2448,15 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/sse-reset") != 0 &&
       strcmp(req->path, "/sse-reset-before") != 0 &&
       strcmp(req->path, "/upload") != 0 &&
+      strcmp(req->path, "/upload-chunked") != 0 &&
       strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
   assert(len == 0 || strcmp(req->path, "/relay") == 0 ||
       strcmp(req->path, "/relay-tls") == 0 ||
       strcmp(req->path, "/ws") == 0 ||
       strcmp(req->path, "/ws-reject") == 0 ||
-      strcmp(req->path, "/upload") == 0);
+      strcmp(req->path, "/upload") == 0 ||
+      strcmp(req->path, "/upload-chunked") == 0);
   state = kore_calloc(1, sizeof(*state));
   state->relay_mode = strcmp(req->path, "/relay") == 0 ||
       strcmp(req->path, "/relay-tls") == 0 ||
@@ -2133,7 +2467,10 @@ takeover(struct http_request *req, const void *data, size_t len)
   state->ws_reject_mode = strcmp(req->path, "/ws-reject") == 0;
   state->relay_tls = strcmp(req->path, "/relay-tls") == 0 ||
       state->ws_mode;
-  state->upload_mode = strcmp(req->path, "/upload") == 0;
+  state->chunked_upload_mode =
+      strcmp(req->path, "/upload-chunked") == 0;
+  state->upload_mode = strcmp(req->path, "/upload") == 0 ||
+      state->chunked_upload_mode;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   state->h2_mode = strcmp(req->path, "/sse-h2") == 0;
 #endif
@@ -2152,10 +2489,12 @@ takeover(struct http_request *req, const void *data, size_t len)
       state->upload_mode;
   if (state->upload_mode) {
     assert(req->method == HTTP_METHOD_POST);
-    assert(len <= UPLOAD_BODY_SIZE);
+    if (!state->chunked_upload_mode)
+      assert(len <= UPLOAD_BODY_SIZE);
     state->initial_data = (const unsigned char *)data;
     state->initial_length = len;
-    state->upload_remaining = UPLOAD_BODY_SIZE;
+    if (!state->chunked_upload_mode)
+      state->upload_remaining = UPLOAD_BODY_SIZE;
   }
   if (state->relay_mode) {
     int sndbuf;
@@ -2241,7 +2580,8 @@ takeover(struct http_request *req, const void *data, size_t len)
   else if (strcmp(req->path, "/relay-tls") == 0)
     target_port = relay_tls_port;
   else if (state->upload_mode)
-    target_port = upload_port;
+    target_port = state->chunked_upload_mode ?
+        upload_chunked_port : upload_port;
   else if (state->http_abort_mode)
     target_port = sse_abort_port;
   else if (state->http_queue_abort_mode)
@@ -2290,19 +2630,32 @@ takeover(struct http_request *req, const void *data, size_t len)
     if (state->upload_mode) {
       state->upload_headers = curl_slist_append(NULL, "Expect:");
       assert(state->upload_headers != NULL);
+      if (state->chunked_upload_mode) {
+        state->upload_headers = curl_slist_append(
+            state->upload_headers, "Trailer: X-Trace");
+        assert(state->upload_headers != NULL);
+      }
       assert(curl_easy_setopt(state->easy, CURLOPT_HTTPHEADER,
           state->upload_headers) == CURLE_OK);
       assert(curl_easy_setopt(state->easy, CURLOPT_UPLOAD, 1L) == CURLE_OK);
       assert(curl_easy_setopt(state->easy, CURLOPT_CUSTOMREQUEST,
           "POST") == CURLE_OK);
       assert(curl_easy_setopt(state->easy, CURLOPT_REQUEST_TARGET,
+          state->chunked_upload_mode ? "/upload-chunked" :
           "/upload") == CURLE_OK);
       assert(curl_easy_setopt(state->easy, CURLOPT_INFILESIZE_LARGE,
+          state->chunked_upload_mode ? (curl_off_t)-1 :
           (curl_off_t)UPLOAD_BODY_SIZE) == CURLE_OK);
       assert(curl_easy_setopt(state->easy, CURLOPT_READFUNCTION,
           http_upload) == CURLE_OK);
       assert(curl_easy_setopt(state->easy, CURLOPT_READDATA,
           state) == CURLE_OK);
+      if (state->chunked_upload_mode) {
+        assert(curl_easy_setopt(state->easy, CURLOPT_TRAILERFUNCTION,
+            chunked_trailer) == CURLE_OK);
+        assert(curl_easy_setopt(state->easy, CURLOPT_TRAILERDATA,
+            state) == CURLE_OK);
+      }
     }
   }
   if (state->h2_mode) {
@@ -2335,6 +2688,10 @@ takeover(struct http_request *req, const void *data, size_t len)
     http_schedule(state);
   }
   drive_curl(state, CURL_SOCKET_TIMEOUT, 0);
+  if (state->chunked_upload_mode &&
+      state->upload_continue_timer == NULL)
+    state->upload_continue_timer = kore_timer_add(upload_continue, 0,
+        state, KORE_TIMER_ONESHOT);
   if (state->relay_mode && state->phase == 0) {
     kore_platform_disable_read(state->downstream->fd);
     state->downstream_watched = 0;
@@ -2829,6 +3186,102 @@ check_upload(unsigned short port, struct echo_server *server)
   assert(close(fd) == 0);
 }
 
+static void *
+upload_chunked_send_main(void *arg)
+{
+  static const char final[] = "0\r\nX-Trace: done\r\n\r\n";
+  struct relay_sender *sender;
+  unsigned char data[16384];
+  char line[32];
+  size_t offset;
+  size_t n;
+  int length;
+
+  sender = (struct relay_sender *)arg;
+  for (offset = 0; offset < UPLOAD_BODY_SIZE; offset += sizeof(data)) {
+    for (n = 0; n < sizeof(data); n++)
+      data[n] = relay_byte(offset + n);
+    length = snprintf(line, sizeof(line), "%zx\r\n", sizeof(data));
+    assert(length > 0 && (size_t)length < sizeof(line));
+    send_all(sender->fd, line, (size_t)length);
+    send_all(sender->fd, data, sizeof(data));
+    send_all(sender->fd, "\r\n", 2);
+    __sync_lock_test_and_set(&sender->progress, offset + sizeof(data));
+    usleep(2000u);
+  }
+  send_all(sender->fd, final, sizeof(final) - 1);
+  assert(shutdown(sender->fd, SHUT_WR) == 0);
+  return NULL;
+}
+
+static void
+check_chunked_upload(unsigned short port, struct echo_server *server)
+{
+  static const char request[] =
+      "POST /upload-chunked HTTP/1.1\r\nHost: localhost\r\n"
+      "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  struct relay_sender sender;
+  pthread_t thread;
+  char line[256];
+  char body[4];
+  char ending[2];
+  int fd;
+  int saw_chunked;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  send_all(fd, request, sizeof(request) - 1);
+  memset(&sender, 0, sizeof(sender));
+  sender.fd = fd;
+  assert(pthread_create(&thread, NULL,
+      upload_chunked_send_main, &sender) == 0);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  saw_chunked = 0;
+  for (;;) {
+    sse_read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+    if (strstr(line, "Transfer-Encoding: chunked") != NULL)
+      saw_chunked = 1;
+  }
+  assert(saw_chunked);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "4\r\n") == 0);
+  sse_read_exact(fd, body, sizeof(body));
+  assert(memcmp(body, "pong", sizeof(body)) == 0);
+  sse_read_exact(fd, ending, sizeof(ending));
+  assert(memcmp(ending, "\r\n", 2) == 0);
+  assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  assert(__sync_fetch_and_add(&sender.progress, 0) < UPLOAD_BODY_SIZE);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "4\r\n") == 0);
+  sse_read_exact(fd, body, sizeof(body));
+  assert(memcmp(body, "done", sizeof(body)) == 0);
+  sse_read_exact(fd, ending, sizeof(ending));
+  assert(memcmp(ending, "\r\n", 2) == 0);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "0\r\n") == 0);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "\r\n") == 0);
+  assert(recv(fd, body, sizeof(body), 0) == 0);
+  assert(pthread_join(thread, NULL) == 0);
+  assert(close(fd) == 0);
+}
+
 static void
 check_tls_upload(unsigned short port, struct echo_server *server)
 {
@@ -2930,6 +3383,137 @@ check_tls_upload(unsigned short port, struct echo_server *server)
     }
   }
   assert(sent == UPLOAD_BODY_SIZE);
+  assert(early_seen);
+  assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  assert(strstr(response, "HTTP/1.1 200 OK\r\n") == response);
+  assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
+  assert(strstr(response, "done") != NULL);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+}
+
+static void
+check_tls_chunked_upload(unsigned short port, struct echo_server *server)
+{
+  static const char request[] =
+      "POST /upload-chunked HTTP/1.1\r\nHost: localhost\r\n"
+      "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n\r\n";
+  static const char final[] = "0\r\nX-Trace: done\r\n\r\n";
+  struct sockaddr_in addr;
+  struct pollfd watch;
+  struct timeval timeout;
+  SSL_CTX *ctx;
+  SSL *ssl;
+  unsigned char output[8192 + 32];
+  char response[512];
+  size_t sent;
+  size_t used;
+  size_t index;
+  size_t frame_length;
+  int prefix_length;
+  int fd;
+  int flags;
+  int amount;
+  int ssl_error;
+  int events;
+  int progress;
+  int early_seen;
+  int final_sent;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  assert(SSL_CTX_load_verify_locations(ctx, tls_cert_path, NULL) == 1);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_set1_host(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_get_verify_result(ssl) == X509_V_OK);
+  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+      (int)(sizeof(request) - 1));
+  flags = fcntl(fd, F_GETFL, 0);
+  assert(flags >= 0);
+  assert(fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+  sent = 0;
+  used = 0;
+  early_seen = 0;
+  final_sent = 0;
+  memset(response, 0, sizeof(response));
+  while (strstr(response, "0\r\n\r\n") == NULL) {
+    progress = 0;
+    events = 0;
+    if (sent < UPLOAD_BODY_SIZE || !final_sent) {
+      if (sent < UPLOAD_BODY_SIZE) {
+        prefix_length = snprintf((char *)output, sizeof(output),
+            "%zx\r\n", (size_t)8192);
+        assert(prefix_length > 0);
+        frame_length = (size_t)prefix_length + 8192 + 2;
+        assert(frame_length <= sizeof(output));
+        for (index = 0; index < 8192; index++)
+          output[(size_t)prefix_length + index] =
+              relay_byte(sent + index);
+        memcpy(output + (size_t)prefix_length + 8192, "\r\n", 2);
+      } else {
+        memcpy(output, final, sizeof(final) - 1);
+        frame_length = sizeof(final) - 1;
+      }
+      ERR_clear_error();
+      amount = SSL_write(ssl, output, (int)frame_length);
+      if (amount > 0) {
+        assert((size_t)amount == frame_length);
+        if (sent < UPLOAD_BODY_SIZE)
+          sent += 8192;
+        else
+          final_sent = 1;
+        progress = 1;
+        usleep(1000u);
+      } else {
+        ssl_error = SSL_get_error(ssl, amount);
+        assert(ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE);
+        events |= ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+      }
+    }
+    ERR_clear_error();
+    amount = SSL_read(ssl, response + used,
+        (int)(sizeof(response) - used - 1));
+    if (amount > 0) {
+      used += (size_t)amount;
+      response[used] = '\0';
+      progress = 1;
+      if (!early_seen && strstr(response, "pong") != NULL) {
+        assert(sent < UPLOAD_BODY_SIZE);
+        early_seen = 1;
+      }
+    } else {
+      ssl_error = SSL_get_error(ssl, amount);
+      assert(ssl_error == SSL_ERROR_WANT_READ ||
+          ssl_error == SSL_ERROR_WANT_WRITE);
+      events |= ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+    }
+    if (!progress) {
+      assert(events != 0);
+      watch.fd = fd;
+      watch.events = (short)events;
+      assert(poll(&watch, 1, 10000) > 0);
+    }
+  }
+  assert(sent == UPLOAD_BODY_SIZE && final_sent);
   assert(early_seen);
   assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
   assert(strstr(response, "HTTP/1.1 200 OK\r\n") == response);
@@ -3246,7 +3830,9 @@ main(void)
   struct echo_server sse_reset;
   struct echo_server sse_reset_before;
   struct echo_server upload;
+  struct echo_server upload_chunked;
   struct echo_server upload_tls;
+  struct echo_server upload_chunked_tls;
   struct echo_server stalled;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   struct echo_server h2;
@@ -3262,6 +3848,7 @@ main(void)
   char received[128];
   size_t used;
   ssize_t got;
+  unsigned chunked_pauses_before;
   int fd;
   int attempt;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
@@ -3287,7 +3874,9 @@ main(void)
   prepare_echo(&sse_reset);
   prepare_echo(&sse_reset_before);
   prepare_echo(&upload);
+  prepare_echo(&upload_chunked);
   prepare_echo(&upload_tls);
+  prepare_echo(&upload_chunked_tls);
   prepare_echo(&stalled);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   prepare_echo(&h2);
@@ -3305,6 +3894,7 @@ main(void)
   sse_reset_port = sse_reset.port;
   sse_reset_before_port = sse_reset_before.port;
   upload_port = upload.port;
+  upload_chunked_port = upload_chunked.port;
   stalled_port = stalled.port;
   assert(snprintf(tls_cert_path, sizeof(tls_cert_path),
       "vectis-curl-loop-%ld-cert.pem", (long)getpid()) > 0);
@@ -3496,6 +4086,13 @@ main(void)
   check_upload(port, &upload);
   assert(pthread_join(upload.thread, NULL) == 0);
   assert(close(upload.listener) == 0);
+  chunked_pauses_before = metrics->chunked_upload_pauses;
+  assert(pthread_create(&upload_chunked.thread, NULL,
+      upload_chunked_main, &upload_chunked) == 0);
+  check_chunked_upload(port, &upload_chunked);
+  assert(metrics->chunked_upload_pauses > chunked_pauses_before);
+  assert(pthread_join(upload_chunked.thread, NULL) == 0);
+  assert(close(upload_chunked.listener) == 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   assert(pthread_join(concurrent_client, NULL) == 0);
   assert(pthread_join(sse.thread, NULL) == 0);
@@ -3538,6 +4135,7 @@ main(void)
   config.tls.ca_bundle_path = tls_cert_path;
   config.server.worker_count = 1u;
   upload_port = upload_tls.port;
+  upload_chunked_port = upload_chunked_tls.port;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
@@ -3556,6 +4154,13 @@ main(void)
   check_tls_upload(port, &upload_tls);
   assert(pthread_join(upload_tls.thread, NULL) == 0);
   assert(close(upload_tls.listener) == 0);
+  chunked_pauses_before = metrics->chunked_upload_pauses;
+  assert(pthread_create(&upload_chunked_tls.thread, NULL,
+      upload_chunked_main, &upload_chunked_tls) == 0);
+  check_tls_chunked_upload(port, &upload_chunked_tls);
+  assert(metrics->chunked_upload_pauses > chunked_pauses_before);
+  assert(pthread_join(upload_chunked_tls.thread, NULL) == 0);
+  assert(close(upload_chunked_tls.listener) == 0);
   __sync_lock_test_and_set(&sse_queue_abort.allow_body, 0);
   assert(pthread_create(&sse_queue_abort.thread, NULL,
       sse_abort_main, &sse_queue_abort) == 0);
@@ -3598,24 +4203,28 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 20);
+  assert(metrics->disconnects == 22);
 #else
-  assert(metrics->disconnects == 17);
+  assert(metrics->disconnects == 19);
 #endif
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->http_done == 7);
-  assert(metrics->http_headers_ready == 12);
+  assert(metrics->http_done == 9);
+  assert(metrics->http_headers_ready == 14);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
-  assert(metrics->http_done == 4);
-  assert(metrics->http_headers_ready == 9);
+  assert(metrics->http_done == 6);
+  assert(metrics->http_headers_ready == 11);
 #endif
   assert(metrics->upload_done == 2);
+  assert(metrics->chunked_upload_done == 2);
+  assert(metrics->chunked_trailer_called == 2);
+  assert(metrics->chunked_upload_pauses > 0);
+  assert(metrics->chunked_input_pauses > 0);
   assert(metrics->upload_pauses > 0);
   assert(metrics->upload_max_queued <= RELAY_BUFFER_SIZE);
   assert(metrics->upload_tls_pending_resumes > 0);
@@ -3629,9 +4238,12 @@ main(void)
       metrics->http_pump_calls,
       (unsigned long)metrics->http_max_kore_queued);
   fprintf(stderr, "upload loop: done=%u pauses=%u max_queue=%zu "
-      "tls_pending_resumes=%u\n",
+      "tls_pending_resumes=%u chunked_done=%u trailer=%u "
+      "chunk_pauses=%u chunk_input_pauses=%u\n",
       metrics->upload_done, metrics->upload_pauses,
-      metrics->upload_max_queued, metrics->upload_tls_pending_resumes);
+      metrics->upload_max_queued, metrics->upload_tls_pending_resumes,
+      metrics->chunked_upload_done, metrics->chunked_trailer_called,
+      metrics->chunked_upload_pauses, metrics->chunked_input_pauses);
   assert(metrics->downstream_tls_close_notify == 1);
   assert(metrics->downstream_tls_write_pauses > 0);
   assert(metrics->relay_max_queued <= RELAY_BUFFER_SIZE);

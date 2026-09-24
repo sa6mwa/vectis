@@ -2,8 +2,8 @@
 
 Status: source audit plus targeted live transport probes, 2026-09-24. The
 pre-body takeover is a candidate, not a complete implementation choice. The
-probes do not implement an upstream proxy. The intended feature contract is in
-[reverse-proxy-spec.md](reverse-proxy-spec.md).
+probes do not implement a production proxy route. The intended feature
+contract is in [reverse-proxy-spec.md](reverse-proxy-spec.md).
 
 ## Decision
 
@@ -11,11 +11,11 @@ The candidate reduces changes to Kore's ordinary body path by letting Kore
 parse the request line and headers, then handing only selected proxy requests
 to a proxy-owned connection handler. Live probes now establish handoff,
 queued-response ordering, bounded 1 MiB cleartext and double-TLS relays,
-coupled HTTP/1.1 upload/download overlap, SSE delivery over HTTP/1.1 and
-HTTP/2 upstreams, and a coupled HTTP/1.1 WebSocket upgrade over verified
-upstream TLS. The leading output
-choice uses one bounded Kore send netbuf at a time. It is **not yet a proven
-complete proxy architecture**: general HTTP framing and header translation,
+coupled HTTP/1.1 fixed-length and chunked upload/download overlap with
+downstream TLS, SSE delivery over HTTP/1.1 and HTTP/2 upstreams, and a
+coupled HTTP/1.1 WebSocket upgrade over verified upstream TLS. The leading
+output choice uses one bounded Kore send netbuf at a time. It is **not yet a
+proven complete proxy architecture**: general HTTP framing and header translation,
 WebSocket rejection and long-lived close behavior, all cleanup paths, and the
 release HTTP/2 memory envelope remain open.
 
@@ -449,9 +449,24 @@ parent and worker cleanup. This proves byte ownership and replay for these
 chunked cases, including the transition from borrowed bytes to later socket
 reads.
 
-The framer is a probe sink: it does not feed libcurl, pause on upstream
-backpressure, reject malformed framing without assertions, or implement a
-general trailer/header policy. Those remain integration gates.
+The framer above is a probe sink; it does not feed libcurl. A separate
+[Kore worker and libcurl multi probe](../tests/unit/test_kore_proxy_curl_loop.c)
+now composes the two halves over cleartext and TLS downstream HTTP/1.1. It
+accepts a 1 MiB chunked POST, incrementally decodes through one 8 KiB raw
+buffer and one 8 KiB decoded buffer, pauses curl's upload read callback when no decoded
+bytes are available, resumes after later downstream input, and forwards the
+declared `X-Trace` trailer using libcurl's trailer callback. Its upstream
+fixture verifies every body byte, chunked framing, and trailer. It sends an
+early chunked response after the first 8 KiB; the downstream client verifies
+that `pong` arrives before its upload finishes and then receives `done` after
+the trailer. Both per-transfer and worker-shared curl multi variants pass.
+The test measures a maximum 8 KiB decoded queue, at least one curl upload
+pause on each transfer, and repeated full-buffer read suppression under
+16 KiB cleartext client chunks. The downstream TLS client also streams
+1 MiB with a declared trailer and observes the early response before upload
+completion. Malformed framing rejection, all framing policies, adversarial
+TLS record boundaries and retry directions, and pipelined-byte replay after
+a live curl transfer remain gates.
 
 The first split-body probe stalled after one response when takeover returned
 from the active receive loop. With edge-triggered epoll, the next request was
@@ -638,8 +653,8 @@ harness and production proxy cancellation paths still need their own proof.
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
 | Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe. The bridge gives application WebSocket routes priority for every GET; body policy scans all route kinds in registration order and handles a selected live upload before ordinary dispatch. Live overlap tests pass in both registration orders for buffered versus live-upload routes and confirm WebSocket priority over an earlier ordinary handler. Exact duplicate routes conflict, but regex/literal overlaps are allowed. The body-policy result still lacks a proxy route-kind output; a proxy-specific admission test remains open. |
-| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. Patch `0031` lets readable bytes reach the parser when an orderly write half-close accompanies them. | Coalesced and split input passes on Linux, including downstream TLS. A 1 MiB chunked POST and a same-write chunked body with a pipelined GET also pass, including the latter over TLS. Direct-I/O ordinary HTTP takeover restores Kore's event handler and serves two subsequent ordinary requests. Ordinary GET and SSE half-close with headers pass on Linux. Full framer/backpressure integration, kqueue execution, and cleanup races remain open. |
-| Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` covers ordinary byte boundaries. A bounded chunked probe now validates 1 MiB incrementally, parses a trailer, and replays a following GET from both borrowed and later socket bytes. General framing policy, malformed-input handling, and libcurl backpressure composition remain unproved. |
+| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. Patch `0031` lets readable bytes reach the parser when an orderly write half-close accompanies them. | Coalesced and split input passes on Linux, including downstream TLS. A 1 MiB chunked POST and a same-write chunked body with a pipelined GET also pass, including the latter over TLS. Direct-I/O ordinary HTTP takeover restores Kore's event handler and serves two subsequent ordinary requests. Ordinary GET and SSE half-close with headers pass on Linux. The composed worker probe covers bounded chunked upload with curl backpressure; full framing policy, replay after a live transfer, kqueue execution, and cleanup races remain open. |
+| Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` covers ordinary byte boundaries. A bounded chunked probe validates 1 MiB incrementally, parses a trailer, and replays a following GET from borrowed and later socket bytes. A separate Kore worker probe couples 1 MiB chunked ingress to libcurl upload and trailer output with an early response and two 8 KiB buffers over cleartext and downstream TLS in both curl multi modes; a cleartext burst fills the decoded queue. General framing policy, malformed-input handling, adversarial TLS retry directions, and pipelined-byte replay after a live curl transfer remain unproved. |
 | Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, so taken-over input uses direct nonblocking fd/`SSL *` reads. Output copies one bounded chunk into Kore's send queue and uses its TLS writer; `SSL_want()` identifies queued output's retry direction. The worker probe measures an 8 KiB scratch queue plus one 8 KiB Kore netbuf. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Slow cleartext, HTTPS-upstream, and double-TLS relays pass on Linux. Forced cross-direction retries and kqueue remain open. |
 | TLS buffered data | [OpenSSL documents](https://docs.openssl.org/3.0/man3/SSL_pending/) processed and unprocessed records that can remain after the socket stops reporting readable. An edge-triggered handler must drain buffered application data when capacity resumes, but it must not spin on a record that cannot yet produce application bytes. | The downstream TLS upload probe drains pending plaintext through a one-shot continuation after each bounded consumer advance. Other TLS retry directions and adversarial partial records remain open. |
 | EOF and half-close | [`net_read()`](../vendor/kore/upstream/src/net.c) disconnects the whole connection on a zero-byte read; `kore_tls_read()` treats `SSL_ERROR_ZERO_RETURN` as an error. The direct-I/O probe keeps writing after TCP EOF and after a TLS client `close_notify`. The curl-loop probe distinguishes an idle SSE TCP RST from a post-header write half-close using `SO_ERROR` while retaining an idle epoll watcher. | Cleartext and TLS direct-I/O half-close exchanges pass. The SSE probe passes both cleartext half-close timings, idle RST cancellation, and abrupt downstream TLS cancellation with queued output. TCP upstream resets before and after response commitment pass. Pre-header TLS half-close, TLS upstream reset, and close deadlines remain open. |
