@@ -28,6 +28,7 @@ vectis_add_fuzzer(vectis_fuzz_json_validate fuzz_vectis_json_validate.c)
 
 if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_fuzzer(vectis_fuzz_proxy_headers fuzz_vectis_proxy_headers.c)
+  vectis_add_fuzzer(vectis_fuzz_proxy_url fuzz_vectis_proxy_url.c)
   vectis_add_fuzzer(vectis_fuzz_proxy_framing fuzz_vectis_proxy_framing.c)
   vectis_add_fuzzer(vectis_fuzz_kore_bridge fuzz_vectis_kore_bridge.c)
 endif()

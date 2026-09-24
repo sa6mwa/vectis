@@ -26805,8 +26805,8 @@ static int vectis_proxy_hex_digit(unsigned char value) {
   return -1;
 }
 
-static vectis_status vectis_proxy_validate_raw_path(const char *path,
-                                                    vectis_error *error) {
+vectis_status vectis_internal_proxy_validate_raw_path(const char *path,
+                                                      vectis_error *error) {
   const unsigned char *cursor;
   unsigned char segment[2];
   unsigned char value;
@@ -26903,7 +26903,7 @@ vectis_status vectis_internal_proxy_raw_path_match(
   if (selected_userdata != NULL) {
     *selected_userdata = NULL;
   }
-  status = vectis_proxy_validate_raw_path(raw_path, error);
+  status = vectis_internal_proxy_validate_raw_path(raw_path, error);
   if (status != VECTIS_OK) {
     return status;
   }

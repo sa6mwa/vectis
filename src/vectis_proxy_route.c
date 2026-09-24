@@ -52,6 +52,7 @@ static int vectis_proxy_target_valid(const char *target) {
   int valid;
   size_t authority_offset;
   const unsigned char *cursor;
+  const char *base_path;
 
   if (target == NULL || target[0] == '\0' || strchr(target, '\\') != NULL ||
       strchr(target, '?') != NULL || strchr(target, '#') != NULL) {
@@ -71,6 +72,11 @@ static int vectis_proxy_target_valid(const char *target) {
   }
   if (target[authority_offset] == '\0' || target[authority_offset] == '/' ||
       target[authority_offset] == '?' || target[authority_offset] == '#') {
+    return 0;
+  }
+  base_path = strchr(target + authority_offset, '/');
+  if (base_path != NULL &&
+      vectis_internal_proxy_validate_raw_path(base_path, NULL) != VECTIS_OK) {
     return 0;
   }
   url = curl_url();

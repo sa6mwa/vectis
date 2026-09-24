@@ -228,6 +228,8 @@ vectis_status vectis_internal_proxy_raw_path_match(
     vectis_app *app, vectis_http_method method, const char *raw_path,
     vectis_route_handler_fn proxy_handler, vectis_request *request,
     void **selected_userdata, vectis_error *error);
+vectis_status vectis_internal_proxy_validate_raw_path(const char *raw_path,
+                                                      vectis_error *error);
 vectis_status vectis_internal_register_owned_route_with_cleanup(
     vectis_app *app, const vectis_route_config *route,
     void (*cleanup)(void *), vectis_error *error);

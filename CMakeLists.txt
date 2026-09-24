@@ -551,6 +551,7 @@ set(vectis_sources
   src/vectis_auth.c
   src/vectis_embedded_fs.c
   src/vectis_proxy_route.c
+  src/vectis_proxy_url.c
   src/vectis_smith.c
   src/vectis_totp_qr.c
   src/vectis_webdav.c
@@ -675,6 +676,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_apply_relocatable_paths(vectis_kore_runtime)
   list(APPEND vectis_sources
     src/vectis_kore_bridge.c
+    src/vectis_proxy_select.c
     src/vectis_proxy_headers.c
     src/vectis_proxy_framing.c
     $<TARGET_OBJECTS:vectis_kore_runtime>)

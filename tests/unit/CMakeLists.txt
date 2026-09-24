@@ -63,11 +63,13 @@ endfunction()
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
 vectis_add_unit_test(vectis_unit_proxy_route_selection
   test_proxy_route_selection.c)
+vectis_add_unit_test(vectis_unit_proxy_url test_proxy_url.c)
 if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_proxy_framing test_proxy_framing.c)
   vectis_add_unit_test(vectis_unit_proxy_headers test_proxy_headers.c)
   vectis_add_unit_test(vectis_unit_proxy_route_registration
     test_proxy_route_registration.c)
+  vectis_add_unit_test(vectis_unit_proxy_select test_proxy_select.c)
 else()
   vectis_add_unit_test(vectis_unit_proxy_no_kore test_proxy_no_kore.c)
 endif()

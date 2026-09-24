@@ -86,6 +86,7 @@ static void test_invalid_targets(void) {
                                         "https://host.test/path#fragment",
                                         "ftp://host.test/",
                                         "https://host.test:bad/",
+                                        "https://host.test/../base",
                                         "http:///missing-host",
                                         "host.test"};
   vectis_proxy_route_config config;
