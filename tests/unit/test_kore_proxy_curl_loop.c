@@ -136,6 +136,9 @@ struct loop_metrics {
   unsigned http_pump_calls;
   size_t http_max_kore_queued;
   unsigned http_max_kore_buffers;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  unsigned shared_running_max;
+#endif
 };
 
 struct proxy_state;
@@ -211,6 +214,17 @@ struct proxy_state {
   int down_read_wait;
   int close_wait;
 };
+
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+struct worker_curl_loop {
+  CURLM *multi;
+  struct kore_timer *timer;
+  unsigned watch_count;
+  int running;
+};
+
+static struct worker_curl_loop worker_curl;
+#endif
 
 static struct loop_metrics *metrics;
 static unsigned short upstream_port;
@@ -881,18 +895,29 @@ static int
 socket_change(CURL *easy, curl_socket_t fd, int what,
     void *arg, void *socket_arg)
 {
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
   struct proxy_state *state;
+#endif
   struct curl_watch *watch;
   int interest;
 
   (void)easy;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(arg == &worker_curl);
+#else
   state = (struct proxy_state *)arg;
+#endif
   watch = (struct curl_watch *)socket_arg;
   if (what == CURL_POLL_REMOVE) {
     if (watch != NULL) {
       kore_platform_disable_read((int)fd);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+      assert(worker_curl.watch_count > 0);
+      worker_curl.watch_count--;
+#else
       assert(state->curl_watch_count > 0);
       state->curl_watch_count--;
+#endif
       metrics->curl_watch_removed++;
       free(watch);
     }
@@ -903,12 +928,23 @@ socket_change(CURL *easy, curl_socket_t fd, int what,
     assert(watch != NULL);
     watch->evt.type = KORE_TYPE_CONNECTION;
     watch->evt.handle = curl_event;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+    watch->state = NULL;
+#else
     watch->state = state;
+#endif
     watch->fd = fd;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+    assert(curl_multi_assign(worker_curl.multi, fd, watch) == CURLM_OK);
+    worker_curl.watch_count++;
+    if (worker_curl.watch_count > metrics->max_curl_watchers)
+      metrics->max_curl_watchers = worker_curl.watch_count;
+#else
     assert(curl_multi_assign(state->multi, fd, watch) == CURLM_OK);
     state->curl_watch_count++;
     if (state->curl_watch_count > metrics->max_curl_watchers)
       metrics->max_curl_watchers = state->curl_watch_count;
+#endif
   }
   interest = (what & CURL_POLL_IN ? EPOLLIN : 0) |
       (what & CURL_POLL_OUT ? EPOLLOUT : 0);
@@ -919,12 +955,20 @@ socket_change(CURL *easy, curl_socket_t fd, int what,
 static void
 timeout_event(void *arg, u_int64_t now)
 {
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
   struct proxy_state *state;
+#endif
 
   (void)now;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(arg == &worker_curl);
+  worker_curl.timer = NULL;
+  drive_curl(NULL, CURL_SOCKET_TIMEOUT, 0);
+#else
   state = (struct proxy_state *)arg;
   state->timer = NULL;
   drive_curl(state, CURL_SOCKET_TIMEOUT, 0);
+#endif
 }
 
 static void
@@ -938,9 +982,22 @@ deadline_expired(void *arg, u_int64_t now)
 static int
 timer_change(CURLM *multi, long timeout_ms, void *arg)
 {
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
   struct proxy_state *state;
+#endif
 
   (void)multi;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(arg == &worker_curl);
+  if (worker_curl.timer != NULL) {
+    kore_timer_remove(worker_curl.timer);
+    worker_curl.timer = NULL;
+  }
+  if (timeout_ms >= 0)
+    worker_curl.timer = kore_timer_add(timeout_event,
+        (u_int64_t)(timeout_ms > 0 ? timeout_ms : 1), &worker_curl,
+        KORE_TIMER_ONESHOT);
+#else
   state = (struct proxy_state *)arg;
   if (state->timer != NULL) {
     kore_timer_remove(state->timer);
@@ -950,6 +1007,7 @@ timer_change(CURLM *multi, long timeout_ms, void *arg)
     state->timer = kore_timer_add(timeout_event,
         (u_int64_t)(timeout_ms > 0 ? timeout_ms : 1), state,
         KORE_TIMER_ONESHOT);
+#endif
   return 0;
 }
 
@@ -1568,18 +1626,12 @@ http_input_pump(struct proxy_state *state)
 }
 
 static void
-drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
+curl_done(struct proxy_state *state, CURLMsg *msg)
 {
-  CURLMsg *msg;
   long verify_result;
-  int pending;
 
-  assert(curl_multi_socket_action(state->multi, fd,
-      flags, &state->running) == CURLM_OK);
-  if (state->running != 0 || state->phase != 0)
-    return;
-  msg = curl_multi_info_read(state->multi, &pending);
-  assert(msg != NULL && msg->msg == CURLMSG_DONE);
+  assert(state != NULL && msg != NULL && msg->msg == CURLMSG_DONE);
+  assert(state->phase == 0);
   if (msg->data.result != CURLE_OK)
     fprintf(stderr, "curl transfer failed: %s phase=%d upload_left=%zu "
         "read_wait=%d pending=%d paused=%d\n",
@@ -1617,7 +1669,9 @@ drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
     assert(verify_result == 0);
     metrics->tls_connect_done++;
   }
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
   assert(state->curl_watch_count == 0);
+#endif
   metrics->connect_done++;
   state->phase = 1;
   if (state->relay_mode) {
@@ -1630,19 +1684,60 @@ drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
 }
 
 static void
+drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
+{
+  CURLMsg *msg;
+  int pending;
+
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  (void)state;
+  assert(worker_curl.multi != NULL);
+  assert(curl_multi_socket_action(worker_curl.multi, fd,
+      flags, &worker_curl.running) == CURLM_OK);
+  if ((unsigned)worker_curl.running > metrics->shared_running_max)
+    metrics->shared_running_max = (unsigned)worker_curl.running;
+  while ((msg = curl_multi_info_read(worker_curl.multi, &pending)) != NULL) {
+    struct proxy_state *owner;
+
+    owner = NULL;
+    assert(msg->msg == CURLMSG_DONE);
+    assert(curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE,
+        &owner) == CURLE_OK);
+    assert(owner != NULL && owner->easy == msg->easy_handle);
+    curl_done(owner, msg);
+  }
+#else
+  assert(curl_multi_socket_action(state->multi, fd,
+      flags, &state->running) == CURLM_OK);
+  if (state->running != 0 || state->phase != 0)
+    return;
+  msg = curl_multi_info_read(state->multi, &pending);
+  curl_done(state, msg);
+#endif
+}
+
+static void
 curl_event(void *arg, int error)
 {
   struct curl_watch *watch;
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
   struct proxy_state *state;
+#endif
   int flags;
 
   watch = (struct curl_watch *)arg;
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
   state = watch->state;
+#endif
   flags = (watch->evt.flags & KORE_EVENT_READ ? CURL_CSELECT_IN : 0) |
       (watch->evt.flags & KORE_EVENT_WRITE ? CURL_CSELECT_OUT : 0) |
       (error ? CURL_CSELECT_ERR : 0);
   watch->evt.flags = 0;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  drive_curl(NULL, watch->fd, flags);
+#else
   drive_curl(state, watch->fd, flags);
+#endif
 }
 
 static void
@@ -1674,11 +1769,15 @@ proxy_cancel(struct proxy_state *state)
     curl_easy_cleanup(state->easy);
     state->easy = NULL;
   }
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  state->multi = NULL;
+#else
   assert(state->curl_watch_count == 0);
   if (state->multi != NULL) {
     assert(curl_multi_cleanup(state->multi) == CURLM_OK);
     state->multi = NULL;
   }
+#endif
   if (state->upload_headers != NULL) {
     curl_slist_free_all(state->upload_headers);
     state->upload_headers = NULL;
@@ -1718,12 +1817,17 @@ worker_cancel(void)
   struct connection *connection;
   struct proxy_state *state;
 
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  metrics->active_watchers_at_teardown += worker_curl.watch_count;
+#endif
   TAILQ_FOREACH(connection, &connections, list) {
     if (connection->evt.handle != downstream_event)
       continue;
     state = (struct proxy_state *)connection->hdlr_extra;
     if (state != NULL && state->multi != NULL) {
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
       metrics->active_watchers_at_teardown += state->curl_watch_count;
+#endif
       if (state->timer != NULL || state->deadline_timer != NULL ||
           state->relay_continue_timer != NULL)
         metrics->timers_at_teardown++;
@@ -1731,6 +1835,17 @@ worker_cancel(void)
       metrics->worker_cancelled++;
     }
   }
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  if (worker_curl.timer != NULL) {
+    kore_timer_remove(worker_curl.timer);
+    worker_curl.timer = NULL;
+  }
+  if (worker_curl.multi != NULL) {
+    assert(curl_multi_cleanup(worker_curl.multi) == CURLM_OK);
+    worker_curl.multi = NULL;
+  }
+  assert(worker_curl.watch_count == 0);
+#endif
 }
 
 static void
@@ -1888,9 +2003,32 @@ takeover(struct http_request *req, const void *data, size_t len)
   state->downstream->evt.flags &= ~KORE_EVENT_READ;
   state->downstream->flags |= CONN_IS_BUSY;
   http_request_sleep(req);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  if (worker_curl.multi == NULL) {
+    worker_curl.multi = curl_multi_init();
+    assert(worker_curl.multi != NULL);
+    assert(curl_multi_setopt(worker_curl.multi, CURLMOPT_SOCKETFUNCTION,
+        socket_change) == CURLM_OK);
+    assert(curl_multi_setopt(worker_curl.multi, CURLMOPT_SOCKETDATA,
+        &worker_curl) == CURLM_OK);
+    assert(curl_multi_setopt(worker_curl.multi, CURLMOPT_TIMERFUNCTION,
+        timer_change) == CURLM_OK);
+    assert(curl_multi_setopt(worker_curl.multi, CURLMOPT_TIMERDATA,
+        &worker_curl) == CURLM_OK);
+    assert(curl_multi_setopt(worker_curl.multi, CURLMOPT_PIPELINING,
+        CURLPIPE_NOTHING) == CURLM_OK);
+    assert(curl_multi_setopt(worker_curl.multi,
+        CURLMOPT_MAX_CONCURRENT_STREAMS, 1L) == CURLM_OK);
+  }
+  state->multi = worker_curl.multi;
+#else
   state->multi = curl_multi_init();
+#endif
   state->easy = curl_easy_init();
   assert(state->multi != NULL && state->easy != NULL);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(curl_easy_setopt(state->easy, CURLOPT_PRIVATE, state) == CURLE_OK);
+#else
   assert(curl_multi_setopt(state->multi, CURLMOPT_SOCKETFUNCTION,
       socket_change) == CURLM_OK);
   assert(curl_multi_setopt(state->multi, CURLMOPT_SOCKETDATA,
@@ -1899,6 +2037,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       timer_change) == CURLM_OK);
   assert(curl_multi_setopt(state->multi, CURLMOPT_TIMERDATA,
       state) == CURLM_OK);
+#endif
   target_port = upstream_port;
   if (strcmp(req->path, "/pending") == 0)
     target_port = stalled_port;
@@ -2113,6 +2252,23 @@ check_sse(unsigned short port, struct echo_server *server,
   assert(recv(fd, ending, sizeof(ending), 0) == 0);
   assert(close(fd) == 0);
 }
+
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+struct concurrent_sse_client {
+  unsigned short port;
+  struct echo_server *server;
+};
+
+static void *
+concurrent_sse_main(void *arg)
+{
+  struct concurrent_sse_client *client;
+
+  client = (struct concurrent_sse_client *)arg;
+  check_sse(client->port, client->server, 0);
+  return NULL;
+}
+#endif
 
 static void
 check_sse_abort(unsigned short port)
@@ -2567,7 +2723,7 @@ check_tls_upload(unsigned short port, struct echo_server *server)
 }
 
 static void
-check_ws(unsigned short port)
+check_ws(unsigned short port, struct echo_server *sse_server)
 {
   struct sockaddr_in addr;
   struct timeval timeout;
@@ -2595,6 +2751,8 @@ check_ws(unsigned short port)
   assert(memcmp(bytes, ws_response, sizeof(ws_response) - 1) == 0);
   assert(memcmp(bytes + sizeof(ws_response) - 1,
       ws_server_early, sizeof(ws_server_early)) == 0);
+  if (sse_server != NULL)
+    check_sse(port, sse_server, 0);
   send_all(fd, ws_client_later, sizeof(ws_client_later));
   sse_read_exact(fd, bytes, sizeof(ws_server_later));
   assert(memcmp(bytes, ws_server_later,
@@ -2885,6 +3043,10 @@ main(void)
   ssize_t got;
   int fd;
   int attempt;
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  struct concurrent_sse_client concurrent_sse;
+  pthread_t concurrent_client;
+#endif
 
   metrics = mmap(NULL, sizeof(*metrics), PROT_READ | PROT_WRITE,
       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -3007,7 +3169,13 @@ main(void)
   assert(close(relay_tls.listener) == 0);
 
   assert(pthread_create(&ws.thread, NULL, ws_tls_main, &ws) == 0);
-  check_ws(port);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
+  check_ws(port, &sse);
+  assert(pthread_join(sse.thread, NULL) == 0);
+#else
+  check_ws(port, NULL);
+#endif
   assert(pthread_join(ws.thread, NULL) == 0);
   assert(close(ws.listener) == 0);
   assert(pthread_create(&ws_reject.thread, NULL,
@@ -3017,6 +3185,9 @@ main(void)
   assert(close(ws_reject.listener) == 0);
   SSL_CTX_free(relay_tls.tls_ctx);
 
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  __sync_lock_test_and_set(&sse.allow_body, 0);
+#endif
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
   check_sse(port, &sse, 0);
   assert(pthread_join(sse.thread, NULL) == 0);
@@ -3024,7 +3195,9 @@ main(void)
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
   check_sse(port, &sse, 1);
   assert(pthread_join(sse.thread, NULL) == 0);
+#if !defined(VECTIS_PROXY_SHARED_MULTI)
   assert(close(sse.listener) == 0);
+#endif
 
   assert(pthread_create(&sse_abort.thread, NULL,
       sse_abort_main, &sse_abort) == 0);
@@ -3070,9 +3243,28 @@ main(void)
 
   assert(pthread_create(&upload.thread, NULL,
       upload_main, &upload) == 0);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  metrics->shared_running_max = 0;
+  __sync_lock_test_and_set(&sse.allow_body, 0);
+  assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
+  concurrent_sse.port = port;
+  concurrent_sse.server = &sse;
+  assert(pthread_create(&concurrent_client, NULL,
+      concurrent_sse_main, &concurrent_sse) == 0);
+  for (attempt = 0; attempt < 500 &&
+      __sync_fetch_and_add(&sse.allow_body, 0) == 0; attempt++)
+    usleep(1000u);
+  assert(__sync_fetch_and_add(&sse.allow_body, 0) == 1);
+#endif
   check_upload(port, &upload);
   assert(pthread_join(upload.thread, NULL) == 0);
   assert(close(upload.listener) == 0);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(pthread_join(concurrent_client, NULL) == 0);
+  assert(pthread_join(sse.thread, NULL) == 0);
+  assert(close(sse.listener) == 0);
+  assert(metrics->shared_running_max >= 2);
+#endif
 
   assert(pthread_create(&stalled.thread, NULL, stall_main, &stalled) == 0);
   fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -3168,13 +3360,22 @@ main(void)
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(metrics->disconnects == 19);
+#else
   assert(metrics->disconnects == 17);
+#endif
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  assert(metrics->http_done == 6);
+  assert(metrics->http_headers_ready == 11);
+#else
   assert(metrics->http_done == 4);
   assert(metrics->http_headers_ready == 9);
+#endif
   assert(metrics->upload_done == 2);
   assert(metrics->upload_pauses > 0);
   assert(metrics->upload_max_queued <= RELAY_BUFFER_SIZE);

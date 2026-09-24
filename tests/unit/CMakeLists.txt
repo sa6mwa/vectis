@@ -121,6 +121,13 @@ if(VECTIS_WITH_KORE_RUNTIME)
     target_include_directories(vectis_unit_kore_proxy_curl_loop PRIVATE
       "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
     target_compile_options(vectis_unit_kore_proxy_curl_loop PRIVATE -std=c99)
+    vectis_add_unit_test(vectis_unit_kore_proxy_curl_loop_shared
+      test_kore_proxy_curl_loop.c)
+    target_compile_definitions(vectis_unit_kore_proxy_curl_loop_shared PRIVATE
+      VECTIS_PROXY_SHARED_MULTI=1)
+    target_include_directories(vectis_unit_kore_proxy_curl_loop_shared PRIVATE
+      "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
+    target_compile_options(vectis_unit_kore_proxy_curl_loop_shared PRIVATE -std=c99)
     add_test(NAME vectis_unit_kore_proxy_curl_loop_failure_cleanup
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_EXIT_AFTER_START=1
         bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
