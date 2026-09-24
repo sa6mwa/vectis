@@ -479,6 +479,11 @@ Disable automatic `Expect: 100-continue` generation and own interim-response
 timing as above.
 Do not configure libcurl to continue sending an upload after an early final
 error; cancel that upload and apply the downstream drain-or-close policy.
+For HTTP/2, removing a live easy handle must cancel its stream promptly.
+An upstream `RST_STREAM` is sufficient cancellation evidence: libcurl may
+retain the underlying TLS connection for reuse, so do not wait for socket EOF
+to retire the exchange. Account for retained libcurl connections in the worker
+resource budget until the multi closes them.
 
 Require a libcurl build with asynchronous DNS capability, or prove equivalent
 nonblocking resolution for every configured resolver path before enabling the
