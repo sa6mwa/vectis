@@ -17,6 +17,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+static const char request_target[] =
+    "/rewritten/%2F?x=1&x=2&raw=%2F";
+
 struct h2_server {
   int listener;
   unsigned short port;
@@ -28,7 +31,8 @@ struct h2_server {
   int saw_early_response;
   int upload_complete;
   int saw_requested_method;
-  int saw_duplex_path;
+  int saw_rewritten_path;
+  int saw_rewritten_authority;
   int saw_content_length;
   int saw_transfer_encoding;
   char upload[8];
@@ -233,8 +237,11 @@ on_header(nghttp2_session *session, const nghttp2_frame *frame,
 #endif
   }
   if (namelen == 5 && memcmp(name, ":path", 5) == 0)
-    server->saw_duplex_path = valuelen == 7 &&
-        memcmp(value, "/duplex", 7) == 0;
+    server->saw_rewritten_path = valuelen == sizeof(request_target) - 1 &&
+        memcmp(value, request_target, sizeof(request_target) - 1) == 0;
+  if (namelen == 10 && memcmp(name, ":authority", 10) == 0)
+    server->saw_rewritten_authority = valuelen == 14 &&
+        memcmp(value, "public.example", 14) == 0;
   if (namelen == 14 && memcmp(name, "content-length", 14) == 0)
     server->saw_content_length = valuelen == 1 && value[0] == '8';
   if (namelen == 17 && memcmp(name, "transfer-encoding", 17) == 0)
@@ -450,12 +457,16 @@ main(void)
   assert(multi != NULL);
   easy = curl_easy_init();
   assert(easy != NULL);
-  assert(snprintf(url, sizeof(url), "https://localhost:%u/duplex",
+  assert(snprintf(url, sizeof(url), "https://localhost:%u/ignored?wrong=1",
       (unsigned)server.port) > 0);
   headers = NULL;
   headers = curl_slist_append(headers, "Expect:");
   assert(headers != NULL);
+  headers = curl_slist_append(headers, "Host: public.example");
+  assert(headers != NULL);
   assert(curl_easy_setopt(easy, CURLOPT_URL, url) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_REQUEST_TARGET,
+      request_target) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_CAINFO_BLOB, &ca) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L) == CURLE_OK);
@@ -534,7 +545,8 @@ main(void)
   assert(server.negotiated_h2 == 1);
   assert(server.saw_request == 1);
   assert(server.saw_requested_method == 1);
-  assert(server.saw_duplex_path == 1);
+  assert(server.saw_rewritten_path == 1);
+  assert(server.saw_rewritten_authority == 1);
 #ifdef VECTIS_HTTP2_UNKNOWN_LENGTH
   assert(server.saw_content_length == 0);
 #else

@@ -102,6 +102,16 @@ including a body-bearing GET, can overlap an early response in the pinned
 bundle. Large concurrent duplex streams, HTTP/2 trailers, cancellation, and
 the coupled Kore worker loop remain open.
 
+The same four variants now connect to a URL with an intentionally different
+path and query, then set `CURLOPT_REQUEST_TARGET` to a raw path containing
+`%2F` and repeated query fields. They also set a rewritten `Host` header.
+The nghttp2 peer observes the exact raw target in `:path` and the rewritten
+host in `:authority`, while TLS still verifies the configured URL's
+`localhost` certificate. Twenty serial runs of all four variants pass.
+This establishes the required HTTP/2 request-target and authority mapping
+in the pinned build; policy validation of untrusted targets and hosts still
+belongs to the proxy implementation.
+
 The [HTTP/1.1 chunked-trailer probe](../tests/unit/test_proxy_curl_chunked_trailers.c)
 sets an unknown upload size, pauses after its first chunk, and uses libcurl's
 trailer callback after the resumed final chunk. The local server observes the
