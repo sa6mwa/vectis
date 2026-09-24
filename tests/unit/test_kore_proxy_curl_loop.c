@@ -44,11 +44,20 @@ static const char ws_client_request[] =
     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
     "Sec-WebSocket-Version: 13\r\n"
     "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const char ws_reject_client_request[] =
+    "GET /ws-reject HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Protocol: chat\r\n\r\n";
 static const char ws_response[] =
     "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
     "Connection: Upgrade\r\n"
     "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
     "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const char ws_reject_response[] =
+    "HTTP/1.1 403 Forbidden\r\nContent-Length: 1048576\r\n"
+    "Connection: close\r\n\r\n";
 static const unsigned char ws_client_early[] = {
     0x81, 0x84, 0x11, 0x22, 0x33, 0x44, 'p' ^ 0x11, 'i' ^ 0x22,
     'n' ^ 0x33, 'g' ^ 0x44};
@@ -105,6 +114,8 @@ struct loop_metrics {
   unsigned upload_tls_pending_resumes;
   size_t upload_max_queued;
   unsigned ws_upgraded;
+  unsigned ws_rejected;
+  unsigned ws_reject_header_fragments;
   unsigned http_body_pauses;
   unsigned http_chunks;
   unsigned http_headers_ready;
@@ -142,6 +153,8 @@ struct proxy_state {
   int relay_tls;
   int ws_mode;
   int ws_upgraded;
+  int ws_reject_mode;
+  int ws_rejected;
   int http_mode;
   int upload_mode;
   int upload_paused;
@@ -183,6 +196,7 @@ static unsigned short stalled_port;
 static unsigned short relay_port;
 static unsigned short relay_tls_port;
 static unsigned short ws_port;
+static unsigned short ws_reject_port;
 static unsigned short sse_port;
 static unsigned short upload_port;
 static char tls_cert_path[128];
@@ -198,6 +212,7 @@ static void downstream_event(void *arg, int error);
 static void relay_pump(struct proxy_state *state);
 static void http_pump(struct proxy_state *state);
 static void http_input_pump(struct proxy_state *state);
+static unsigned char relay_byte(size_t offset);
 
 static void
 upload_continue(void *arg, u_int64_t now)
@@ -349,6 +364,7 @@ ws_tls_main(void *arg)
   watcher.events = POLLIN;
   watcher.revents = 0;
   assert(SSL_pending(ssl) == 0);
+  assert(SSL_has_pending(ssl) == 0);
   assert(poll(&watcher, 1, 50) == 0);
   memcpy(response, ws_response, sizeof(ws_response) - 1);
   memcpy(response + sizeof(ws_response) - 1,
@@ -375,6 +391,62 @@ ws_tls_main(void *arg)
       sizeof(ws_client_later)) == 0);
   assert(SSL_write(ssl, ws_server_later, sizeof(ws_server_later)) ==
       (int)sizeof(ws_server_later));
+  assert(SSL_shutdown(ssl) >= 0);
+  SSL_free(ssl);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void *
+ws_reject_main(void *arg)
+{
+  struct echo_server *server;
+  unsigned char request[sizeof(ws_upstream_request) - 1];
+  unsigned char body[4096];
+  struct pollfd watcher;
+  SSL *ssl;
+  size_t used;
+  size_t sent;
+  size_t index;
+  int fd;
+  int got;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  ssl = SSL_new(server->tls_ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_accept(ssl) == 1);
+  used = 0;
+  while (used < sizeof(request)) {
+    got = SSL_read(ssl, request + used,
+        (int)(sizeof(request) - used));
+    assert(got > 0);
+    used += (size_t)got;
+  }
+  assert(memcmp(request, ws_upstream_request,
+      sizeof(request)) == 0);
+  watcher.fd = fd;
+  watcher.events = POLLIN;
+  watcher.revents = 0;
+  assert(SSL_pending(ssl) == 0);
+  assert(SSL_has_pending(ssl) == 0);
+  assert(poll(&watcher, 1, 50) == 0);
+  assert(SSL_write(ssl, ws_reject_response, 7) == 7);
+  usleep(20000u);
+  assert(SSL_write(ssl, ws_reject_response + 7,
+      (int)(sizeof(ws_reject_response) - 1 - 7)) ==
+      (int)(sizeof(ws_reject_response) - 1 - 7));
+  for (sent = 0; sent < RELAY_PAYLOAD_SIZE; sent += sizeof(body)) {
+    for (index = 0; index < sizeof(body); index++)
+      body[index] = relay_byte(sent + index);
+    assert(SSL_write(ssl, body, (int)sizeof(body)) ==
+        (int)sizeof(body));
+  }
+  assert(SSL_pending(ssl) == 0);
+  assert(SSL_has_pending(ssl) == 0);
+  assert(poll(&watcher, 1, 50) == 0);
   assert(SSL_shutdown(ssl) >= 0);
   SSL_free(ssl);
   assert(close(fd) == 0);
@@ -764,7 +836,7 @@ relay_pump(struct proxy_state *state)
     }
     if (TAILQ_EMPTY(&downstream->send_queue) &&
         state->to_downstream_length != 0 &&
-        (!state->ws_mode || state->ws_upgraded)) {
+        (!state->ws_mode || state->ws_upgraded || state->ws_rejected)) {
       struct netbuf *buffer;
       size_t queued;
       unsigned count;
@@ -873,16 +945,36 @@ relay_pump(struct proxy_state *state)
         progress = 1;
         if (amount > metrics->relay_max_queued)
           metrics->relay_max_queued = amount;
-        if (state->ws_mode && !state->ws_upgraded) {
+        if (state->ws_mode && !state->ws_upgraded &&
+            !state->ws_rejected) {
           size_t prefix;
 
-          prefix = state->to_downstream_length;
-          if (prefix > sizeof(ws_response) - 1)
-            prefix = sizeof(ws_response) - 1;
-          assert(memcmp(state->to_downstream, ws_response, prefix) == 0);
-          if (state->to_downstream_length >= sizeof(ws_response) - 1) {
-            state->ws_upgraded = 1;
-            metrics->ws_upgraded++;
+          if (state->ws_reject_mode) {
+            prefix = state->to_downstream_length;
+            if (prefix > sizeof(ws_reject_response) - 1)
+              prefix = sizeof(ws_reject_response) - 1;
+            assert(memcmp(state->to_downstream,
+                ws_reject_response, prefix) == 0);
+            if (state->to_downstream_length <
+                sizeof(ws_reject_response) - 1)
+              metrics->ws_reject_header_fragments++;
+            else {
+              state->ws_rejected = 1;
+              state->downstream_eof = 1;
+              state->upstream_write_closed = 1;
+              state->to_upstream_length = 0;
+              state->to_upstream_offset = 0;
+              metrics->ws_rejected++;
+            }
+          } else {
+            prefix = state->to_downstream_length;
+            if (prefix > sizeof(ws_response) - 1)
+              prefix = sizeof(ws_response) - 1;
+            assert(memcmp(state->to_downstream, ws_response, prefix) == 0);
+            if (state->to_downstream_length >= sizeof(ws_response) - 1) {
+              state->ws_upgraded = 1;
+              metrics->ws_upgraded++;
+            }
           }
         }
       } else if (code == CURLE_OK) {
@@ -949,7 +1041,7 @@ schedule:
       metrics->tls_down_write_want_write++;
     }
   } else if (state->to_downstream_length != 0 &&
-      (!state->ws_mode || state->ws_upgraded)) {
+      (!state->ws_mode || state->ws_upgraded || state->ws_rejected)) {
     down_events |= EPOLLOUT;
   }
   if (state->to_upstream_length == 0 && !state->downstream_eof &&
@@ -1474,6 +1566,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/relay") != 0 &&
       strcmp(req->path, "/relay-tls") != 0 &&
       strcmp(req->path, "/ws") != 0 &&
+      strcmp(req->path, "/ws-reject") != 0 &&
       strcmp(req->path, "/sse") != 0 &&
       strcmp(req->path, "/upload") != 0 &&
       strcmp(req->path, "/pending") != 0)
@@ -1481,12 +1574,16 @@ takeover(struct http_request *req, const void *data, size_t len)
   assert(len == 0 || strcmp(req->path, "/relay") == 0 ||
       strcmp(req->path, "/relay-tls") == 0 ||
       strcmp(req->path, "/ws") == 0 ||
+      strcmp(req->path, "/ws-reject") == 0 ||
       strcmp(req->path, "/upload") == 0);
   state = kore_calloc(1, sizeof(*state));
   state->relay_mode = strcmp(req->path, "/relay") == 0 ||
       strcmp(req->path, "/relay-tls") == 0 ||
-      strcmp(req->path, "/ws") == 0;
-  state->ws_mode = strcmp(req->path, "/ws") == 0;
+      strcmp(req->path, "/ws") == 0 ||
+      strcmp(req->path, "/ws-reject") == 0;
+  state->ws_mode = strcmp(req->path, "/ws") == 0 ||
+      strcmp(req->path, "/ws-reject") == 0;
+  state->ws_reject_mode = strcmp(req->path, "/ws-reject") == 0;
   state->relay_tls = strcmp(req->path, "/relay-tls") == 0 ||
       state->ws_mode;
   state->upload_mode = strcmp(req->path, "/upload") == 0;
@@ -1550,7 +1647,7 @@ takeover(struct http_request *req, const void *data, size_t len)
   if (strcmp(req->path, "/pending") == 0)
     target_port = stalled_port;
   else if (state->ws_mode)
-    target_port = ws_port;
+    target_port = state->ws_reject_mode ? ws_reject_port : ws_port;
   else if (strcmp(req->path, "/relay-tls") == 0)
     target_port = relay_tls_port;
   else if (state->http_mode)
@@ -1963,6 +2060,60 @@ check_ws(unsigned short port)
 }
 
 static void
+check_ws_reject(unsigned short port)
+{
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  unsigned char initial[sizeof(ws_reject_client_request) - 1 +
+      sizeof(ws_client_early)];
+  unsigned char bytes[4096];
+  size_t total;
+  size_t index;
+  size_t position;
+  ssize_t got;
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  memcpy(initial, ws_reject_client_request,
+      sizeof(ws_reject_client_request) - 1);
+  memcpy(initial + sizeof(ws_reject_client_request) - 1,
+      ws_client_early, sizeof(ws_client_early));
+  send_all(fd, initial, sizeof(initial));
+  total = 0;
+  for (;;) {
+    got = recv(fd, bytes, sizeof(bytes), 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    assert(total + (size_t)got <=
+        sizeof(ws_reject_response) - 1 + RELAY_PAYLOAD_SIZE);
+    for (index = 0; index < (size_t)got; index++) {
+      position = total + index;
+      if (position < sizeof(ws_reject_response) - 1)
+        assert(bytes[index] ==
+            (unsigned char)ws_reject_response[position]);
+      else
+        assert(bytes[index] ==
+            relay_byte(position - (sizeof(ws_reject_response) - 1)));
+    }
+    total += (size_t)got;
+    usleep(1000u);
+  }
+  assert(total == sizeof(ws_reject_response) - 1 + RELAY_PAYLOAD_SIZE);
+  assert(close(fd) == 0);
+}
+
+static void
 check_relay(unsigned short port, const char *path)
 {
   struct sockaddr_in addr;
@@ -2167,6 +2318,7 @@ main(void)
   struct echo_server relay;
   struct echo_server relay_tls;
   struct echo_server ws;
+  struct echo_server ws_reject;
   struct echo_server sse;
   struct echo_server upload;
   struct echo_server upload_tls;
@@ -2194,6 +2346,7 @@ main(void)
   prepare_echo(&relay);
   prepare_echo(&relay_tls);
   prepare_echo(&ws);
+  prepare_echo(&ws_reject);
   prepare_echo(&sse);
   prepare_echo(&upload);
   prepare_echo(&upload_tls);
@@ -2202,6 +2355,7 @@ main(void)
   relay_port = relay.port;
   relay_tls_port = relay_tls.port;
   ws_port = ws.port;
+  ws_reject_port = ws_reject.port;
   sse_port = sse.port;
   upload_port = upload.port;
   stalled_port = stalled.port;
@@ -2225,6 +2379,7 @@ main(void)
       tls_key_path, SSL_FILETYPE_PEM) == 1);
   assert(SSL_CTX_check_private_key(relay_tls.tls_ctx) == 1);
   ws.tls_ctx = relay_tls.tls_ctx;
+  ws_reject.tls_ctx = relay_tls.tls_ctx;
   port = available_port();
   vectis_kore_set_prebody_probe(takeover);
   vectis_kore_set_worker_teardown_probe(worker_cancel);
@@ -2295,6 +2450,11 @@ main(void)
   check_ws(port);
   assert(pthread_join(ws.thread, NULL) == 0);
   assert(close(ws.listener) == 0);
+  assert(pthread_create(&ws_reject.thread, NULL,
+      ws_reject_main, &ws_reject) == 0);
+  check_ws_reject(port);
+  assert(pthread_join(ws_reject.thread, NULL) == 0);
+  assert(close(ws_reject.listener) == 0);
   SSL_CTX_free(relay_tls.tls_ctx);
 
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
@@ -2387,14 +2547,16 @@ main(void)
       metrics->tls_down_write_want_write,
       metrics->tls_down_read_want_read,
       metrics->downstream_tls_read_want_write);
-  assert(metrics->connect_done == 5);
-  assert(metrics->tls_connect_done == 3);
+  assert(metrics->connect_done == 6);
+  assert(metrics->tls_connect_done == 4);
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 9);
-  assert(metrics->relay_done == 4);
+  assert(metrics->disconnects == 10);
+  assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
+  assert(metrics->ws_rejected == 1);
+  assert(metrics->ws_reject_header_fragments > 0);
   assert(metrics->http_done == 3);
   assert(metrics->http_headers_ready == 3);
   assert(metrics->upload_done == 2);

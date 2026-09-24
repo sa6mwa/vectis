@@ -206,11 +206,25 @@ through the same bounded Kore/libcurl tunnel. The client verifies all bytes
 and EOF, and the worker reports one successful upgrade and tunnel cleanup.
 This proves the event-loop composition and boundary-byte ownership for this
 fixed handshake. The probe deliberately uses fixed handshake fields and
-assertions: it does not prove a production parser, rewrite policy, rejection
-response, extension negotiation, large-fragment backpressure, long-lived
+assertions: it does not prove a production parser, rewrite policy, general
+rejection handling, extension negotiation, large-fragment backpressure, long-lived
 idle/close semantics, or downstream TLS for the upgrade route. The early
 client frame is an adversarial handoff fixture; production clients should
 wait for `101` before sending frames.
+
+The worker-loop probe also sends that early client frame to a WebSocket route
+whose verified HTTPS upstream returns `403` and a 1 MiB body. The upstream
+splits its response header across TLS writes. The proxy waits for the
+complete header, selects the non-upgrade path, discards the held early frame,
+and relays the response through one bounded Kore send netbuf while a slow
+client checks every byte. The upstream sees no frame before or after the
+rejection. Ten serial repetitions of the coupled sequence pass; five
+additional repetitions explicitly assert that the split header was observed.
+This proves the connect-only socket can return to normal HTTP response
+delivery after a rejected upgrade. The probe recognizes one fixed `403`
+header; a general bounded HTTP/1.1 status/header parser, hop-by-hop header
+translation, response rewrite policy, other rejection statuses, and premature
+upstream close remain open.
 
 This output choice came from a failed direct-TLS experiment in the same
 worker loop. Level-triggered writable interest generated more than 150,000
@@ -463,7 +477,7 @@ harness and production proxy cancellation paths still need their own proof.
 | Response output | `net_send_stream()` callbacks need an independent lifetime because Kore can invoke them during connection removal after freeing `hdlr_extra`. `net_send_queue()` instead copies a bounded chunk and needs no proxy completion callback. The proxy detects queue drain in its connection event handler before resuming upstream reads. Its first flush is deferred beyond the pre-body hook to avoid reentering a predecessor stream callback. | One 8 KiB Kore netbuf and one 8 KiB scratch buffer suffice for the 1 MiB slow-peer probe over cleartext and double TLS. The queue-based writer preserves a live streamed predecessor, its own response, and an ordinary successor over cleartext and TLS. Abort coverage remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) still enforces the header timer after pre-body takeover unless the proxy clears it. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis exposes the worker teardown hook through its static-runtime symbol table. | A one-second timer killed an idle takeover before the fix; clearing `http_timeout` preserved it. Active downstream connection was observed at teardown and disconnected once. A stalled upstream TLS handshake was cancelled with its curl handle, Kore socket watchers, and deadline timer before event-loop cleanup. Other callback phases and timeout policies remain open. |
-| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, a 1 MiB coupled fixed-length HTTP/1.1 upload with an early response over both cleartext and downstream TLS, Linux Kore worker-loop connect-only/tunnel handoff, 1 MiB coupled cleartext and double-TLS relays, a live 1 MiB HTTP/1.1 SSE stream, and four paused/resumed HTTPS HTTP/2 connections pass. General HTTP framing, WebSocket rejection, other release-bundle features, and a production HTTP/2 memory allowance remain open. |
+| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, a 1 MiB coupled fixed-length HTTP/1.1 upload with an early response over both cleartext and downstream TLS, Linux Kore worker-loop connect-only/tunnel handoff, 1 MiB coupled cleartext and double-TLS relays, a live 1 MiB HTTP/1.1 SSE stream, a fixed split-header WebSocket `403` with a 1 MiB body, and four paused/resumed HTTPS HTTP/2 connections pass. General HTTP framing, other WebSocket rejection cases, release-bundle features, and a production HTTP/2 memory allowance remain open. |
 
 ## Minimum executable proof before architecture commitment
 
