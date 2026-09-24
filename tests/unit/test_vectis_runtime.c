@@ -3501,6 +3501,7 @@ static void assert_websocket_echo(unsigned short port) {
 
 static void assert_websocket_handshake_rejected(unsigned short port) {
   const char *request;
+  const char *bad_upgrade;
   char response[2048];
   size_t i;
   int fd;
@@ -3509,6 +3510,11 @@ static void assert_websocket_handshake_rejected(unsigned short port) {
             "Host: localhost\r\n"
             "Connection: keep-alive\r\n"
             "\r\n";
+  bad_upgrade = "GET /ws HTTP/1.1\r\n"
+                "Host: localhost\r\n"
+                "Connection: Upgrade\r\n"
+                "Upgrade: h2c\r\n"
+                "\r\n";
   fd = connect_local(port);
   for (i = 0u; i < 4u; ++i) {
     socket_send_all(fd, request, strlen(request));
@@ -3516,6 +3522,9 @@ static void assert_websocket_handshake_rejected(unsigned short port) {
     assert(strncmp(response, "HTTP/1.1 400 ", 13u) == 0);
     assert(strstr(response, " 101 ") == NULL);
   }
+  socket_send_all(fd, bad_upgrade, strlen(bad_upgrade));
+  framing_read_headers(fd, response, sizeof(response));
+  assert(strncmp(response, "HTTP/1.1 400 ", 13u) == 0);
   (void)shutdown(fd, SHUT_RDWR);
   (void)close(fd);
 }
@@ -3524,6 +3533,7 @@ static void assert_websocket_rejection_metrics(void) {
   vectis_app_config config;
   vectis_metrics_config metrics;
   vectis_websocket_route_config websocket_route;
+  vectis_route_config overlapping_handler;
   vectis_mutable_bytes snapshot;
   vectis_error error;
   vectis_status status;
@@ -3547,6 +3557,10 @@ static void assert_websocket_rejection_metrics(void) {
   metrics.path = "/metrics";
   metrics.json_path = "/metrics.json";
   assert(app->metrics(app, &metrics, &error) == VECTIS_OK);
+  overlapping_handler =
+      vectis_route(VECTIS_HTTP_GET, "^/ws$", sample_handler, NULL);
+  overlapping_handler.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  assert(app->route(app, &overlapping_handler, &error) == VECTIS_OK);
   websocket_route = vectis_websocket_route("/ws", runtime_websocket_echo, NULL);
   assert(app->websocket(app, &websocket_route, &error) == VECTIS_OK);
 
@@ -4654,6 +4668,7 @@ static void assert_kore_smoke(void) {
   vectis_http_response oversized_response;
   vectis_http_response upload_response;
   vectis_http_response overlap_upload_response;
+  vectis_http_response reverse_overlap_response;
   vectis_http_response spooled_upload_response;
   vectis_http_response default_spooled_upload_response;
   vectis_http_response stream_response;
@@ -4691,6 +4706,7 @@ static void assert_kore_smoke(void) {
   source_json_doc json_source_doc;
   stream_probe_context stream_context;
   stream_probe_context overlap_stream_context;
+  stream_probe_context reverse_overlap_stream_context;
   runtime_failing_after_chunk_source failing_stream_source;
   runtime_dsv_summary dsv_summary;
   runtime_dsv_summary dsv_invalid_summary;
@@ -4698,11 +4714,13 @@ static void assert_kore_smoke(void) {
   vectis_route_config limited_route;
   vectis_route_config upload_route;
   vectis_route_config overlap_upload_route;
+  vectis_route_config reverse_overlap_upload_route;
   vectis_route_config spooled_upload_route;
   vectis_route_config default_spooled_upload_route;
   vectis_route_config file_route;
   vectis_upload_route_config stream_route;
   vectis_upload_route_config overlap_stream_route;
+  vectis_upload_route_config reverse_overlap_stream_route;
   vectis_upload_reader_route_config stream_reader_route;
   vectis_upload_file_route_config stream_file_route;
   vectis_websocket_route_config websocket_route;
@@ -4845,6 +4863,7 @@ static void assert_kore_smoke(void) {
   int attempt;
   int i;
   int overlap_live_upload;
+  int reverse_overlap_live_upload;
   int reserved_fd;
   int second_reserved_fd;
   int high_fds[1100];
@@ -4866,6 +4885,7 @@ static void assert_kore_smoke(void) {
   memset(&oversized_response, 0, sizeof(oversized_response));
   memset(&upload_response, 0, sizeof(upload_response));
   memset(&overlap_upload_response, 0, sizeof(overlap_upload_response));
+  memset(&reverse_overlap_response, 0, sizeof(reverse_overlap_response));
   memset(&spooled_upload_response, 0, sizeof(spooled_upload_response));
   memset(&default_spooled_upload_response, 0,
          sizeof(default_spooled_upload_response));
@@ -4910,6 +4930,8 @@ static void assert_kore_smoke(void) {
   memset(&native_webdav_get_response, 0, sizeof(native_webdav_get_response));
   memset(&stream_context, 0, sizeof(stream_context));
   memset(&overlap_stream_context, 0, sizeof(overlap_stream_context));
+  memset(&reverse_overlap_stream_context, 0,
+         sizeof(reverse_overlap_stream_context));
   memset(&failing_stream_source, 0, sizeof(failing_stream_source));
   memset(&dsv_summary, 0, sizeof(dsv_summary));
   memset(&dsv_invalid_summary, 0, sizeof(dsv_invalid_summary));
@@ -5064,6 +5086,10 @@ static void assert_kore_smoke(void) {
                        param_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "^/ws$", sample_handler, NULL);
+  route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
   websocket_route = vectis_websocket_route("/ws", runtime_websocket_echo, NULL);
   status = app->websocket(app, &websocket_route, &error);
   assert(status == VECTIS_OK);
@@ -5099,6 +5125,28 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   assert(policy.max_bytes == 4u);
   assert(overlap_live_upload == 0);
+  reverse_overlap_stream_route = vectis_stream_upload_route(
+      VECTIS_HTTP_POST, "/upload-overlap-reverse", stream_probe_open,
+      stream_probe_write, stream_probe_finish, stream_probe_close,
+      &reverse_overlap_stream_context);
+  reverse_overlap_stream_route.body.max_bytes = 4u;
+  status = app->upload_stream(app, &reverse_overlap_stream_route, &error);
+  assert(status == VECTIS_OK);
+  reverse_overlap_upload_route = vectis_upload_route_max(
+      VECTIS_HTTP_POST, "^/upload-overlap-reverse$", 4u, upload_handler,
+      NULL);
+  reverse_overlap_upload_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  reverse_overlap_upload_route.body.memory_buffer_limit_bytes = 4u;
+  reverse_overlap_upload_route.body.disk_spool_disabled = 1;
+  status = vectis_register_route(app, &reverse_overlap_upload_route, &error);
+  assert(status == VECTIS_OK);
+  reverse_overlap_live_upload = 0;
+  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST,
+      "/upload-overlap-reverse", &policy, &reverse_overlap_live_upload,
+      &error);
+  assert(status == VECTIS_OK);
+  assert(policy.max_bytes == 4u);
+  assert(reverse_overlap_live_upload == 1);
   spooled_upload_route =
       vectis_upload_route_max(VECTIS_HTTP_POST, "/upload-spooled", 4096u,
                               spooled_upload_handler, &body_spool_expectation);
@@ -6497,6 +6545,20 @@ static void assert_kore_smoke(void) {
   assert(memcmp(overlap_upload_response.body, "buffered", 8u) == 0);
   assert(overlap_stream_context.open_count == 0u);
   vectis_http_response_cleanup(&overlap_upload_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/upload-overlap-reverse");
+  request.body = "xxx";
+  request.body_size = 3u;
+  status = vectis_http_execute(&http, &request, &reverse_overlap_response,
+                               &error);
+  assert(status == VECTIS_OK);
+  assert(reverse_overlap_response.status_code == 200L);
+  assert(reverse_overlap_response.body_size == 1u);
+  assert(memcmp(reverse_overlap_response.body, "3", 1u) == 0);
+  vectis_http_response_cleanup(&reverse_overlap_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;

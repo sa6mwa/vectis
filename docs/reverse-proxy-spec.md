@@ -289,23 +289,29 @@ that check may a proxy route be considered. For remaining requests, resolve
 the first matching route in registration order using the same method, path,
 parameter, and regex matcher used by body policy. Take over only when that
 winner is a proxy route. An ordinary handler, static handler, or live upload
-winner continues through its existing path. Evaluate proxy WebSocket mode
-only for a validated HTTP/1.1 upgrade; a proxy route may still handle an
-ordinary GET through its HTTP mode. Return path-validation and allocation
-errors locally before contacting upstream. Preserve the existing static
-directory 405/`Allow` decision when its all-method route wins an overlap;
-that check runs before ordinary body handling today.
+winner continues through its existing path. Extend the internal body-policy
+query to report the winning route kind along with its policy; its existing
+first-match scan already covers handlers, static routes, and live uploads.
+The pre-body hook uses that result after the application WebSocket check.
+Ordinary dispatch and upload handling keep their current selection paths.
+Evaluate proxy WebSocket mode only for a validated HTTP/1.1 upgrade; a proxy
+route may still handle an ordinary GET through its HTTP mode. Return path
+validation and allocation errors locally before contacting upstream. Preserve
+the existing static directory 405/`Allow` decision when its all-method route
+wins an overlap; that check runs before ordinary body handling today.
 
 Exact duplicate method/path-kind/path registrations already conflict, but
 literal, parameter, and regex patterns can overlap. Test both registration
 orders for overlaps so header-time admission and later route dispatch agree.
-The selector must not reuse the current body-policy return value alone:
-it contains the policy and a live-upload flag, but no route identity. Body
-policy scans all route kinds, ordinary dispatch skips non-handler kinds, and
-application WebSocket matching runs first. Introduce a shared route
-resolution result or equivalent common matching helper in Vectis, then make
-pre-body admission consume that result;
-this adds no further Kore transport surface.
+The current body-policy return value alone cannot identify a proxy winner:
+it contains only policy and a live-upload flag. Extend this internal result
+with the winning route kind; do not duplicate its method, path, parameter,
+and regex matching loop in the pre-body hook. The bridge already consumes a
+selected live-upload route before ordinary handler dispatch. Live tests cover
+both registration orders for overlapping buffered and live-upload routes,
+plus application WebSocket priority over an earlier ordinary handler. A
+proxy-specific overlap and takeover test remains required once the proxy
+route kind exists. This adds no further Kore transport surface.
 
 Kore's current request-body behavior is method-based: GET, HEAD, OPTIONS,
 COPY, and MOVE are marked complete at request creation; most other methods

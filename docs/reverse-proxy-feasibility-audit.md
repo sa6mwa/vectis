@@ -470,17 +470,22 @@ claims the connection. The bridge currently calls
 that matcher uses method and path, not the incoming upgrade tokens. Kore's
 application WebSocket handshake then accepts or rejects the request. For
 remaining requests, `vectis_internal_route_body_policy()` scans every route
-kind in registration order, while `vectis_internal_dispatch_route()` scans
-handler kinds only. Exact duplicate method/path-kind/path registrations are
-rejected, but regex and literal paths may overlap. A header-time selector
-that merely repeats the body-policy lookup can therefore disagree with the
-eventual ordinary dispatcher. The spec now preserves application WebSocket
-precedence, then resolves proxy versus non-proxy routes with shared matching
-logic and explicit overlap tests. This is a Vectis change; it does not require
-another Kore hook. Static directory routes register for all methods and use
-an allowed-method check before body handling; the selector must also preserve
-their 405/`Allow` outcome when such a route wins an overlap. No executable
-proxy admission selector exists yet.
+kind in registration order. The bridge consumes a selected live-upload route
+before ordinary dispatch, which scans handler kinds only. A live runtime test
+now covers both registration orders for a regex buffered handler overlapping
+a literal live-upload route: the earlier handler returns its buffered result,
+and the earlier live-upload route returns its streamed result. Two runtime
+fixtures register an ordinary handler before an overlapping application
+WebSocket route: a valid upgrade receives `101`, while missing upgrade
+headers and an `h2c` upgrade attempt take the WebSocket handshake path and
+receive `400`. Exact duplicate method/path-kind/path registrations are
+rejected, but regex and literal paths may overlap. The least intrusive proxy
+selector can preserve this precedence by checking application WebSocket routes
+first, then extending the existing body-policy query to report whether its
+first match is a proxy route. It needs neither a separate matcher nor a rewrite
+of ordinary dispatch. Static directory routes register for all methods; a
+static winner must continue through the allowed-method check to preserve its
+405/`Allow` outcome. No executable proxy route-kind admission test exists yet.
 
 ## Transport candidate under test
 
@@ -632,7 +637,7 @@ harness and production proxy cancellation paths still need their own proof.
 
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
-| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe. The bridge gives application WebSocket routes priority for every GET; body policy scans all route kinds in registration order, while ordinary dispatch scans handler kinds only. Exact duplicate routes conflict, but regex/literal overlaps are allowed. A shared proxy admission selector and overlap tests remain unproved. |
+| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe. The bridge gives application WebSocket routes priority for every GET; body policy scans all route kinds in registration order and handles a selected live upload before ordinary dispatch. Live overlap tests pass in both registration orders for buffered versus live-upload routes and confirm WebSocket priority over an earlier ordinary handler. Exact duplicate routes conflict, but regex/literal overlaps are allowed. The body-policy result still lacks a proxy route-kind output; a proxy-specific admission test remains open. |
 | Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. Patch `0031` lets readable bytes reach the parser when an orderly write half-close accompanies them. | Coalesced and split input passes on Linux, including downstream TLS. A 1 MiB chunked POST and a same-write chunked body with a pipelined GET also pass, including the latter over TLS. Direct-I/O ordinary HTTP takeover restores Kore's event handler and serves two subsequent ordinary requests. Ordinary GET and SSE half-close with headers pass on Linux. Full framer/backpressure integration, kqueue execution, and cleanup races remain open. |
 | Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` covers ordinary byte boundaries. A bounded chunked probe now validates 1 MiB incrementally, parses a trailer, and replays a following GET from both borrowed and later socket bytes. General framing policy, malformed-input handling, and libcurl backpressure composition remain unproved. |
 | Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, so taken-over input uses direct nonblocking fd/`SSL *` reads. Output copies one bounded chunk into Kore's send queue and uses its TLS writer; `SSL_want()` identifies queued output's retry direction. The worker probe measures an 8 KiB scratch queue plus one 8 KiB Kore netbuf. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Slow cleartext, HTTPS-upstream, and double-TLS relays pass on Linux. Forced cross-direction retries and kqueue remain open. |
