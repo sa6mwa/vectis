@@ -2,7 +2,10 @@
 #include <assert.h>
 #include <curl/curl.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stddef.h>
@@ -29,6 +32,7 @@ struct echo_server {
   int listener;
   unsigned short port;
   pthread_t thread;
+  SSL_CTX *tls_ctx;
 };
 
 struct loop_metrics {
@@ -44,10 +48,25 @@ struct loop_metrics {
   unsigned active_watchers_at_teardown;
   unsigned timers_at_teardown;
   unsigned relay_done;
+  unsigned tls_connect_done;
   unsigned relay_read_pauses;
   unsigned relay_write_pauses;
   unsigned relay_pump_calls;
+  unsigned downstream_tls_read_want_write;
+  unsigned downstream_tls_write_want_read;
+  unsigned downstream_tls_write_pauses;
+  unsigned downstream_tls_close_notify;
+  unsigned tls_pump_calls;
+  unsigned tls_up_send_again;
+  unsigned tls_up_recv_again;
+  unsigned tls_down_write_want_write;
+  unsigned tls_down_read_want_read;
+  unsigned tls_tunnel_events;
+  unsigned tls_downstream_events;
+  unsigned relay_continuations;
   size_t relay_max_queued;
+  size_t relay_max_kore_queued;
+  unsigned relay_max_kore_buffers;
 };
 
 struct proxy_state;
@@ -63,32 +82,40 @@ struct proxy_state {
   struct connection *downstream;
   struct kore_timer *timer;
   struct kore_timer *deadline_timer;
+  struct kore_timer *relay_continue_timer;
   CURLM *multi;
   CURL *easy;
   curl_socket_t upstream_fd;
   unsigned curl_watch_count;
   int tunnel_watched;
   int downstream_watched;
+  int downstream_interest;
   int phase;
   int running;
   size_t response_sent;
   int relay_mode;
+  int relay_tls;
   unsigned char to_upstream[RELAY_BUFFER_SIZE];
   size_t to_upstream_offset;
   size_t to_upstream_length;
   unsigned char to_downstream[RELAY_BUFFER_SIZE];
-  size_t to_downstream_offset;
   size_t to_downstream_length;
   int downstream_eof;
   int upstream_eof;
   int upstream_write_closed;
   int relay_finished;
+  int relay_closing;
+  int down_read_wait;
+  int close_wait;
 };
 
 static struct loop_metrics *metrics;
 static unsigned short upstream_port;
 static unsigned short stalled_port;
 static unsigned short relay_port;
+static unsigned short relay_tls_port;
+static char tls_cert_path[128];
+static char tls_key_path[128];
 
 extern void vectis_kore_set_prebody_probe(
     int (*probe)(struct http_request *, const void *, size_t));
@@ -98,6 +125,18 @@ static void drive_curl(struct proxy_state *state, curl_socket_t fd, int flags);
 static void curl_event(void *arg, int error);
 static void downstream_event(void *arg, int error);
 static void relay_pump(struct proxy_state *state);
+
+static void
+relay_continue(void *arg, u_int64_t now)
+{
+  struct proxy_state *state;
+
+  (void)now;
+  state = (struct proxy_state *)arg;
+  state->relay_continue_timer = NULL;
+  metrics->relay_continuations++;
+  relay_pump(state);
+}
 
 static void *
 echo_main(void *arg)
@@ -148,6 +187,45 @@ relay_echo_main(void *arg)
     }
   }
   assert(received == RELAY_PAYLOAD_SIZE);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void *
+relay_tls_main(void *arg)
+{
+  struct echo_server *server;
+  unsigned char bytes[4096];
+  size_t received;
+  size_t offset;
+  SSL *ssl;
+  int amount;
+  int fd;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  ssl = SSL_new(server->tls_ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_accept(ssl) == 1);
+  received = 0;
+  while (received < RELAY_PAYLOAD_SIZE) {
+    amount = SSL_read(ssl, bytes, sizeof(bytes));
+    assert(amount > 0);
+    received += (size_t)amount;
+    assert(received <= RELAY_PAYLOAD_SIZE);
+    offset = 0;
+    while (offset < (size_t)amount) {
+      int written;
+
+      written = SSL_write(ssl, bytes + offset, amount - (int)offset);
+      assert(written > 0);
+      offset += (size_t)written;
+    }
+  }
+  assert(SSL_shutdown(ssl) >= 0);
+  SSL_free(ssl);
   assert(close(fd) == 0);
   return NULL;
 }
@@ -235,6 +313,7 @@ prepare_echo(struct echo_server *server)
   struct sockaddr_in addr;
   socklen_t size;
 
+  server->tls_ctx = NULL;
   server->listener = socket(AF_INET, SOCK_STREAM, 0);
   assert(server->listener >= 0);
   memset(&addr, 0, sizeof(addr));
@@ -334,11 +413,16 @@ relay_pump(struct proxy_state *state)
   int progress;
   int down_events;
   int up_events;
+  int ssl_error;
 
   downstream = state->downstream;
   if (state->relay_finished)
     return;
   metrics->relay_pump_calls++;
+  if (downstream->tls != NULL)
+    metrics->tls_pump_calls++;
+  if (state->relay_closing)
+    goto finish;
   for (step = 0; step < 64; step++) {
     progress = 0;
     if (state->to_upstream_offset < state->to_upstream_length) {
@@ -355,33 +439,74 @@ relay_pump(struct proxy_state *state)
         }
       } else {
         metrics->relay_write_pauses++;
+        if (downstream->tls != NULL)
+          metrics->tls_up_send_again++;
       }
     }
-    if (state->to_downstream_offset < state->to_downstream_length) {
-      sent = send(downstream->fd,
-          state->to_downstream + state->to_downstream_offset,
-          state->to_downstream_length - state->to_downstream_offset,
-          MSG_NOSIGNAL);
-      if (sent > 0) {
-        state->to_downstream_offset += (size_t)sent;
-        progress = 1;
-        if (state->to_downstream_offset == state->to_downstream_length) {
-          state->to_downstream_offset = 0;
-          state->to_downstream_length = 0;
-        }
-      } else {
-        assert(sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
-        metrics->relay_write_pauses++;
+    if (TAILQ_EMPTY(&downstream->send_queue) &&
+        state->to_downstream_length != 0) {
+      struct netbuf *buffer;
+      size_t queued;
+      unsigned count;
+
+      net_send_queue(downstream, state->to_downstream,
+          state->to_downstream_length);
+      state->to_downstream_length = 0;
+      queued = 0;
+      count = 0;
+      TAILQ_FOREACH(buffer, &downstream->send_queue, list) {
+        queued += buffer->b_len - buffer->s_off;
+        count++;
       }
+      if (queued > metrics->relay_max_kore_queued)
+        metrics->relay_max_kore_queued = queued;
+      if (count > metrics->relay_max_kore_buffers)
+        metrics->relay_max_kore_buffers = count;
+      progress = 1;
+    }
+    if (!TAILQ_EMPTY(&downstream->send_queue)) {
+      downstream->evt.flags |= KORE_EVENT_WRITE;
+      assert(net_send_flush(downstream) == KORE_RESULT_OK);
+      if (!TAILQ_EMPTY(&downstream->send_queue)) {
+        if (downstream->tls != NULL)
+          metrics->downstream_tls_write_pauses++;
+        metrics->relay_write_pauses++;
+        metrics->relay_read_pauses++;
+        goto schedule;
+      }
+      progress = 1;
     }
     if (state->to_upstream_length == 0 && !state->downstream_eof) {
-      sent = recv(downstream->fd, state->to_upstream,
-          sizeof(state->to_upstream), 0);
+      if (downstream->tls != NULL) {
+        ERR_clear_error();
+        sent = SSL_read(downstream->tls, state->to_upstream,
+            (int)sizeof(state->to_upstream));
+      } else {
+        sent = recv(downstream->fd, state->to_upstream,
+            sizeof(state->to_upstream), 0);
+      }
       if (sent > 0) {
+        state->down_read_wait = 0;
         state->to_upstream_length = (size_t)sent;
         progress = 1;
         if ((size_t)sent > metrics->relay_max_queued)
           metrics->relay_max_queued = (size_t)sent;
+      } else if (downstream->tls != NULL) {
+        ssl_error = SSL_get_error(downstream->tls, (int)sent);
+        if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+          state->downstream_eof = 1;
+          state->down_read_wait = 0;
+          progress = 1;
+        } else {
+          assert(ssl_error == SSL_ERROR_WANT_READ ||
+              ssl_error == SSL_ERROR_WANT_WRITE);
+          state->down_read_wait = ssl_error == SSL_ERROR_WANT_READ
+              ? EPOLLIN : EPOLLOUT;
+          if (ssl_error == SSL_ERROR_WANT_WRITE)
+            metrics->downstream_tls_read_want_write++;
+          else
+            metrics->tls_down_read_want_read++;
+        }
       } else if (sent == 0) {
         state->downstream_eof = 1;
         progress = 1;
@@ -393,11 +518,13 @@ relay_pump(struct proxy_state *state)
     }
     if (state->downstream_eof && state->to_upstream_length == 0 &&
         !state->upstream_write_closed) {
-      assert(shutdown((int)state->upstream_fd, SHUT_WR) == 0);
+      if (!state->relay_tls)
+        assert(shutdown((int)state->upstream_fd, SHUT_WR) == 0);
       state->upstream_write_closed = 1;
       progress = 1;
     }
-    if (state->to_downstream_length == 0 && !state->upstream_eof) {
+    if (state->to_downstream_length == 0 &&
+        TAILQ_EMPTY(&downstream->send_queue) && !state->upstream_eof) {
       code = curl_easy_recv(state->easy, state->to_downstream,
           sizeof(state->to_downstream), &amount);
       if (code != CURLE_OK && code != CURLE_AGAIN)
@@ -413,6 +540,8 @@ relay_pump(struct proxy_state *state)
       } else if (code == CURLE_OK) {
         state->upstream_eof = 1;
         progress = 1;
+      } else if (downstream->tls != NULL) {
+        metrics->tls_up_recv_again++;
       }
     } else if (state->to_downstream_length != 0) {
       metrics->relay_read_pauses++;
@@ -420,29 +549,81 @@ relay_pump(struct proxy_state *state)
     if (!progress)
       break;
   }
-  if (state->upstream_eof && state->to_downstream_length == 0) {
+  if (state->upstream_eof && state->to_downstream_length == 0 &&
+      TAILQ_EMPTY(&downstream->send_queue))
+    state->relay_closing = 1;
+  if (state->relay_closing) {
+finish:
+    if (downstream->tls != NULL) {
+      int result;
+
+      ERR_clear_error();
+      result = SSL_shutdown(downstream->tls);
+      if (result < 0) {
+        ssl_error = SSL_get_error(downstream->tls, result);
+        assert(ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE);
+        state->close_wait = ssl_error == SSL_ERROR_WANT_READ
+            ? EPOLLIN : EPOLLOUT;
+        if (state->tunnel_watched) {
+          kore_platform_disable_read((int)state->upstream_fd);
+          state->tunnel_watched = 0;
+        }
+        down_events = state->close_wait | EPOLLET;
+        if (!state->downstream_watched ||
+            state->downstream_interest != down_events)
+          kore_platform_event_schedule(downstream->fd,
+              down_events, 0, downstream);
+        state->downstream_watched = 1;
+        state->downstream_interest = down_events;
+        return;
+      }
+      metrics->downstream_tls_close_notify++;
+    }
     state->relay_finished = 1;
     metrics->relay_done++;
     kore_connection_disconnect(downstream);
     return;
   }
+  if (step == 64 && state->relay_continue_timer == NULL)
+    state->relay_continue_timer = kore_timer_add(relay_continue, 0,
+        state, KORE_TIMER_ONESHOT);
+schedule:
   down_events = 0;
   up_events = 0;
-  if (state->to_downstream_length != 0)
+  if (!TAILQ_EMPTY(&downstream->send_queue)) {
+    if (downstream->tls != NULL &&
+        SSL_want(downstream->tls) == SSL_READING) {
+      down_events |= EPOLLIN;
+      metrics->downstream_tls_write_want_read++;
+    } else {
+      down_events |= EPOLLOUT;
+      metrics->tls_down_write_want_write++;
+    }
+  } else if (state->to_downstream_length != 0) {
     down_events |= EPOLLOUT;
+  }
   if (state->to_upstream_length == 0 && !state->downstream_eof)
-    down_events |= EPOLLIN | EPOLLRDHUP;
+    down_events |= state->down_read_wait != 0
+        ? state->down_read_wait : (int)(EPOLLIN | EPOLLRDHUP);
   if (state->to_upstream_length != 0)
     up_events |= EPOLLOUT;
-  if (state->to_downstream_length == 0 && !state->upstream_eof)
+  if (state->to_downstream_length == 0 &&
+      TAILQ_EMPTY(&downstream->send_queue) && !state->upstream_eof)
     up_events |= EPOLLIN;
   assert(down_events != 0 || up_events != 0);
   if (down_events != 0) {
-    kore_platform_event_schedule(downstream->fd, down_events, 0, downstream);
+    down_events |= EPOLLET;
+    if (!state->downstream_watched ||
+        state->downstream_interest != down_events)
+      kore_platform_event_schedule(downstream->fd,
+          down_events, 0, downstream);
     state->downstream_watched = 1;
+    state->downstream_interest = down_events;
   } else if (state->downstream_watched) {
     kore_platform_disable_read(downstream->fd);
     state->downstream_watched = 0;
+    state->downstream_interest = 0;
   }
   if (up_events != 0) {
     kore_platform_event_schedule((int)state->upstream_fd, up_events, 0,
@@ -466,6 +647,8 @@ tunnel_event(void *arg, int error)
       offsetof(struct proxy_state, tunnel_event));
   state->tunnel_event.flags = 0;
   if (state->relay_mode) {
+    if (state->downstream->tls != NULL)
+      metrics->tls_tunnel_events++;
     relay_pump(state);
     return;
   }
@@ -502,6 +685,7 @@ static void
 drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
 {
   CURLMsg *msg;
+  long verify_result;
   int pending;
 
   assert(curl_multi_socket_action(state->multi, fd,
@@ -514,6 +698,13 @@ drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
   assert(curl_easy_getinfo(state->easy, CURLINFO_ACTIVESOCKET,
       &state->upstream_fd) == CURLE_OK);
   assert(state->upstream_fd != CURL_SOCKET_BAD);
+  if (state->relay_tls) {
+    verify_result = -1;
+    assert(curl_easy_getinfo(state->easy, CURLINFO_SSL_VERIFYRESULT,
+        &verify_result) == CURLE_OK);
+    assert(verify_result == 0);
+    metrics->tls_connect_done++;
+  }
   assert(state->curl_watch_count == 0);
   metrics->connect_done++;
   state->phase = 1;
@@ -552,6 +743,10 @@ proxy_cancel(struct proxy_state *state)
   if (state->deadline_timer != NULL) {
     kore_timer_remove(state->deadline_timer);
     state->deadline_timer = NULL;
+  }
+  if (state->relay_continue_timer != NULL) {
+    kore_timer_remove(state->relay_continue_timer);
+    state->relay_continue_timer = NULL;
   }
   if (state->tunnel_watched) {
     kore_platform_disable_read((int)state->upstream_fd);
@@ -593,7 +788,8 @@ worker_cancel(void)
     state = (struct proxy_state *)connection->hdlr_extra;
     if (state != NULL && state->multi != NULL) {
       metrics->active_watchers_at_teardown += state->curl_watch_count;
-      if (state->timer != NULL || state->deadline_timer != NULL)
+      if (state->timer != NULL || state->deadline_timer != NULL ||
+          state->relay_continue_timer != NULL)
         metrics->timers_at_teardown++;
       proxy_cancel(state);
       metrics->worker_cancelled++;
@@ -614,6 +810,8 @@ downstream_event(void *arg, int error)
   state = (struct proxy_state *)connection->hdlr_extra;
   connection->evt.flags = 0;
   if (state->relay_mode) {
+    if (connection->tls != NULL)
+      metrics->tls_downstream_events++;
     if (state->phase != 0)
       relay_pump(state);
     if (connection->evt.handle == downstream_event)
@@ -647,11 +845,15 @@ takeover(struct http_request *req, const void *data, size_t len)
   (void)data;
   if (strcmp(req->path, "/curl") != 0 &&
       strcmp(req->path, "/relay") != 0 &&
+      strcmp(req->path, "/relay-tls") != 0 &&
       strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
-  assert(len == 0 || strcmp(req->path, "/relay") == 0);
+  assert(len == 0 || strcmp(req->path, "/relay") == 0 ||
+      strcmp(req->path, "/relay-tls") == 0);
   state = kore_calloc(1, sizeof(*state));
-  state->relay_mode = strcmp(req->path, "/relay") == 0;
+  state->relay_mode = strcmp(req->path, "/relay") == 0 ||
+      strcmp(req->path, "/relay-tls") == 0;
+  state->relay_tls = strcmp(req->path, "/relay-tls") == 0;
   if (state->relay_mode) {
     int sndbuf;
 
@@ -688,20 +890,38 @@ takeover(struct http_request *req, const void *data, size_t len)
       timer_change) == CURLM_OK);
   assert(curl_multi_setopt(state->multi, CURLMOPT_TIMERDATA,
       state) == CURLM_OK);
-  assert(snprintf(url, sizeof(url), "%s://127.0.0.1:%u/",
-      strcmp(req->path, "/pending") == 0 ? "https" : "http",
+  assert(snprintf(url, sizeof(url), "%s://%s:%u/",
+      strcmp(req->path, "/pending") == 0 || state->relay_tls
+          ? "https" : "http",
+      state->relay_tls ? "localhost" : "127.0.0.1",
       (unsigned)(strcmp(req->path, "/pending") == 0
-          ? stalled_port : (state->relay_mode ? relay_port : upstream_port)))
+          ? stalled_port : (state->relay_tls ? relay_tls_port :
+              (state->relay_mode ? relay_port : upstream_port))))
       > 0);
   assert(curl_easy_setopt(state->easy, CURLOPT_URL, url) == CURLE_OK);
   assert(curl_easy_setopt(state->easy, CURLOPT_CONNECT_ONLY, 1L) == CURLE_OK);
   assert(curl_easy_setopt(state->easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
+  if (state->relay_tls) {
+    assert(curl_easy_setopt(state->easy, CURLOPT_CAINFO,
+        tls_cert_path) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_SSL_VERIFYPEER,
+        1L) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_SSL_VERIFYHOST,
+        2L) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_SSL_ENABLE_ALPN,
+        0L) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_HTTP_VERSION,
+        CURL_HTTP_VERSION_1_1) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_NOPROXY,
+        "*") == CURLE_OK);
+  }
   assert(curl_multi_add_handle(state->multi, state->easy) == CURLM_OK);
   state->running = 1;
   drive_curl(state, CURL_SOCKET_TIMEOUT, 0);
   if (state->relay_mode && state->phase == 0) {
     kore_platform_disable_read(state->downstream->fd);
     state->downstream_watched = 0;
+    state->downstream_interest = 0;
   }
   if (strcmp(req->path, "/pending") == 0) {
     state->deadline_timer = kore_timer_add(deadline_expired, 10000,
@@ -722,15 +942,14 @@ health(vectis_app *app, vectis_request *request, vectis_response *response,
 }
 
 static void
-check_relay(unsigned short port)
+check_relay(unsigned short port, const char *path)
 {
-  static const char request[] =
-      "GET /relay HTTP/1.1\r\nHost: localhost\r\n\r\n";
   struct sockaddr_in addr;
   struct timeval timeout;
   struct relay_sender sender;
   pthread_t thread;
   unsigned char bytes[4096];
+  char request[128];
   size_t total;
   size_t index;
   ssize_t amount;
@@ -749,8 +968,10 @@ check_relay(unsigned short port)
       &timeout, sizeof(timeout)) == 0);
   assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
       &timeout, sizeof(timeout)) == 0);
-  assert(send(fd, request, sizeof(request) - 1, MSG_NOSIGNAL) ==
-      (ssize_t)(sizeof(request) - 1));
+  amount = snprintf(request, sizeof(request),
+      "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n", path);
+  assert(amount > 0 && (size_t)amount < sizeof(request));
+  assert(send(fd, request, (size_t)amount, MSG_NOSIGNAL) == amount);
   sender.fd = fd;
   assert(pthread_create(&thread, NULL, relay_send_main, &sender) == 0);
   total = 0;
@@ -779,6 +1000,132 @@ check_relay(unsigned short port)
   assert(close(fd) == 0);
 }
 
+static void
+check_tls_relay(unsigned short port)
+{
+  static const char request[] =
+      "GET /relay-tls HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct sockaddr_in addr;
+  struct pollfd watch;
+  struct timeval timeout;
+  SSL_CTX *ctx;
+  SSL *ssl;
+  unsigned char input[4096];
+  unsigned char output[4096];
+  size_t sent;
+  size_t received;
+  size_t output_offset;
+  size_t index;
+  int fd;
+  int flags;
+  int amount;
+  int ssl_error;
+  int events;
+  int progress;
+  int eof;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  assert(SSL_CTX_load_verify_locations(ctx, tls_cert_path, NULL) == 1);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_set1_host(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_get_verify_result(ssl) == X509_V_OK);
+  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+      (int)(sizeof(request) - 1));
+  flags = fcntl(fd, F_GETFL, 0);
+  assert(flags >= 0);
+  assert(fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+
+  sent = 0;
+  received = 0;
+  output_offset = sizeof(output);
+  eof = 0;
+  while (!eof) {
+    progress = 0;
+    events = 0;
+    if (sent < RELAY_PAYLOAD_SIZE) {
+      if (output_offset == sizeof(output)) {
+        for (index = 0; index < sizeof(output); index++)
+          output[index] = relay_byte(sent + index);
+        output_offset = 0;
+      }
+      ERR_clear_error();
+      amount = SSL_write(ssl, output + output_offset,
+          (int)(sizeof(output) - output_offset));
+      if (amount > 0) {
+        output_offset += (size_t)amount;
+        sent += (size_t)amount;
+        progress = 1;
+      } else {
+        ssl_error = SSL_get_error(ssl, amount);
+        assert(ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE);
+        events |= ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+        if (ssl_error == SSL_ERROR_WANT_WRITE)
+          goto client_wait;
+      }
+    }
+    ERR_clear_error();
+    amount = SSL_read(ssl, input, sizeof(input));
+    if (amount > 0) {
+      assert(received + (size_t)amount <=
+          sizeof(relay_response) - 1 + RELAY_PAYLOAD_SIZE);
+      for (index = 0; index < (size_t)amount; index++) {
+        size_t position;
+
+        position = received + index;
+        if (position < sizeof(relay_response) - 1)
+          assert(input[index] ==
+              (unsigned char)relay_response[position]);
+        else
+          assert(input[index] ==
+              relay_byte(position - (sizeof(relay_response) - 1)));
+      }
+      received += (size_t)amount;
+      progress = 1;
+      usleep(1000u);
+    } else {
+      ssl_error = SSL_get_error(ssl, amount);
+      if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+        eof = 1;
+      } else {
+        assert(ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE);
+        events |= ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+      }
+    }
+client_wait:
+    if (!progress && !eof) {
+      assert(events != 0);
+      watch.fd = fd;
+      watch.events = (short)events;
+      assert(poll(&watch, 1, 10000) > 0);
+    }
+  }
+  assert(sent == RELAY_PAYLOAD_SIZE);
+  assert(received == sizeof(relay_response) - 1 + RELAY_PAYLOAD_SIZE);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+}
+
 int
 main(void)
 {
@@ -790,10 +1137,12 @@ main(void)
       "GET /pending HTTP/1.1\r\nHost: localhost\r\n\r\n";
   struct echo_server upstream;
   struct echo_server relay;
+  struct echo_server relay_tls;
   struct echo_server stalled;
   struct sockaddr_in addr;
   struct timeval timeout;
   vectis_app_config config;
+  vectis_cert_bundle_config certs;
   vectis_route_config route;
   vectis_error error;
   vectis_app *app;
@@ -811,10 +1160,31 @@ main(void)
   assert(curl_global_init(CURL_GLOBAL_ALL) == CURLE_OK);
   prepare_echo(&upstream);
   prepare_echo(&relay);
+  prepare_echo(&relay_tls);
   prepare_echo(&stalled);
   upstream_port = upstream.port;
   relay_port = relay.port;
+  relay_tls_port = relay_tls.port;
   stalled_port = stalled.port;
+  assert(snprintf(tls_cert_path, sizeof(tls_cert_path),
+      "vectis-curl-loop-%ld-cert.pem", (long)getpid()) > 0);
+  assert(snprintf(tls_key_path, sizeof(tls_key_path),
+      "vectis-curl-loop-%ld-key.pem", (long)getpid()) > 0);
+  vectis_cert_bundle_config_init(&certs);
+  certs.subject.common_name = "localhost";
+  certs.dns_names = "localhost";
+  certs.output_cert_path = tls_cert_path;
+  certs.output_key_path = tls_key_path;
+  certs.key_bits = 2048u;
+  certs.valid_days = 1L;
+  assert(vectis_cert_generate_bundle(&certs, &error) == VECTIS_OK);
+  relay_tls.tls_ctx = SSL_CTX_new(TLS_server_method());
+  assert(relay_tls.tls_ctx != NULL);
+  assert(SSL_CTX_use_certificate_file(relay_tls.tls_ctx,
+      tls_cert_path, SSL_FILETYPE_PEM) == 1);
+  assert(SSL_CTX_use_PrivateKey_file(relay_tls.tls_ctx,
+      tls_key_path, SSL_FILETYPE_PEM) == 1);
+  assert(SSL_CTX_check_private_key(relay_tls.tls_ctx) == 1);
   port = available_port();
   vectis_kore_set_prebody_probe(takeover);
   vectis_kore_set_worker_teardown_probe(worker_cancel);
@@ -866,9 +1236,16 @@ main(void)
   assert(close(upstream.listener) == 0);
 
   assert(pthread_create(&relay.thread, NULL, relay_echo_main, &relay) == 0);
-  check_relay(port);
+  check_relay(port, "/relay");
   assert(pthread_join(relay.thread, NULL) == 0);
   assert(close(relay.listener) == 0);
+
+  assert(pthread_create(&relay_tls.thread, NULL,
+      relay_tls_main, &relay_tls) == 0);
+  check_relay(port, "/relay-tls");
+  assert(pthread_join(relay_tls.thread, NULL) == 0);
+  assert(close(relay_tls.listener) == 0);
+  SSL_CTX_free(relay_tls.tls_ctx);
 
   assert(pthread_create(&stalled.thread, NULL, stall_main, &stalled) == 0);
   fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -885,23 +1262,77 @@ main(void)
   assert(vectis_stop(app, &error) == VECTIS_OK);
   assert(close(fd) == 0);
   app->close(app);
+
+  prepare_echo(&relay_tls);
+  relay_tls_port = relay_tls.port;
+  relay_tls.tls_ctx = SSL_CTX_new(TLS_server_method());
+  assert(relay_tls.tls_ctx != NULL);
+  assert(SSL_CTX_use_certificate_file(relay_tls.tls_ctx,
+      tls_cert_path, SSL_FILETYPE_PEM) == 1);
+  assert(SSL_CTX_use_PrivateKey_file(relay_tls.tls_ctx,
+      tls_key_path, SSL_FILETYPE_PEM) == 1);
+  port = available_port();
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_MANUAL;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.tls.domain = "localhost";
+  config.tls.certificate_path = tls_cert_path;
+  config.tls.private_key_path = tls_key_path;
+  config.tls.ca_bundle_path = tls_cert_path;
+  config.server.worker_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  if (app->start(app, &error) != VECTIS_OK) {
+    fprintf(stderr, "TLS curl loop startup: %s\n", error.message);
+    assert(0);
+  }
+  assert(pthread_create(&relay_tls.thread, NULL,
+      relay_tls_main, &relay_tls) == 0);
+  check_tls_relay(port);
+  assert(pthread_join(relay_tls.thread, NULL) == 0);
+  assert(close(relay_tls.listener) == 0);
+  assert(vectis_stop(app, &error) == VECTIS_OK);
+  app->close(app);
+  SSL_CTX_free(relay_tls.tls_ctx);
   vectis_kore_set_prebody_probe(NULL);
   vectis_kore_set_worker_teardown_probe(NULL);
   assert(pthread_join(stalled.thread, NULL) == 0);
   assert(close(stalled.listener) == 0);
   curl_global_cleanup();
+  assert(remove(tls_cert_path) == 0);
+  assert(remove(tls_key_path) == 0);
   fprintf(stderr, "relay metrics: done=%u max=%zu read_pauses=%u "
       "write_pauses=%u pump_calls=%u disconnects=%u\n", metrics->relay_done,
       metrics->relay_max_queued, metrics->relay_read_pauses,
       metrics->relay_write_pauses, metrics->relay_pump_calls,
       metrics->disconnects);
-  assert(metrics->connect_done == 2);
+  fprintf(stderr, "TLS loop: pump=%u tunnel_events=%u downstream_events=%u "
+      "up_send_again=%u up_recv_again=%u down_write_read=%u "
+      "down_write_write=%u down_read_read=%u down_read_write=%u\n",
+      metrics->tls_pump_calls, metrics->tls_tunnel_events,
+      metrics->tls_downstream_events, metrics->tls_up_send_again,
+      metrics->tls_up_recv_again,
+      metrics->downstream_tls_write_want_read,
+      metrics->tls_down_write_want_write,
+      metrics->tls_down_read_want_read,
+      metrics->downstream_tls_read_want_write);
+  assert(metrics->connect_done == 4);
+  assert(metrics->tls_connect_done == 2);
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 3);
-  assert(metrics->relay_done == 1);
+  assert(metrics->disconnects == 5);
+  assert(metrics->relay_done == 3);
+  assert(metrics->downstream_tls_close_notify == 1);
+  assert(metrics->downstream_tls_write_pauses > 0);
   assert(metrics->relay_max_queued <= RELAY_BUFFER_SIZE);
+  assert(metrics->relay_max_kore_queued <= RELAY_BUFFER_SIZE);
+  assert(metrics->relay_max_kore_buffers == 1);
+  assert(metrics->relay_pump_calls < 5000);
+  assert(metrics->tls_pump_calls < 2000);
   assert(metrics->relay_read_pauses > 0);
   assert(metrics->worker_cancelled == 1);
   assert(metrics->active_watchers_at_teardown > 0);

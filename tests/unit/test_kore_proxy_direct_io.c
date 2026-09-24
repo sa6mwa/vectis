@@ -26,6 +26,8 @@
 #define PRIOR_PAYLOAD_SIZE (128 * 1024)
 
 static unsigned char prior_payload[PRIOR_PAYLOAD_SIZE];
+static const char queued_http_response[] =
+    "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\npong";
 
 struct direct_metrics {
   unsigned events;
@@ -42,8 +44,10 @@ struct direct_metrics {
   unsigned worker_teardown_active;
   unsigned worker_teardown_calls;
   unsigned stream_takeover_seen;
+  unsigned queued_stream_takeover_seen;
   unsigned stream_probe_active;
   unsigned http_restored;
+  unsigned http_queue_chunks;
   size_t max_queued;
 };
 
@@ -57,6 +61,7 @@ struct direct_state {
   int read_wait;
   int write_wait;
   int http_mode;
+  int http_queued;
   size_t pipeline_len;
   unsigned char pipeline[256];
 };
@@ -105,7 +110,8 @@ direct_interest(struct connection *c, struct direct_state *state)
   int ssl_error;
 
   events = 0;
-  if (state->http_mode && TAILQ_EMPTY(&c->send_queue) &&
+  if (state->http_mode && state->http_queued &&
+      TAILQ_EMPTY(&c->send_queue) &&
       state->length == state->offset) {
     direct_finish_http(c, state);
     return;
@@ -113,6 +119,8 @@ direct_interest(struct connection *c, struct direct_state *state)
   if (!TAILQ_EMPTY(&c->send_queue)) {
     events = c->tls != NULL && SSL_want(c->tls) == SSL_READING
         ? EPOLLIN : EPOLLOUT;
+  } else if (state->http_mode && !state->http_queued) {
+    events = EPOLLOUT;
   } else if (state->length > state->offset) {
     if (state->write_wait == KORE_EVENT_READ)
       events |= EPOLLIN;
@@ -195,7 +203,18 @@ direct_pump(struct connection *c)
       direct_interest(c, state);
       return;
     }
-    metrics->prior_queue_drained++;
+    if (!state->http_queued)
+      metrics->prior_queue_drained++;
+  }
+  if (state->http_mode) {
+    if (!state->http_queued) {
+      net_send_queue(c, queued_http_response,
+          sizeof(queued_http_response) - 1);
+      state->http_queued = 1;
+      metrics->http_queue_chunks++;
+    }
+    direct_interest(c, state);
+    return;
   }
   for (step = 0; step < 64; step++) {
     if (state->length > state->offset) {
@@ -329,8 +348,6 @@ direct_prebody(struct http_request *req, const void *data, size_t len)
   static const char header[] =
       "HTTP/1.1 101 Switching Protocols\r\n"
       "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
-  static const char http_header[] =
-      "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\npong";
   struct direct_state *state;
   struct connection *c;
   int sndbuf;
@@ -343,18 +360,21 @@ direct_prebody(struct http_request *req, const void *data, size_t len)
   c->http_timeout = 0;
   if (!TAILQ_EMPTY(&c->send_queue))
     metrics->prior_queue_seen++;
-  if (metrics->stream_probe_active)
-    metrics->stream_takeover_seen++;
+  if (metrics->stream_probe_active) {
+    if (strcmp(req->path, "/direct-http") == 0)
+      metrics->queued_stream_takeover_seen++;
+    else
+      metrics->stream_takeover_seen++;
+  }
   sndbuf = 4096;
   assert(setsockopt(c->fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0);
   state = kore_calloc(1, sizeof(*state));
   state->req = req;
   state->http_mode = strcmp(req->path, "/direct-http") == 0;
   if (state->http_mode) {
-    memcpy(state->output, http_header, sizeof(http_header) - 1);
-    state->length = sizeof(http_header) - 1;
     assert(len <= sizeof(state->pipeline));
-    memcpy(state->pipeline, data, len);
+    if (len > 0)
+      memcpy(state->pipeline, data, len);
     state->pipeline_len = len;
   } else {
     memcpy(state->output, header, sizeof(header) - 1);
@@ -614,6 +634,56 @@ check_http_restore(unsigned short port)
 }
 
 static void
+check_stream_then_queued_http(unsigned short port)
+{
+  static const char request[] =
+      "GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n"
+      "GET /direct-http HTTP/1.1\r\nHost: localhost\r\n\r\n"
+      "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct timeval timeout;
+  unsigned char buffer[DIRECT_BUFFER_SIZE];
+  char line[256];
+  size_t received;
+  size_t chunk;
+  int fd;
+
+  fd = connect_local(port);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+      sizeof(timeout)) == 0);
+  assert(send(fd, request, sizeof(request) - 1, MSG_NOSIGNAL) ==
+      (ssize_t)(sizeof(request) - 1));
+  read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  for (;;) {
+    read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+  }
+  received = 0;
+  for (;;) {
+    read_line(fd, line, sizeof(line));
+    chunk = (size_t)strtoul(line, NULL, 16);
+    if (chunk == 0)
+      break;
+    assert(chunk <= sizeof(buffer));
+    assert(chunk <= sizeof(prior_payload) - received);
+    read_exact(fd, buffer, chunk);
+    assert(memcmp(buffer, prior_payload + received, chunk) == 0);
+    received += chunk;
+    read_exact(fd, line, 2);
+    assert(memcmp(line, "\r\n", 2) == 0);
+  }
+  assert(received == sizeof(prior_payload));
+  read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "\r\n") == 0);
+  check_http_restore_response(fd, 4);
+  check_http_restore_response(fd, PRIOR_PAYLOAD_SIZE);
+  assert(close(fd) == 0);
+}
+
+static void
 check_tls_relay(unsigned short port, const unsigned char *payload)
 {
   static const char request[] =
@@ -805,6 +875,69 @@ check_tls_http_restore(unsigned short port)
   assert(close(fd) == 0);
 }
 
+static void
+check_tls_stream_then_queued_http(unsigned short port)
+{
+  static const char request[] =
+      "GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n"
+      "GET /direct-http HTTP/1.1\r\nHost: localhost\r\n\r\n"
+      "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct timeval timeout;
+  unsigned char buffer[DIRECT_BUFFER_SIZE];
+  char line[256];
+  SSL_CTX *ctx;
+  SSL *ssl;
+  size_t received;
+  size_t chunk;
+  int fd;
+
+  fd = connect_local(port);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+      sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+      (int)(sizeof(request) - 1));
+  tls_read_line(ssl, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  for (;;) {
+    tls_read_line(ssl, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+  }
+  received = 0;
+  for (;;) {
+    tls_read_line(ssl, line, sizeof(line));
+    chunk = (size_t)strtoul(line, NULL, 16);
+    if (chunk == 0)
+      break;
+    assert(chunk <= sizeof(buffer));
+    assert(chunk <= sizeof(prior_payload) - received);
+    tls_read_exact(ssl, buffer, chunk);
+    assert(memcmp(buffer, prior_payload + received, chunk) == 0);
+    received += chunk;
+    tls_read_exact(ssl, line, 2);
+    assert(memcmp(line, "\r\n", 2) == 0);
+  }
+  assert(received == sizeof(prior_payload));
+  tls_read_line(ssl, line, sizeof(line));
+  assert(strcmp(line, "\r\n") == 0);
+  tls_check_restore_response(ssl, 4);
+  tls_check_restore_response(ssl, PRIOR_PAYLOAD_SIZE);
+  assert(SSL_shutdown(ssl) >= 0);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+}
+
 int
 main(void)
 {
@@ -888,7 +1021,12 @@ main(void)
   assert(strstr(response_header, "content-length: 131072") != NULL);
   prior_read = 0;
   while (prior_read < PRIOR_PAYLOAD_SIZE) {
-    got = recv(fd, recvbuf, sizeof(recvbuf), 0);
+    size_t remaining;
+
+    remaining = PRIOR_PAYLOAD_SIZE - prior_read;
+    if (remaining > sizeof(recvbuf))
+      remaining = sizeof(recvbuf);
+    got = recv(fd, recvbuf, remaining, 0);
     assert(got > 0);
     assert((size_t)got <= PRIOR_PAYLOAD_SIZE - prior_read);
     assert(memcmp(recvbuf, prior_payload + prior_read, (size_t)got) == 0);
@@ -925,6 +1063,9 @@ main(void)
   check_stream_then_direct(port);
   metrics->stream_probe_active = 0;
   check_http_restore(port);
+  metrics->stream_probe_active = 1;
+  check_stream_then_queued_http(port);
+  metrics->stream_probe_active = 0;
 
   fd = connect_local(port);
   assert(send(fd, direct_request, sizeof(direct_request) - 1, 0) ==
@@ -961,10 +1102,12 @@ main(void)
   assert(metrics->worker_teardown_calls == 1);
   assert(metrics->worker_teardown_active == 1);
   assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
-  assert(metrics->prior_queue_seen == 2);
+  assert(metrics->prior_queue_seen == 3);
   assert(metrics->prior_queue_drained >= 1);
   assert(metrics->stream_takeover_seen == 1);
-  assert(metrics->http_restored == 1);
+  assert(metrics->queued_stream_takeover_seen == 1);
+  assert(metrics->http_restored == 2);
+  assert(metrics->http_queue_chunks == 2);
 
   memset(metrics, 0, sizeof(*metrics));
   assert(snprintf(cert_path, sizeof(cert_path),
@@ -993,9 +1136,14 @@ main(void)
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/stream", stream_response, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
   check_tls_relay(port, payload);
   check_tls_http_restore(port);
+  metrics->stream_probe_active = 1;
+  check_tls_stream_then_queued_http(port);
+  metrics->stream_probe_active = 0;
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   vectis_kore_set_prebody_probe(NULL);
@@ -1018,9 +1166,11 @@ main(void)
   assert(metrics->read_eofs == 1);
   assert(metrics->disconnects == 1);
   assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
-  assert(metrics->prior_queue_seen == 1);
-  assert(metrics->prior_queue_drained == 1);
-  assert(metrics->http_restored == 1);
+  assert(metrics->prior_queue_seen == 2);
+  assert(metrics->prior_queue_drained >= 1);
+  assert(metrics->queued_stream_takeover_seen == 1);
+  assert(metrics->http_restored == 2);
+  assert(metrics->http_queue_chunks == 2);
   assert(munmap(metrics, sizeof(*metrics)) == 0);
   free(payload);
   return 0;

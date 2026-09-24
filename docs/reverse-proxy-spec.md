@@ -347,19 +347,28 @@ transfer. Non-proxy framing and body policy remain unchanged except for the
 shared byte-boundary corrections above.
 
 After takeover, install a proxy-specific connection event handler. The proxy
-owns bounded downstream input and output queues and performs nonblocking I/O
-on Kore's accepted fd or `SSL *`. Kore retains connection allocation, TLS
-handshake, event-loop, and teardown ownership. Drain any earlier Kore send
-queue before emitting proxy response bytes; do not enqueue proxy bytes behind
-`net_send_stream()`, whose completion callback can outlive `hdlr_extra` during
-connection removal. Gate application reads when the upload queue is full and
-explicitly drain on resume so an edge-triggered event is not lost. Track
-read/write readiness together: Linux's `kore_platform_disable_read()` removes
-the entire epoll registration and is appropriate only when neither direction
-needs a wakeup. Re-register when a bounded queue becomes writable again.
-Handle `SSL_read`/`SSL_write` `WANT_READ` and `WANT_WRITE` per operation without
-changing ordinary Kore TLS scheduling. Prove bounded progress and no readiness
-spin on Linux and BSD. The direct-I/O choice remains subject to the
+reads bounded request chunks directly from Kore's accepted fd or `SSL *`, but
+uses Kore's existing send queue for downstream output. It copies at most one
+bounded response chunk into `net_send_queue()` and waits for that netbuf to
+drain before reading another upstream chunk. No proxy output uses
+`net_send_stream()` or its completion callback. Kore retains connection
+allocation, TLS handshake, output encryption, event-loop, and teardown
+ownership. Drain any earlier Kore send queue before emitting proxy response
+bytes. The pre-body hook can run while an earlier stream netbuf's completion
+callback is still on the stack. Install the proxy state there, then defer the
+first `net_send_flush()` and any proxy output enqueue until the next event;
+otherwise a reentrant flush can process the predecessor netbuf twice. Gate
+application reads when the upload queue is full and explicitly
+drain on resume so an edge-triggered event is not lost. Track read/write
+readiness together: Linux's `kore_platform_disable_read()` removes the entire
+epoll registration and is appropriate only when neither direction needs a
+wakeup. Re-register when a bounded queue becomes writable again. Handle
+`SSL_read` `WANT_READ` and `WANT_WRITE` directly; for queued output, call
+`net_send_flush()` and use `SSL_want()` to arm the required retry direction.
+When closing a downstream TLS connection, send `close_notify` after the final
+queue drains; hand a reusable connection back to Kore without shutting TLS.
+Prove bounded progress and no readiness spin on Linux and BSD. This output
+choice remains subject to the
 [feasibility audit](reverse-proxy-feasibility-audit.md).
 
 Sleep the taken-over request so Kore's normal complete-body dispatch cannot
@@ -419,20 +428,23 @@ default short curl transfer timeout.
 ### Downstream response writer
 
 Use a proxy-owned asynchronous response controller attached to the Kore
-connection. It writes from a bounded queue directly to the accepted fd or
-`SSL *` after any preceding Kore send queue drains. An empty upstream queue
-means wait for a producer wakeup; it is not EOF. Emit proxy response headers
-explicitly, including interim and WebSocket `101` headers. The ordinary
-`http_response()` helper
-injects `Content-Length` and connection fields and may synthesize a pretty
-error body for an upstream `4xx` or `5xx`, so it cannot preserve the upstream
+connection. It copies one bounded chunk at a time into Kore's send queue
+after any preceding response drains, then calls `net_send_flush()` on
+readiness. The source pauses while that single chunk is pending and resumes
+when the queue empties. The application scratch buffer and Kore's copied
+netbuf are both counted in the per-exchange memory allowance. An empty
+upstream queue means wait for a producer wakeup; it is not EOF. Emit proxy
+response headers explicitly, including interim and WebSocket `101` headers.
+The ordinary `http_response()` helper injects `Content-Length` and connection
+fields and may synthesize a pretty error body for an upstream `4xx` or `5xx`,
+so it cannot preserve the upstream
 response contract reliably. Explicit emission must preserve Kore's HSTS,
 response count, access logging, and close behavior. The controller handles
 chunk framing, trailers, producer wakeup, and cancellation without requiring
 a new generic Kore response API. A response may
 begin before the request body ends. Once final headers are committed, failures
 abort the downstream stream rather than attempting a second response. Write
-HTTP bytes through the proxy-owned bounded queue. The response hook
+HTTP bytes through the bounded Kore queue. The response hook
 cannot set `Content-Length`, `Transfer-Encoding`, `Connection`, or `Trailer`;
 the writer computes them after the hook's status decision. For a body-bearing
 response in the `auto` pool, commit downstream HTTP/1.1 chunked framing even
@@ -516,7 +528,7 @@ checkout is disposable. The relevant current code is
 
 Deliver the transport foundation first: pre-body takeover, proxy-owned body
 framing, read gating with TLS progress, proxy-owned curl multi, and
-asynchronous bounded direct response output. Prove full-duplex
+one-chunk-at-a-time Kore response output. Prove full-duplex
 fixed-length and chunked HTTP streaming under slow peers before adding SSE
 and raw upgrade. Then add
 informational responses and trailers, followed by WebSocket tunneling. These
