@@ -457,6 +457,20 @@ when the downstream writer reaches its high-water mark. Account for bytes
 libcurl may retain while a callback is paused. Resume on actual consumption,
 never on a polling timer.
 
+Use a proxy-local readiness adapter for the platform-specific Kore event
+calls. On Linux, one epoll registration carries the combined read/write
+interest mask; removing it takes one `kore_platform_disable_read()` call.
+On kqueue, read and write are independent filters; update or delete each
+filter separately. Keep one event object per libcurl socket. A socket removal
+must mark that object retired and unregister both filters, but defer freeing
+it until after the current Kore event batch. Kqueue can return read and write
+results for the same socket in one batch; a second result must find the
+retired object and do nothing. Worker teardown drains the retired list after
+event processing stops. A taken-over downstream connection likewise ignores
+any later batch result after entering Kore's disconnecting state. This is
+proxy-owned watcher lifetime management and requires no new generic Kore
+event API; native kqueue execution remains a feasibility gate.
+
 Use libcurl upload mode with a known length or a streamed unknown length when
 a framed body is present, then set the validated method string. On HTTP/1.1,
 the unknown length uses chunked framing; on HTTP/2, it ends with the DATA

@@ -94,6 +94,7 @@ struct echo_server {
 struct loop_metrics {
   unsigned connect_done;
   unsigned curl_watch_removed;
+  unsigned retired_watch_callbacks_ignored;
   unsigned tunnel_done;
   unsigned downstream_done;
   unsigned disconnects;
@@ -175,6 +176,8 @@ struct curl_watch {
   struct kore_event evt;
   struct proxy_state *state;
   curl_socket_t fd;
+  struct curl_watch *retired_next;
+  int retired;
 };
 
 struct proxy_state {
@@ -272,6 +275,8 @@ static struct worker_curl_loop worker_curl;
 #endif
 
 static struct loop_metrics *metrics;
+static struct curl_watch *retired_watches;
+static struct kore_timer *retired_watches_timer;
 static unsigned short upstream_port;
 static unsigned short stalled_port;
 static unsigned short relay_port;
@@ -1219,6 +1224,20 @@ prepare_echo(struct echo_server *server)
   server->port = ntohs(addr.sin_port);
 }
 
+static void
+reap_retired_watches(void *arg, u_int64_t now)
+{
+  struct curl_watch *watch;
+
+  (void)arg;
+  (void)now;
+  retired_watches_timer = NULL;
+  while ((watch = retired_watches) != NULL) {
+    retired_watches = watch->retired_next;
+    free(watch);
+  }
+}
+
 static int
 socket_change(CURL *easy, curl_socket_t fd, int what,
     void *arg, void *socket_arg)
@@ -1247,7 +1266,14 @@ socket_change(CURL *easy, curl_socket_t fd, int what,
       state->curl_watch_count--;
 #endif
       metrics->curl_watch_removed++;
-      free(watch);
+      watch->retired = 1;
+      watch->retired_next = retired_watches;
+      retired_watches = watch;
+      if (retired_watches_timer == NULL)
+        retired_watches_timer = kore_timer_add(reap_retired_watches,
+            1, NULL, KORE_TIMER_ONESHOT);
+      /* Model a second readiness result already in a kqueue batch. */
+      curl_event(&watch->evt, 0);
     }
     return 0;
   }
@@ -2286,6 +2312,10 @@ curl_event(void *arg, int error)
   int flags;
 
   watch = (struct curl_watch *)arg;
+  if (watch->retired) {
+    metrics->retired_watch_callbacks_ignored++;
+    return;
+  }
 #if !defined(VECTIS_PROXY_SHARED_MULTI)
   state = watch->state;
 #endif
@@ -2443,6 +2473,11 @@ worker_cancel(void)
   }
   assert(worker_curl.watch_count == 0);
 #endif
+  if (retired_watches_timer != NULL) {
+    kore_timer_remove(retired_watches_timer);
+    retired_watches_timer = NULL;
+  }
+  reap_retired_watches(NULL, 0);
 }
 
 static void
@@ -2457,6 +2492,8 @@ downstream_event(void *arg, int error)
   socklen_t error_length;
 
   connection = (struct connection *)arg;
+  if (connection->state == CONN_STATE_DISCONNECTING)
+    return;
   state = (struct proxy_state *)connection->hdlr_extra;
   connection->evt.flags = 0;
   if (state->http_mode) {
@@ -4488,6 +4525,8 @@ main(void)
   assert(metrics->connect_done == 6);
   assert(metrics->tls_connect_done == 4);
   assert(metrics->curl_watch_removed > 0);
+  assert(metrics->retired_watch_callbacks_ignored ==
+      metrics->curl_watch_removed);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)

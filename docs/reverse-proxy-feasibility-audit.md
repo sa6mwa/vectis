@@ -182,6 +182,21 @@ separate `auto` and forced-HTTP/1.1 pools, concurrent HTTP/2 transfers in the
 worker, connection reuse under cancellation, and BSD kqueue behavior remain
 open.
 
+Source inspection exposed a watcher lifetime difference that the Linux
+probe had missed. [`bsd.c`](../vendor/kore/upstream/src/bsd.c) returns separate
+read and write kqueue results with the same event pointer in one batch, while
+the probe freed that pointer immediately on libcurl's `CURL_POLL_REMOVE`.
+Its `kore_platform_disable_read()` call also deletes only the BSD read
+filter, leaving a possible write registration. The probe now marks a removed
+watcher retired, ignores a deliberately injected late callback, and frees
+it on a one-shot timer after Kore finishes the current event batch. Both
+per-exchange and worker-shared variants pass. Kore defers connection removal
+until after the event batch; the probe now guards a second downstream
+event after disconnect. The production path needs a proxy-local Linux/kqueue
+interest adapter that removes both BSD filters and uses the same deferred
+watcher lifetime. Native kqueue execution is still required before the
+design is proven on Darwin or BSD.
+
 The cleanup harness needed a separate ownership fix. Vectis calls
 `setpgid()` for its Kore runtime, so the test runner and Kore parent/workers
 are in different process groups. Stopping only the runner group left Kore
