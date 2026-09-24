@@ -524,6 +524,52 @@ failed:
   return status;
 }
 
+vectis_proxy_header_status
+vectis_proxy_headers_sanitize_response(const vectis_proxy_headers *source,
+                                       vectis_proxy_headers *destination) {
+  vectis_proxy_header_status status;
+  const char *name;
+  size_t i;
+  int found;
+
+  if (source == NULL || destination == NULL || source == destination ||
+      destination->count != 0u ||
+      !vectis_proxy_has_list_token(source, "connection", NULL, 0, &found)) {
+    return VECTIS_PROXY_HEADER_INVALID;
+  }
+  if (!vectis_proxy_has_list_token(source, "connection", "content-length", 0,
+                                   &found) ||
+      found ||
+      !vectis_proxy_has_list_token(source, "connection", "transfer-encoding", 0,
+                                   &found) ||
+      found ||
+      !vectis_proxy_has_list_token(source, "connection", "trailer", 0,
+                                   &found) ||
+      found) {
+    return VECTIS_PROXY_HEADER_INVALID;
+  }
+  for (i = 0u; i < source->count; ++i) {
+    name = source->fields[i].name;
+    if (vectis_proxy_hop_field(name)) {
+      continue;
+    }
+    if (!vectis_proxy_has_list_token(source, "connection", name, 0, &found)) {
+      vectis_proxy_headers_cleanup(destination);
+      return VECTIS_PROXY_HEADER_INVALID;
+    }
+    if (found) {
+      continue;
+    }
+    status =
+        vectis_proxy_headers_add(destination, name, source->fields[i].value);
+    if (status != VECTIS_PROXY_HEADER_OK) {
+      vectis_proxy_headers_cleanup(destination);
+      return status;
+    }
+  }
+  return VECTIS_PROXY_HEADER_OK;
+}
+
 int vectis_proxy_request_trailer_declared(const vectis_proxy_headers *headers,
                                           const char *name) {
   int found;

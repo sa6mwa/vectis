@@ -1,1 +1,2 @@
 vendor/kore/patches/*.patch whitespace=-blank-at-eol,-space-before-tab
+tests/fuzz/corpus/proxy_http/* binary

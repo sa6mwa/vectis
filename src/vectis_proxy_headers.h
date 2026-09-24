@@ -56,6 +56,12 @@ vectis_proxy_header_status
 vectis_proxy_headers_sanitize_request(const vectis_proxy_headers *source,
                                       vectis_proxy_headers *destination);
 
+/* Copy upstream end-to-end response fields into an empty destination.
+ * The response writer reconstructs framing and Connection fields. */
+vectis_proxy_header_status
+vectis_proxy_headers_sanitize_response(const vectis_proxy_headers *source,
+                                       vectis_proxy_headers *destination);
+
 /* Only a declared, otherwise permitted request trailer may be forwarded. */
 int vectis_proxy_request_trailer_declared(const vectis_proxy_headers *headers,
                                           const char *name);

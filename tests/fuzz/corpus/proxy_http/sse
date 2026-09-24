@@ -1,0 +1,8 @@
+0HTTP/2 103 Early Hints
+Link: </a.css>; rel=preload
+
+HTTP/2 200
+Content-Type: text/event-stream
+
+X-Trace: done
+
