@@ -588,6 +588,24 @@ rules out raw WebSocket mode as the complete proxy transport under the
 required handshake validation and streamed-rejection contract; the raw
 connect-only path and a bounded non-`101` HTTP parser remain necessary.
 
+A [test-only rejection framer spike](../tests/unit/test_proxy_ws_rejection_framing.c)
+now exercises that parser boundary without allocating a response body. It
+holds at most a 16 KiB response head, 8 KiB trailer block, and 256-byte chunk
+line, while a generated 1 MiB fixed-length or chunked body advances from
+8 KiB producer chunks through a 512-byte consumer budget. It handles split
+`103` then `403`, chunk extensions and trailers, close-delimited bodies, and
+unconsumed frame bytes after `101`. It rejects duplicate or conflicting
+length fields, unsupported transfer codings, forbidden framing trailers,
+overlong headers, bad chunk separators, and premature EOF. These cases follow
+the [HTTP/1.1 response-length precedence and invalid-framing rules](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.3).
+The spike shows that a bounded state machine can retain only metadata and
+emit body slices under backpressure. It is not a production parser or live
+Kore/libcurl integration: full header and trailer policy, response rewriting,
+interim delivery, downstream framing, TLS cancellation, and connection reuse
+still need executable proof. The test rejects unsupported transfer codings;
+whether that is the intended public proxy policy must be settled before
+architecture commitment.
+
 This output choice came from a failed direct-TLS experiment in the same
 worker loop. Level-triggered writable interest generated more than 150,000
 callbacks in one 1 MiB run while `SSL_write()` repeatedly returned
