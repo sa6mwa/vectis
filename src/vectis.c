@@ -5004,8 +5004,8 @@ vectis_validate_route_path(const char *path, vectis_route_path_kind path_kind,
   return VECTIS_ERR_INVALID;
 }
 
-static vectis_status vectis_validate_request_path(const char *path,
-                                                  vectis_error *error) {
+vectis_status vectis_internal_validate_request_path(const char *path,
+                                                    vectis_error *error) {
   if (path == NULL || path[0] != '/') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "request path must start with '/'");
@@ -26522,7 +26522,7 @@ vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
-  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+  if (vectis_internal_validate_request_path(path, error) != VECTIS_OK) {
     if (!vectis_request_path_has_trailing_slash(path) ||
         !vectis_trailing_slash_targets_static_site(impl, method, path, request,
                                                    error)) {
@@ -26610,7 +26610,7 @@ vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
     return VECTIS_ERR_STATE;
   }
   impl = (vectis_app_impl *)app->impl;
-  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+  if (vectis_internal_validate_request_path(path, error) != VECTIS_OK) {
     if (vectis_request_path_has_trailing_slash(path) &&
         vectis_trailing_slash_targets_static_site(impl, method, path, request,
                                                   error)) {
@@ -26699,7 +26699,7 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
   vectis_internal_request_init(&scratch);
   route_request = matched_request != NULL ? matched_request : &scratch;
   saved_count = route_request->path_param_count;
-  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+  if (vectis_internal_validate_request_path(path, error) != VECTIS_OK) {
     if (!vectis_request_path_has_trailing_slash(path) ||
         !vectis_trailing_slash_targets_static_site(impl, method, path, &scratch,
                                                    error)) {
@@ -26947,7 +26947,7 @@ vectis_status vectis_internal_static_route_method_denied(
 
   impl = (vectis_app_impl *)app->impl;
   vectis_internal_request_init(&scratch);
-  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+  if (vectis_internal_validate_request_path(path, error) != VECTIS_OK) {
     if (!vectis_request_path_has_trailing_slash(path) ||
         !vectis_trailing_slash_targets_static_site(impl, method, path, &scratch,
                                                    error)) {
@@ -27018,7 +27018,7 @@ vectis_internal_upload_stream_open(vectis_app *app, vectis_http_method method,
                      "upload stream runtime is required");
     return VECTIS_ERR_INVALID;
   }
-  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+  if (vectis_internal_validate_request_path(path, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {

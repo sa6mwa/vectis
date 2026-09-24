@@ -311,12 +311,16 @@ that type.
 
 The existing bridge asks for an application WebSocket route before ordinary
 dispatch for every GET, regardless of whether `Connection` and `Upgrade`
-tokens form a valid upgrade. Preserve that precedence: if an application
-WebSocket route matches, return `CONTINUE` and let its current handshake path
-produce the response, including malformed-handshake responses. Only after
-that check may a proxy route be considered. For remaining requests, resolve
-the first matching route in registration order using the same method, path,
-parameter, and regex matcher used by body policy. Represent a proxy route in
+tokens form a valid upgrade. Preserve that precedence for a valid ordinary
+decoded path: if an application WebSocket route matches, return `CONTINUE`
+and let its current handshake path produce the response, including
+malformed-handshake responses. Validate the decoded path separately before
+this lookup. If it is invalid, skip application WebSocket matching and let
+the strict proxy raw-path fallback decide admission; do not treat an error
+from a valid-path WebSocket lookup as fallback eligibility. For remaining
+requests, resolve the first matching route in registration order using the
+same method, path, parameter, and regex matcher used by body policy.
+Represent a proxy route in
 the existing handler registry with a private marker handler and route-owned
 proxy configuration. Take over only when that marker wins. An ordinary
 handler, static handler, or live upload winner continues through its existing

@@ -55,6 +55,10 @@ extern void vectis_kore_set_prebody_probe(
 
 static const char raw_path[] = "/raw-target/a%2Fb/%2e/c";
 static const char raw_query[] = "q=1&q=2&plus=%2B&empty=";
+static const char ws_upgrade_headers[] =
+    "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
 static vectis_app *probe_app;
 
 static vectis_status proxy_marker_reply(vectis_app *app,
@@ -276,11 +280,14 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     vectis_route_handler_fn selected;
     vectis_body_policy policy;
     vectis_request *probe_request;
+    vectis_internal_websocket_match ws_match;
     vectis_error probe_error;
     vectis_status status;
+    vectis_status path_status;
     const char *allow;
     char *decoded;
     int denied;
+    int raw_fallback_eligible;
 
     assert(probe_app != NULL);
     probe_request = vectis_internal_request_new(&probe_error);
@@ -288,10 +295,35 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     selected = NULL;
     decoded = NULL;
     denied = 0;
+    raw_fallback_eligible = 0;
     allow = NULL;
     status = vectis_internal_kore_decode_request_path(
         req->path, &decoded, &probe_error);
     if (status == VECTIS_OK) {
+      path_status = vectis_internal_validate_request_path(
+          decoded, &probe_error);
+      if (path_status != VECTIS_OK && path_status != VECTIS_ERR_INVALID) {
+        free(decoded);
+        vectis_internal_request_free(probe_request);
+        return KORE_RESULT_ERROR;
+      }
+      raw_fallback_eligible = path_status == VECTIS_ERR_INVALID;
+      if (path_status == VECTIS_OK) {
+        status = vectis_internal_match_websocket(
+            probe_app, VECTIS_HTTP_GET, decoded, probe_request, &ws_match,
+            &probe_error);
+        if (status == VECTIS_OK) {
+          free(decoded);
+          vectis_internal_request_free(probe_request);
+          return KORE_RESULT_OK;
+        }
+        if (status != VECTIS_ERR_STATE) {
+          free(decoded);
+          vectis_internal_request_free(probe_request);
+          return KORE_RESULT_ERROR;
+        }
+      }
+      vectis_error_clear(&probe_error);
       status = vectis_internal_static_route_method_denied(
           probe_app, VECTIS_HTTP_GET, decoded, &denied, &allow,
           &probe_error);
@@ -299,8 +331,10 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
         status = vectis_internal_route_body_policy(
             probe_app, VECTIS_HTTP_GET, decoded, &policy, NULL, &selected,
             NULL, probe_request, &probe_error);
+    } else if (status == VECTIS_ERR_INVALID) {
+      raw_fallback_eligible = 1;
     }
-    if (status == VECTIS_ERR_INVALID) {
+    if (raw_fallback_eligible && status == VECTIS_ERR_INVALID && !denied) {
       status = vectis_internal_proxy_raw_path_match(
           probe_app, VECTIS_HTTP_GET, req->path, proxy_marker_reply,
           probe_request, NULL, &probe_error);
@@ -491,11 +525,25 @@ proxy_marker_reply(vectis_app *app, vectis_request *request,
 }
 
 static void
+selection_ws_message(vectis_app *app, vectis_websocket *websocket,
+    vectis_websocket_opcode opcode, const void *data, size_t size,
+    void *userdata)
+{
+  (void)app;
+  (void)websocket;
+  (void)opcode;
+  (void)data;
+  (void)size;
+  (void)userdata;
+}
+
+static void
 register_proxy_selection_routes(vectis_app *app, int proxy_first,
     vectis_error *error)
 {
   vectis_route_config ordinary;
   vectis_route_config proxy;
+  vectis_websocket_route_config websocket;
 
   ordinary = vectis_route(VECTIS_HTTP_GET, "^/proxy-select/.*$", reply, NULL);
   ordinary.path_kind = VECTIS_ROUTE_PATH_REGEX;
@@ -509,6 +557,9 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
     assert(vectis_register_route(app, &ordinary, error) == VECTIS_OK);
     assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
   }
+  websocket = vectis_websocket_route(
+      "/proxy-select/ws", selection_ws_message, NULL);
+  assert(app->websocket(app, &websocket, error) == VECTIS_OK);
 }
 
 static unsigned short
@@ -1015,6 +1066,9 @@ check_prebody_header_result(unsigned short port, const char *path,
   }
   ok = strstr(output, status_text) != NULL &&
       strstr(output, marker) != NULL;
+  if (!ok)
+    fprintf(stderr, "expected status %d and %s, received: %s\n",
+        status, marker, output);
   fprintf(stderr, "%s %s admission visibility: %s\n",
       tls ? "TLS" : "cleartext", path, ok ? "passed" : "failed");
   assert(ok);
@@ -1182,6 +1236,12 @@ main(void)
       "", 0, 400, "proxy-raw-rejected"));
   assert(check_prebody_header_result(port, "/proxy-select/%ZZ", "1.1",
       "", 0, 400, "proxy-raw-rejected"));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
+      ws_upgrade_headers, 0, 101, "sec-websocket-accept:"));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
+      "", 0, 400, " 400 "));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
+      "Connection: Upgrade\r\nUpgrade: h2c\r\n", 0, 400, " 400 "));
   reject_passed = check_local_rejection(port, "/reject", 400);
   reject_passed &= check_local_rejection(port, "/forbidden", 403);
   assert(vectis_stop(app, &error) == VECTIS_OK);
@@ -1260,6 +1320,12 @@ main(void)
       "", 1, 200, "proxy-prebody-selected"));
   assert(check_prebody_header_result(port, "/proxy-select/%2e%2e", "1.1",
       "", 1, 400, "proxy-raw-rejected"));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
+      ws_upgrade_headers, 1, 101, "sec-websocket-accept:"));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
+      "", 1, 400, " 400 "));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
+      "Connection: Upgrade\r\nUpgrade: h2c\r\n", 1, 400, " 400 "));
   tls_raw_passed = check_raw_handoff(port, 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
