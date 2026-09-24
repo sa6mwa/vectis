@@ -21,6 +21,12 @@ struct tls_server {
   pthread_t thread;
   SSL_CTX *ctx;
   int no_alpn;
+  int hello_count;
+};
+
+struct http_result {
+  char body[3];
+  size_t used;
 };
 
 static const char ws_request[] =
@@ -94,7 +100,12 @@ tls_main(void *arg)
   struct tls_server *server;
   unsigned char request[sizeof(ws_request) - 1 + sizeof(client_frame)];
   unsigned char response[sizeof(ws_response) - 1 + sizeof(server_frame)];
+  static const char http_response[] =
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+  char http_request[1024];
+  SSL *http_ssl;
   SSL *ssl;
+  int http_fd;
   int fd;
   int got;
   size_t received;
@@ -106,6 +117,34 @@ tls_main(void *arg)
   assert(ssl != NULL);
   assert(SSL_set_fd(ssl, fd) == 1);
   assert(SSL_accept(ssl) == 1);
+
+  /* A completed connect-only handle remains attached while a regular
+   * transfer to the same origin uses a separate connection. */
+  http_fd = accept(server->listener, NULL, NULL);
+  assert(http_fd >= 0);
+  http_ssl = SSL_new(server->ctx);
+  assert(http_ssl != NULL);
+  assert(SSL_set_fd(http_ssl, http_fd) == 1);
+  assert(SSL_accept(http_ssl) == 1);
+  received = 0;
+  while (received < sizeof(http_request) - 1) {
+    got = SSL_read(http_ssl, http_request + received,
+        (int)(sizeof(http_request) - 1 - received));
+    assert(got > 0);
+    received += (size_t)got;
+    http_request[received] = '\0';
+    if (strstr(http_request, "\r\n\r\n") != NULL)
+      break;
+  }
+  assert(strncmp(http_request, "GET /ordinary HTTP/1.1\r\n", 24) == 0);
+  assert(strstr(http_request, "\r\n\r\n") != NULL);
+  assert(SSL_write(http_ssl, http_response,
+      (int)(sizeof(http_response) - 1)) ==
+      (int)(sizeof(http_response) - 1));
+  assert(SSL_shutdown(http_ssl) >= 0);
+  SSL_free(http_ssl);
+  assert(close(http_fd) == 0);
+
   received = 0;
   while (received < sizeof(request)) {
     got = SSL_read(ssl, request + received, (int)(sizeof(request) - received));
@@ -125,6 +164,20 @@ tls_main(void *arg)
   return NULL;
 }
 
+static size_t
+http_body(char *data, size_t size, size_t count, void *arg)
+{
+  struct http_result *result;
+  size_t len;
+
+  result = (struct http_result *)arg;
+  len = size * count;
+  assert(len <= 2 - result->used);
+  memcpy(result->body + result->used, data, len);
+  result->used += len;
+  return len;
+}
+
 static int
 check_client_hello(SSL *ssl, int *alert, void *arg)
 {
@@ -134,9 +187,10 @@ check_client_hello(SSL *ssl, int *alert, void *arg)
 
   (void)alert;
   server = (struct tls_server *)arg;
-  server->no_alpn = !SSL_client_hello_get0_ext(ssl,
-      TLSEXT_TYPE_application_layer_protocol_negotiation,
-      &extension, &extension_size);
+  if (server->hello_count++ == 0)
+    server->no_alpn = !SSL_client_hello_get0_ext(ssl,
+        TLSEXT_TYPE_application_layer_protocol_negotiation,
+        &extension, &extension_size);
   return SSL_CLIENT_HELLO_SUCCESS;
 }
 
@@ -182,6 +236,7 @@ main(void)
   struct curl_blob ca;
   CURLM *multi;
   CURL *easy;
+  CURL *http_easy;
   CURLMsg *msg;
   EVP_PKEY *key;
   X509 *cert;
@@ -190,6 +245,8 @@ main(void)
   curl_socket_t fd;
   CURLcode code;
   char url[128];
+  char http_url[128];
+  struct http_result http_result;
   unsigned char request[sizeof(ws_request) - 1 + sizeof(client_frame)];
   unsigned char reply[sizeof(ws_response) - 1 + sizeof(server_frame)];
   int running;
@@ -238,6 +295,37 @@ main(void)
   assert(curl_easy_getinfo(easy, CURLINFO_ACTIVESOCKET, &fd) == CURLE_OK);
   assert(fd != CURL_SOCKET_BAD);
 
+  http_easy = curl_easy_init();
+  assert(http_easy != NULL);
+  memset(&http_result, 0, sizeof(http_result));
+  assert(snprintf(http_url, sizeof(http_url),
+      "https://localhost:%u/ordinary", (unsigned)server.port) > 0);
+  assert(curl_easy_setopt(http_easy, CURLOPT_URL, http_url) == CURLE_OK);
+  assert(curl_easy_setopt(http_easy, CURLOPT_CAINFO_BLOB, &ca) == CURLE_OK);
+  assert(curl_easy_setopt(http_easy, CURLOPT_HTTP_VERSION,
+      CURL_HTTP_VERSION_1_1) == CURLE_OK);
+  assert(curl_easy_setopt(http_easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+  assert(curl_easy_setopt(http_easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
+  assert(curl_easy_setopt(http_easy, CURLOPT_WRITEFUNCTION,
+      http_body) == CURLE_OK);
+  assert(curl_easy_setopt(http_easy, CURLOPT_WRITEDATA,
+      &http_result) == CURLE_OK);
+  assert(curl_multi_add_handle(multi, http_easy) == CURLM_OK);
+  assert(curl_multi_perform(multi, &running) == CURLM_OK);
+  for (attempt = 0; running > 0 && attempt < 40; attempt++) {
+    assert(curl_multi_poll(multi, NULL, 0, 100, &numfds) == CURLM_OK);
+    assert(curl_multi_perform(multi, &running) == CURLM_OK);
+  }
+  assert(running == 0);
+  msg = curl_multi_info_read(multi, &pending);
+  assert(msg != NULL && msg->msg == CURLMSG_DONE);
+  assert(msg->easy_handle == http_easy && msg->data.result == CURLE_OK);
+  assert(http_result.used == 2);
+  assert(memcmp(http_result.body, "ok", 2) == 0);
+  assert(curl_multi_info_read(multi, &pending) == NULL);
+  assert(curl_multi_remove_handle(multi, http_easy) == CURLM_OK);
+  curl_easy_cleanup(http_easy);
+
   memcpy(request, ws_request, sizeof(ws_request) - 1);
   memcpy(request + sizeof(ws_request) - 1, client_frame,
       sizeof(client_frame));
@@ -277,6 +365,7 @@ main(void)
   assert(curl_multi_cleanup(multi) == CURLM_OK);
   curl_global_cleanup();
   assert(pthread_join(server.thread, NULL) == 0);
+  assert(server.hello_count == 2);
   assert(server.no_alpn);
   assert(close(server.listener) == 0);
   SSL_CTX_free(server.ctx);
