@@ -14,7 +14,7 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop|direct_io)|prebody_handoff)$")
+      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|direct_io)|prebody_handoff)$")
     add_test(NAME ${target_name} COMMAND bash
       "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
       15 0 $<TARGET_FILE:${target_name}>)
@@ -139,6 +139,18 @@ if(VECTIS_WITH_KORE_RUNTIME)
         bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
         1 124 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop>)
     set_tests_properties(vectis_unit_kore_proxy_curl_loop_timeout_cleanup
+      PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 10)
+    add_test(NAME vectis_unit_kore_proxy_curl_loop_shared_failure_cleanup
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_EXIT_AFTER_START=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        10 71 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop_shared>)
+    set_tests_properties(vectis_unit_kore_proxy_curl_loop_shared_failure_cleanup
+      PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 20)
+    add_test(NAME vectis_unit_kore_proxy_curl_loop_shared_timeout_cleanup
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_HANG_AFTER_START=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        1 124 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop_shared>)
+    set_tests_properties(vectis_unit_kore_proxy_curl_loop_shared_timeout_cleanup
       PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 10)
   endif()
   vectis_add_unit_test(vectis_unit_kore_prebody_handoff

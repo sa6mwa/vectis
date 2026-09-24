@@ -161,6 +161,17 @@ Kore's Linux epoll loop. It does not yet prove the spec's separate `auto` and
 forced-HTTP/1.1 pools, HTTP/2 inside the Kore worker loop, connection reuse
 under cancellation, or BSD kqueue behavior.
 
+The cleanup harness needed a separate ownership fix. Vectis calls
+`setpgid()` for its Kore runtime, so the test runner and Kore parent/workers
+are in different process groups. Stopping only the runner group left Kore
+alive and made CTest wait on its inherited output pipe. The wrapper now keeps
+its session leader alive while it verifies and stops the recorded Kore group,
+then stops its own group. The shared worker probe's normal, forced-exit, and
+timeout cases pass under CTest; each forced-cleanup case also passed ten
+serial repetitions. This establishes test containment; production app-stop
+behavior is covered by separate runtime
+checks and remains part of the proxy lifecycle gate.
+
 The same worker-loop probe now also connects a second cleartext upstream and
 relays a generated 1 MiB body while a client concurrently sends and reads
 slowly. The upstream echoes incrementally, the client verifies every byte
