@@ -414,7 +414,13 @@ application reads when the upload queue is full and explicitly
 drain on resume so an edge-triggered event is not lost. Track read/write
 readiness together: Linux's `kore_platform_disable_read()` removes the entire
 epoll registration and is appropriate only when neither direction needs a
-wakeup. Re-register when a bounded queue becomes writable again. Handle
+wakeup. On BSD, Kore registers read and write as separate kqueue filters and
+disables each direction independently. Keep one proxy-owned interest mask and
+translate it through a small platform adapter that uses Kore's existing event
+functions; do not add a new Kore transport hook just to schedule readiness.
+The adapter must tolerate separate read and write callbacks from one kqueue
+wait cycle and preserve readable bytes reported together with `EV_EOF`.
+Re-register when a bounded queue becomes writable again. Handle
 `SSL_read` `WANT_READ` and `WANT_WRITE` directly; for queued output, call
 `net_send_flush()` and use `SSL_want()` to arm the required retry direction.
 When a bounded TLS read leaves decrypted bytes inside OpenSSL, schedule a

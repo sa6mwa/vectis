@@ -833,17 +833,27 @@ optional total deadlines must replace the inherited Kore header/body timer
 for the entire HTTP/SSE/WebSocket exchange.
 
 The full candidate is **not proved**. Kqueue still needs an equivalent
-interest helper and test. The TLS probes cover ordinary retry directions;
-neither has forced a cross-direction retry. The downstream TLS upload now
+interest helper and native test. Kore's Linux backend updates one epoll
+registration with the combined read/write mask; its BSD backend adds or
+deletes separate `EVFILT_READ` and `EVFILT_WRITE` filters and can invoke the
+connection callback once per filter in a single wait cycle. The production
+scheduler must map the same proxy read/write interest state to those distinct
+operations, including the case where neither direction is armed. The Linux
+probe's `EPOLL*` masks cannot serve as that portable boundary. Its `EV_EOF`
+handling must also preserve data reported with a read EOF, as the Linux
+`EPOLLRDHUP` path now does. Source inspection establishes the required
+translation, but this Linux host cannot execute the native kqueue path.
+
+The downstream TLS upload now forces both cross-direction retry states and
 exercises continuation after OpenSSL holds decrypted bytes. The earlier
 queue-drain probe covers a buffered response and a cleartext live stream
-completion callback, but not stream abort during takeover. The new bounded
+completion callback, but not stream abort during takeover. The bounded
 Kore-output path passes the predecessor/keepalive sequence over cleartext and
-TLS. Queued TLS output cancellation now passes; a failure inside the TLS
-write call remains open. Worker shutdown with
-an active libcurl handshake and sustained cleartext and double-TLS exchanges
-pass; cleartext SSE delivery and idle RST cancellation pass, while general
-HTTP framing remains open.
+TLS. Queued TLS output cancellation and a fault-injected failure inside
+`SSL_write()` pass. Worker shutdown with an active libcurl handshake and
+sustained cleartext and double-TLS exchanges pass; cleartext SSE delivery and
+idle RST cancellation pass. Tunnel TLS retries and general HTTP framing
+remain open.
 
 An assertion failure in a probe previously left its Kore parent and worker
 alive after the controller exited. The two Linux proxy probes now run through
