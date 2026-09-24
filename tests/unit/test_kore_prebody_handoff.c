@@ -391,6 +391,38 @@ response_count(const char *data)
   return count;
 }
 
+static int
+check_request_halfclose_at_headers(unsigned short port)
+{
+  static const char request[] =
+      "GET /one HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+  struct pollfd watch;
+  char response[1024];
+  size_t used;
+  ssize_t got;
+  int fd;
+
+  fd = connect_local(port);
+  assert(send(fd, request, sizeof(request) - 1, 0) ==
+      (ssize_t)(sizeof(request) - 1));
+  assert(shutdown(fd, SHUT_WR) == 0);
+  watch.fd = fd;
+  watch.events = POLLIN;
+  used = 0;
+  response[0] = '\0';
+  while (used < sizeof(response) - 1 &&
+      poll(&watch, 1, 1000) > 0) {
+    got = recv(fd, response + used, sizeof(response) - 1 - used, 0);
+    if (got <= 0)
+      break;
+    used += (size_t)got;
+    response[used] = '\0';
+  }
+  assert(close(fd) == 0);
+  return strstr(response, "HTTP/1.1 200") != NULL &&
+      strstr(response, "ok") != NULL;
+}
+
 static void
 send_exact(int fd, const void *data, size_t length)
 {
@@ -775,6 +807,7 @@ main(void)
   fprintf(stderr, "split takeover + ordinary responses: %u\n", split_count);
   assert(close(fd) == 0);
   raw_passed = check_raw_handoff(port, 0);
+  assert(check_request_halfclose_at_headers(port));
   chunked_passed = check_chunked_ingress(port);
   small_chunked_passed = check_small_chunked_ingress(port, 0);
   reject_passed = check_local_rejection(port, "/reject", 400);

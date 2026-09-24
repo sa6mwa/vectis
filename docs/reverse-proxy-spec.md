@@ -345,6 +345,12 @@ the pre-body hook runs before Kore clears the header timer on its ordinary
 header-only path. The proxy then owns connect, idle, write-progress, and
 optional total deadlines through cancellable worker timers. A healthy SSE or
 WebSocket connection must survive the ordinary header/body timeout.
+At `TAKEOVER`, clear the current Kore read event flag after borrowing the
+post-header bytes; otherwise `net_recv_flush()` may read EOF in the same
+event after a client write half-close and disconnect the connection before
+the proxy handler can serve its response. The shared event loop must pass
+readable request bytes to Kore before treating an orderly read-half-close as
+a disconnect. An actual socket error still cancels immediately.
 
 Kore currently passes initial body bytes to `http_body_update()` before
 `on_headers`, and some zero-length paths return before that hook. Insert the

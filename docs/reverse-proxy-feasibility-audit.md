@@ -183,12 +183,24 @@ SSE response headers; the 1 MiB stream still completes. Five serial worker
 runs and the forked failure/timeout cleanup tests pass. This establishes
 idle cleartext RST cancellation and a post-header TCP half-close in the Linux
 probe. It does not establish downstream TLS close behavior, a reset while a
-Kore netbuf is queued, or idle timeout policy. Sending the half-close in the
-same write phase as request headers failed an exploratory run before the
-response arrived. Kore's ordinary event handler disconnects when `RDHUP`
-is reported before invoking its current receive handler, which is the likely
-cause. That earlier-phase boundary
-needs an isolated test and a narrow fix or a justified contract decision.
+Kore netbuf is queued, or idle timeout policy.
+
+An isolated ordinary GET and the SSE fixture both failed when the client
+half-closed its write side immediately after sending request headers. Kore's
+Linux event mapping treats `RDHUP` as an error even when request bytes are
+readable, so its connection event handler can disconnect before parsing them.
+Patch [`0031`](../vendor/kore/patches/0031-kore-drain-readable-bytes-before-read-half-close.patch)
+passes through an epoll read event with `RDHUP` unless it also has `EPOLLERR`
+or `EPOLLHUP`. On kqueue it passes through a read `EV_EOF` only if unread
+bytes remain and `fflags` reports no socket error, as described by the
+[FreeBSD kqueue manual](https://man.freebsd.org/cgi/man.cgi?query=kqueue&sektion=2).
+The takeover clears Kore's current read flag so its receive loop stops after
+the pre-body callback and the proxy handler owns later EOF processing. With
+that patch applied from the tracked series, the ordinary GET and both SSE
+half-close timings pass in five serial Linux runs; the direct I/O and ordinary
+pipelining probes also pass. The BSD branch is source justified but still
+needs execution on a kqueue host. This change is shared event classification,
+not a proxy route parser or a second transport loop.
 
 The worker-loop probe also runs a fixed-length 1 MiB POST through a normal
 libcurl HTTP/1.1 upload callback. It borrows any post-header bytes already in
@@ -503,7 +515,7 @@ harness and production proxy cancellation paths still need their own proof.
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
 | Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe. The bridge gives application WebSocket routes priority for every GET; body policy scans all route kinds in registration order, while ordinary dispatch scans handler kinds only. Exact duplicate routes conflict, but regex/literal overlaps are allowed. A shared proxy admission selector and overlap tests remain unproved. |
-| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. | Coalesced and split input passes on Linux, including downstream TLS. A 1 MiB chunked POST and a same-write chunked body with a pipelined GET also pass, including the latter over TLS. Direct-I/O ordinary HTTP takeover restores Kore's event handler and serves two subsequent ordinary requests. Full framer/backpressure integration and cleanup races remain open. |
+| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. Patch `0031` lets readable bytes reach the parser when an orderly write half-close accompanies them. | Coalesced and split input passes on Linux, including downstream TLS. A 1 MiB chunked POST and a same-write chunked body with a pipelined GET also pass, including the latter over TLS. Direct-I/O ordinary HTTP takeover restores Kore's event handler and serves two subsequent ordinary requests. Ordinary GET and SSE half-close with headers pass on Linux. Full framer/backpressure integration, kqueue execution, and cleanup races remain open. |
 | Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` covers ordinary byte boundaries. A bounded chunked probe now validates 1 MiB incrementally, parses a trailer, and replays a following GET from both borrowed and later socket bytes. General framing policy, malformed-input handling, and libcurl backpressure composition remain unproved. |
 | Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, so taken-over input uses direct nonblocking fd/`SSL *` reads. Output copies one bounded chunk into Kore's send queue and uses its TLS writer; `SSL_want()` identifies queued output's retry direction. The worker probe measures an 8 KiB scratch queue plus one 8 KiB Kore netbuf. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Slow cleartext, HTTPS-upstream, and double-TLS relays pass on Linux. Forced cross-direction retries and kqueue remain open. |
 | TLS buffered data | [OpenSSL documents](https://docs.openssl.org/3.0/man3/SSL_pending/) processed and unprocessed records that can remain after the socket stops reporting readable. An edge-triggered handler must drain buffered application data when capacity resumes, but it must not spin on a record that cannot yet produce application bytes. | The downstream TLS upload probe drains pending plaintext through a one-shot continuation after each bounded consumer advance. Other TLS retry directions and adversarial partial records remain open. |

@@ -1699,6 +1699,7 @@ takeover(struct http_request *req, const void *data, size_t len)
   state->downstream->hdlr_extra = state;
   state->downstream->disconnect = downstream_disconnect;
   state->downstream->evt.handle = downstream_event;
+  state->downstream->evt.flags &= ~KORE_EVENT_READ;
   state->downstream->flags |= CONN_IS_BUSY;
   http_request_sleep(req);
   state->multi = curl_multi_init();
@@ -1845,7 +1846,8 @@ sse_read_line(int fd, char *line, size_t capacity)
 }
 
 static void
-check_sse(unsigned short port, struct echo_server *server)
+check_sse(unsigned short port, struct echo_server *server,
+    int early_halfclose)
 {
   static const char request[] =
       "GET /sse HTTP/1.1\r\nHost: localhost\r\n\r\n";
@@ -1873,6 +1875,8 @@ check_sse(unsigned short port, struct echo_server *server)
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
       &timeout, sizeof(timeout)) == 0);
   send_all(fd, request, sizeof(request) - 1);
+  if (early_halfclose)
+    assert(shutdown(fd, SHUT_WR) == 0);
   sse_read_line(fd, line, sizeof(line));
   assert(strstr(line, " 200 ") != NULL);
   saw_type = 0;
@@ -1887,7 +1891,8 @@ check_sse(unsigned short port, struct echo_server *server)
       saw_chunked = 1;
   }
   assert(saw_type && saw_chunked);
-  assert(shutdown(fd, SHUT_WR) == 0);
+  if (!early_halfclose)
+    assert(shutdown(fd, SHUT_WR) == 0);
   __sync_lock_test_and_set(&server->allow_body, 1);
   received = 0;
   for (;;) {
@@ -2576,7 +2581,11 @@ main(void)
   SSL_CTX_free(relay_tls.tls_ctx);
 
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
-  check_sse(port, &sse);
+  check_sse(port, &sse, 0);
+  assert(pthread_join(sse.thread, NULL) == 0);
+  __sync_lock_test_and_set(&sse.allow_body, 0);
+  assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
+  check_sse(port, &sse, 1);
   assert(pthread_join(sse.thread, NULL) == 0);
   assert(close(sse.listener) == 0);
 
@@ -2679,13 +2688,13 @@ main(void)
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 11);
+  assert(metrics->disconnects == 12);
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
-  assert(metrics->http_done == 3);
-  assert(metrics->http_headers_ready == 4);
+  assert(metrics->http_done == 4);
+  assert(metrics->http_headers_ready == 5);
   assert(metrics->upload_done == 2);
   assert(metrics->upload_pauses > 0);
   assert(metrics->upload_max_queued <= RELAY_BUFFER_SIZE);
