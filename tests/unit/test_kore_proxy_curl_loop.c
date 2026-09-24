@@ -107,6 +107,8 @@ struct echo_server {
   int ws_retry_mode;
   int ws_retry_abort_mode;
   int tls_reset_before_mode;
+  int header_reset_mode;
+  unsigned header_reset_target;
   int queue_abort_mode;
   int hold_final;
   volatile int release_final;
@@ -155,6 +157,8 @@ struct loop_metrics {
   unsigned http_half_closed;
   unsigned http_upstream_failed;
   unsigned http_tls_upstream_failed;
+  unsigned http_header_held;
+  unsigned http_header_rollback;
   unsigned http_local_errors;
   unsigned http_queue_held;
   unsigned http_queue_abort_cancelled;
@@ -294,6 +298,7 @@ struct proxy_state {
   int h2_cancel_reserved;
   int http_abort_mode;
   int http_tls_reset_mode;
+  int http_header_hold_mode;
   int http_queue_abort_mode;
   int http_queue_held;
   int http_write_fail_mode;
@@ -391,6 +396,7 @@ static unsigned short sse_queue_abort_port;
 static unsigned short sse_write_fail_port;
 static unsigned short sse_reset_port;
 static unsigned short sse_reset_before_port;
+static unsigned short sse_reset_queued_port;
 static unsigned short sse_tls_reset_port;
 static unsigned short sse_tls_reset_before_port;
 static unsigned short upload_port;
@@ -1589,11 +1595,21 @@ sse_reset_main(void *arg)
   }
   assert(strstr(request, "GET / HTTP/1.1\r\n") == request);
   send_all(fd, header, sizeof(header) - 1);
-  send_all(fd, "4\r\npong\r\n", 9);
-  for (attempt = 0; attempt < 500 &&
-      __sync_fetch_and_add(&server->allow_body, 0) == 0; attempt++)
-    usleep(10000u);
-  assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  if (server->header_reset_mode) {
+    for (attempt = 0; attempt < 500 &&
+        __sync_fetch_and_add(&metrics->http_header_held, 0) <
+            server->header_reset_target;
+        attempt++)
+      usleep(10000u);
+    assert(__sync_fetch_and_add(&metrics->http_header_held, 0) ==
+        server->header_reset_target);
+  } else {
+    send_all(fd, "4\r\npong\r\n", 9);
+    for (attempt = 0; attempt < 500 &&
+        __sync_fetch_and_add(&server->allow_body, 0) == 0; attempt++)
+      usleep(10000u);
+    assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  }
   reset.l_onoff = 1;
   reset.l_linger = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
@@ -1735,6 +1751,8 @@ prepare_echo(struct echo_server *server)
   server->ws_retry_mode = 0;
   server->ws_retry_abort_mode = 0;
   server->tls_reset_before_mode = 0;
+  server->header_reset_mode = 0;
+  server->header_reset_target = 0;
   server->queue_abort_mode = 0;
   server->hold_final = 0;
   server->release_final = 0;
@@ -2343,7 +2361,7 @@ http_schedule(struct proxy_state *state)
 
   events = 0;
   if (state->http_queue_held) {
-    assert(state->http_queue_abort_mode);
+    assert(state->http_queue_abort_mode || state->http_header_hold_mode);
     assert(!TAILQ_EMPTY(&state->downstream->send_queue));
     events = EPOLLRDHUP | EPOLLET;
   } else if (!TAILQ_EMPTY(&state->downstream->send_queue)) {
@@ -2683,6 +2701,14 @@ http_pump(struct proxy_state *state)
       net_send_queue(downstream, response_header,
           sizeof(response_header) - 1);
     state->http_headers_sent = 1;
+    if (state->http_header_hold_mode) {
+      assert(TAILQ_FIRST(&downstream->send_queue) ==
+          TAILQ_LAST(&downstream->send_queue, netbuf_head));
+      assert(TAILQ_FIRST(&downstream->send_queue)->s_off == 0);
+      assert(downstream->snb == NULL);
+      state->http_queue_held = 1;
+      metrics->http_header_held++;
+    }
   } else if (state->http_body_length != 0 &&
       state->http_headers_sent) {
     prefix_length = snprintf((char *)state->http_frame,
@@ -2876,6 +2902,20 @@ curl_done(struct proxy_state *state, CURLMsg *msg)
         state->upload_paused);
   if (msg->data.result != CURLE_OK && state->http_mode) {
     metrics->http_upstream_failed++;
+    if (state->http_header_hold_mode) {
+      struct netbuf *header;
+
+      assert(state->http_queue_held && state->http_headers_sent);
+      header = TAILQ_FIRST(&state->downstream->send_queue);
+      assert(header != NULL && header ==
+          TAILQ_LAST(&state->downstream->send_queue, netbuf_head));
+      assert(header->s_off == 0 && state->downstream->snb == NULL);
+      net_remove_netbuf(state->downstream, header);
+      state->downstream->http_send_start = 0;
+      state->http_queue_held = 0;
+      state->http_headers_sent = 0;
+      metrics->http_header_rollback++;
+    }
     if (state->http_tls_reset_mode) {
       assert(curl_easy_getinfo(state->easy, CURLINFO_SSL_VERIFYRESULT,
           &verify_result) == CURLE_OK);
@@ -3284,6 +3324,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/sse-write-fail") != 0 &&
       strcmp(req->path, "/sse-reset") != 0 &&
       strcmp(req->path, "/sse-reset-before") != 0 &&
+      strcmp(req->path, "/sse-reset-queued") != 0 &&
       strcmp(req->path, "/sse-reset-tls") != 0 &&
       strcmp(req->path, "/sse-reset-tls-before") != 0 &&
       strcmp(req->path, "/upload") != 0 &&
@@ -3369,6 +3410,8 @@ takeover(struct http_request *req, const void *data, size_t len)
   }
 #endif
   state->http_abort_mode = strcmp(req->path, "/sse-abort") == 0;
+  state->http_header_hold_mode =
+      strcmp(req->path, "/sse-reset-queued") == 0;
   state->http_tls_reset_mode =
       strcmp(req->path, "/sse-reset-tls") == 0 ||
       strcmp(req->path, "/sse-reset-tls-before") == 0;
@@ -3382,6 +3425,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       state->h2_mode ||
       strcmp(req->path, "/sse-reset") == 0 ||
       strcmp(req->path, "/sse-reset-before") == 0 ||
+      state->http_header_hold_mode ||
       state->http_tls_reset_mode ||
       state->http_abort_mode ||
       state->http_queue_abort_mode ||
@@ -3503,6 +3547,8 @@ takeover(struct http_request *req, const void *data, size_t len)
     target_port = sse_reset_port;
   else if (strcmp(req->path, "/sse-reset-before") == 0)
     target_port = sse_reset_before_port;
+  else if (state->http_header_hold_mode)
+    target_port = sse_reset_queued_port;
   else if (strcmp(req->path, "/sse-reset-tls") == 0)
     target_port = sse_tls_reset_port;
   else if (strcmp(req->path, "/sse-reset-tls-before") == 0)
@@ -4292,12 +4338,14 @@ check_sse_reset(unsigned short port, struct echo_server *server, int tls)
 }
 
 static void
-check_sse_reset_before(unsigned short port, int tls)
+check_sse_reset_before(unsigned short port, int tls, int queued)
 {
   static const char request[] =
       "GET /sse-reset-before HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char tls_request[] =
       "GET /sse-reset-tls-before HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char queued_request[] =
+      "GET /sse-reset-queued HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char expected[] =
       "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 11\r\n"
       "Connection: close\r\n\r\nbad gateway";
@@ -4319,7 +4367,9 @@ check_sse_reset_before(unsigned short port, int tls)
   timeout.tv_usec = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
       &timeout, sizeof(timeout)) == 0);
-  if (tls)
+  if (queued)
+    send_all(fd, queued_request, sizeof(queued_request) - 1);
+  else if (tls)
     send_all(fd, tls_request, sizeof(tls_request) - 1);
   else
     send_all(fd, request, sizeof(request) - 1);
@@ -4333,6 +4383,65 @@ check_sse_reset_before(unsigned short port, int tls)
   }
   assert(used == sizeof(expected) - 1);
   assert(memcmp(response, expected, used) == 0);
+  assert(close(fd) == 0);
+}
+
+static void
+check_tls_sse_reset_queued(unsigned short port)
+{
+  static const char request[] =
+      "GET /sse-reset-queued HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char expected[] =
+      "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 11\r\n"
+      "Connection: close\r\n\r\nbad gateway";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  SSL_CTX *ctx;
+  SSL *ssl;
+  char response[sizeof(expected)];
+  size_t used;
+  int ssl_error;
+  int got;
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  assert(SSL_CTX_load_verify_locations(ctx, tls_cert_path, NULL) == 1);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_set1_host(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_get_verify_result(ssl) == X509_V_OK);
+  assert(SSL_write(ssl, request, sizeof(request) - 1) ==
+      (int)(sizeof(request) - 1));
+  used = 0;
+  while (used < sizeof(expected) - 1) {
+    got = SSL_read(ssl, response + used,
+        (int)(sizeof(expected) - 1 - used));
+    assert(got > 0);
+    used += (size_t)got;
+  }
+  assert(memcmp(response, expected, used) == 0);
+  got = SSL_read(ssl, response, sizeof(response));
+  assert(got <= 0);
+  ssl_error = SSL_get_error(ssl, got);
+  assert(ssl_error != SSL_ERROR_WANT_READ &&
+      ssl_error != SSL_ERROR_WANT_WRITE);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
   assert(close(fd) == 0);
 }
 
@@ -5279,6 +5388,7 @@ main(void)
   struct echo_server sse_write_fail;
   struct echo_server sse_reset;
   struct echo_server sse_reset_before;
+  struct echo_server sse_reset_queued;
   struct echo_server sse_tls_reset;
   struct echo_server sse_tls_reset_before;
   struct echo_server upload;
@@ -5357,6 +5467,9 @@ main(void)
   prepare_echo(&sse_write_fail);
   prepare_echo(&sse_reset);
   prepare_echo(&sse_reset_before);
+  prepare_echo(&sse_reset_queued);
+  sse_reset_queued.header_reset_mode = 1;
+  sse_reset_queued.header_reset_target = 1;
   prepare_echo(&sse_tls_reset);
   prepare_echo(&sse_tls_reset_before);
   sse_tls_reset_before.tls_reset_before_mode = 1;
@@ -5390,6 +5503,7 @@ main(void)
   sse_write_fail_port = sse_write_fail.port;
   sse_reset_port = sse_reset.port;
   sse_reset_before_port = sse_reset_before.port;
+  sse_reset_queued_port = sse_reset_queued.port;
   sse_tls_reset_port = sse_tls_reset.port;
   sse_tls_reset_before_port = sse_tls_reset_before.port;
   upload_port = upload.port;
@@ -5792,28 +5906,38 @@ main(void)
 
   assert(pthread_create(&sse_reset_before.thread, NULL,
       sse_reset_before_main, &sse_reset_before) == 0);
-  check_sse_reset_before(port, 0);
+  check_sse_reset_before(port, 0, 0);
   assert(pthread_join(sse_reset_before.thread, NULL) == 0);
   assert(close(sse_reset_before.listener) == 0);
   assert(metrics->http_upstream_failed == 2);
   assert(metrics->http_local_errors == 1);
+
+  assert(pthread_create(&sse_reset_queued.thread, NULL,
+      sse_reset_main, &sse_reset_queued) == 0);
+  check_sse_reset_before(port, 0, 1);
+  assert(pthread_join(sse_reset_queued.thread, NULL) == 0);
+  assert(close(sse_reset_queued.listener) == 0);
+  assert(metrics->http_upstream_failed == 3);
+  assert(metrics->http_header_held == 1);
+  assert(metrics->http_header_rollback == 1);
+  assert(metrics->http_local_errors == 2);
 
   assert(pthread_create(&sse_tls_reset.thread, NULL,
       sse_tls_reset_main, &sse_tls_reset) == 0);
   check_sse_reset(port, &sse_tls_reset, 1);
   assert(pthread_join(sse_tls_reset.thread, NULL) == 0);
   assert(close(sse_tls_reset.listener) == 0);
-  assert(metrics->http_upstream_failed == 3);
+  assert(metrics->http_upstream_failed == 4);
   assert(metrics->http_tls_upstream_failed == 1);
 
   assert(pthread_create(&sse_tls_reset_before.thread, NULL,
       sse_tls_reset_main, &sse_tls_reset_before) == 0);
-  check_sse_reset_before(port, 1);
+  check_sse_reset_before(port, 1, 0);
   assert(pthread_join(sse_tls_reset_before.thread, NULL) == 0);
   assert(close(sse_tls_reset_before.listener) == 0);
-  assert(metrics->http_upstream_failed == 4);
+  assert(metrics->http_upstream_failed == 5);
   assert(metrics->http_tls_upstream_failed == 2);
-  assert(metrics->http_local_errors == 2);
+  assert(metrics->http_local_errors == 3);
   SSL_CTX_free(relay_tls.tls_ctx);
 
   assert(pthread_create(&upload.thread, NULL,
@@ -5881,6 +6005,10 @@ main(void)
 
   prepare_echo(&relay_tls);
   relay_tls_port = relay_tls.port;
+  prepare_echo(&sse_reset_queued);
+  sse_reset_queued.header_reset_mode = 1;
+  sse_reset_queued.header_reset_target = 2;
+  sse_reset_queued_port = sse_reset_queued.port;
   relay_tls.tls_ctx = SSL_CTX_new(TLS_server_method());
   assert(relay_tls.tls_ctx != NULL);
   assert(SSL_CTX_use_certificate_file(relay_tls.tls_ctx,
@@ -5907,6 +6035,15 @@ main(void)
     fprintf(stderr, "TLS curl loop startup: %s\n", error.message);
     assert(0);
   }
+  assert(pthread_create(&sse_reset_queued.thread, NULL,
+      sse_reset_main, &sse_reset_queued) == 0);
+  check_tls_sse_reset_queued(port);
+  assert(pthread_join(sse_reset_queued.thread, NULL) == 0);
+  assert(close(sse_reset_queued.listener) == 0);
+  assert(metrics->http_header_held == 2);
+  assert(metrics->http_header_rollback == 2);
+  assert(metrics->http_local_errors == 4);
+  assert(metrics->http_upstream_failed == 6);
   assert(pthread_create(&relay_tls.thread, NULL,
       relay_tls_main, &relay_tls) == 0);
   check_tls_relay(port);
@@ -6005,9 +6142,9 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 32 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->disconnects == 34 + 2 * H2_SCALE_CONNECTIONS);
 #else
-  assert(metrics->disconnects == 25);
+  assert(metrics->disconnects == 27);
 #endif
   assert(metrics->relay_done == 6);
   assert(metrics->ws_upgraded == 3);
@@ -6015,12 +6152,12 @@ main(void)
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   assert(metrics->http_done == 15 + H2_SCALE_CONNECTIONS);
-  assert(metrics->http_headers_ready == 25 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->http_headers_ready == 27 + 2 * H2_SCALE_CONNECTIONS);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
   assert(metrics->http_done == 11);
-  assert(metrics->http_headers_ready == 18);
+  assert(metrics->http_headers_ready == 20);
 #endif
   assert(metrics->upload_done == 3);
   assert(metrics->chunked_upload_done == 6);

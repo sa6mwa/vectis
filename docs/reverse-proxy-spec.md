@@ -543,7 +543,12 @@ chunk framing, trailers, producer wakeup, and cancellation without requiring
 a new generic Kore response API. A response may
 begin before the request body ends. Once final headers are committed, failures
 abort the downstream stream rather than attempting a second response. Write
-HTTP bytes through the bounded Kore queue. The response hook
+HTTP bytes through the bounded Kore queue. Queuing a proxy-owned header netbuf
+does not commit it: if upstream fails before any write attempt, remove that
+unwritten netbuf and send one local error response. Track the first write
+attempt explicitly. After a write attempt, treat the response as committed,
+even if Kore's netbuf offset is still zero: `SSL_write()` may have pending
+ciphertext that cannot safely be replaced. The response hook
 cannot set `Content-Length`, `Transfer-Encoding`, `Connection`, or `Trailer`;
 the writer computes them after the hook's status decision. For a body-bearing
 response in the `auto` pool, commit downstream HTTP/1.1 chunked framing even
@@ -602,15 +607,16 @@ One proxy exchange owns the request, accepted connection, easy handle, queues,
 timers, and optional raw tunnel. Cancellation is idempotent; no callback can
 refer to the exchange after final cleanup. Specify the state transitions for
 headers pending, streaming, upload complete, upgrade, cancellation, and worker
-shutdown. A downstream disconnect cancels the upstream. Before downstream
-headers, upstream DNS, connect, TLS, or protocol failure returns `502`; an
-upstream deadline returns `504`; proxy resource exhaustion returns `503`.
+shutdown. A downstream disconnect cancels the upstream. Before a downstream
+header write attempt, upstream DNS, connect, TLS, or protocol failure returns
+`502`; an upstream deadline returns `504`; proxy resource exhaustion returns
+`503`.
 Preflight rejection uses the status selected by the application.
-An error after headers closes the downstream connection. A raw WebSocket leg
-reaching EOF flushes only bytes already accepted into its bounded queue up to
-the close deadline, then closes both legs; it does not synthesize WebSocket
-frames. Do not reuse a downstream keepalive connection until its request body
-is fully consumed and response framing is complete.
+An error after a header write attempt closes the downstream connection. A raw
+WebSocket leg reaching EOF flushes only bytes already accepted into its bounded
+queue up to the close deadline, then closes both legs; it does not synthesize
+WebSocket frames. Do not reuse a downstream keepalive connection until its
+request body is fully consumed and response framing is complete.
 
 Apply per-worker and per-route limits to accepted and upstream sockets,
 headers/trailers, upload bytes, each application queue, curl/TLS retained
@@ -713,7 +719,7 @@ evidence is integration and end-to-end behavior.
 | Streaming integration | Upstream emits the first chunk, then waits before finishing; client must receive that chunk before upstream completion. Request chunks must arrive upstream before client EOF. Repeat with slow upstream, slow downstream, simultaneous upload/download, and a response that starts while upload is active. Assert bounded application and libcurl queue depths, active backpressure, and no spool files or full-body allocations. Use multi-gigabyte logical generators in the opt-in stress run. |
 | SSE integration | Headers and first event arrive before upstream completion; periodic comments and events arrive at their production cadence; idle timeout behavior is explicit; downstream reset during a producer idle period cancels upstream promptly without a new upstream event. A client write half-close after headers still permits response completion. Test a half-close coalesced with request headers separately at the pre-body boundary. Assert no writable or `RDHUP` busy loop. |
 | WebSocket integration | Successful HTTP/1.1 `ws`/`wss`, selected subprotocol, offered extension pass-through, fragmented messages larger than Kore's normal frame limit, interleaved ping/pong, close code/reason, non-`101` rejection with a streamed body, and client/server disconnect. Assert `modify_response` is bypassed for `101` and applied to non-`101` rejection. Include handshake and first frame in one read on either leg; reject upgrade requests with framed bodies; exceed the bounded pre-upgrade buffer with a paused client; reject `Upgrade: h2c`; test TLS upstream that offers HTTP/2 and verify HTTP/1.1 selection; verify exact byte relay after the handshake, including masking. Test TLS `CURLE_AGAIN` without socket-watcher spin, one readiness owner after connect-only completion, and non-`101` chunked responses with trailers. Run a Go `net/http` upgrader fixture with public `Origin`/rewritten `Host`, subprotocol negotiation, and sustained bidirectional traffic. |
-| Failure and lifecycle | DNS/connect/TLS failure, upstream reset before and after headers, malformed upstream headers, slowloris, callback rejection, partial request body, downstream reset while idle or with a queued response write, downstream TLS close, worker shutdown, app stop, and connection limits. Before any downstream response byte is committed, send a complete local `502` for upstream transport failure; after commitment, end the downstream stream without a successful chunk terminator. Cover the case where Kore has queued a response but has not written any byte, and assert exactly one request/connection teardown, no orphan transfer, retained curl handle, leaked fd, hanging test process, or accidentally reusable connection with unread request bytes. |
+| Failure and lifecycle | DNS/connect/TLS failure, upstream reset before and after headers, malformed upstream headers, slowloris, callback rejection, partial request body, downstream reset while idle or with a queued response write, downstream TLS close, worker shutdown, app stop, and connection limits. Before any downstream header write attempt, remove an unwritten proxy-owned netbuf and send a complete local `502` for upstream transport failure; after a write attempt, end the downstream stream without a successful chunk terminator, including TLS `WANT_*` with zero netbuf offset. Cover the case where Kore has queued a response but has not attempted a write, and assert exactly one request/connection teardown, no orphan transfer, retained curl handle, leaked fd, hanging test process, or accidentally reusable connection with unread request bytes. |
 | Sanitizers and fuzzing | ASan/UBSan integration runs; bounded fuzz targets for URL/header rewrite, chunk parser, trailer parser, and upgrade response validation. |
 
 Use local fixtures rather than a public network service. Every test fixture
