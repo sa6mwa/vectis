@@ -87,6 +87,8 @@ struct echo_server {
   SSL_CTX *tls_ctx;
   volatile int allow_body;
   int queue_abort_mode;
+  int hold_final;
+  volatile int release_final;
 };
 
 struct loop_metrics {
@@ -141,6 +143,9 @@ struct loop_metrics {
   unsigned chunked_trailer_called;
   unsigned chunked_upload_pauses;
   unsigned chunked_input_pauses;
+  unsigned chunked_pipeline_restored;
+  unsigned chunked_pipeline_empty_restored;
+  size_t chunked_pipeline_max;
   unsigned upload_pauses;
   unsigned upload_tls_pending_resumes;
   size_t upload_max_queued;
@@ -205,6 +210,7 @@ struct proxy_state {
   int downstream_half_closed;
   int upload_mode;
   int chunked_upload_mode;
+  int chunked_keepalive_mode;
   int upload_paused;
   int upload_read_wait;
   size_t upload_remaining;
@@ -221,6 +227,9 @@ struct proxy_state {
   int chunk_trailer_seen;
   char chunk_line[CHUNK_LINE_SIZE];
   unsigned char chunk_raw[RELAY_BUFFER_SIZE];
+  unsigned char *chunk_pipeline;
+  size_t chunk_pipeline_length;
+  struct http_request *request;
   struct curl_slist *upload_headers;
   char curl_error[CURL_ERROR_SIZE];
   int http_status_seen;
@@ -291,8 +300,9 @@ static void drive_curl(struct proxy_state *state, curl_socket_t fd, int flags);
 static void curl_event(void *arg, int error);
 static void downstream_event(void *arg, int error);
 static void relay_pump(struct proxy_state *state);
-static void http_pump(struct proxy_state *state);
+static int http_pump(struct proxy_state *state);
 static void http_input_pump(struct proxy_state *state);
+static void proxy_restore_http(struct proxy_state *state);
 static unsigned char relay_byte(size_t offset);
 
 static int
@@ -736,6 +746,7 @@ upload_chunked_main(void *arg)
   int saw_transfer;
   int saw_trailer;
   int early_sent;
+  int attempt;
 
   server = (struct echo_server *)arg;
   fd = accept(server->listener, NULL, NULL);
@@ -793,6 +804,13 @@ upload_chunked_main(void *arg)
   assert(strcmp(line, "X-Trace: done\r\n") == 0);
   upload_read_line(fd, line, sizeof(line));
   assert(strcmp(line, "\r\n") == 0);
+  if (server->hold_final) {
+    for (attempt = 0; attempt < 10000 &&
+        __sync_fetch_and_add(&server->release_final, 0) == 0;
+        attempt++)
+      usleep(1000u);
+    assert(__sync_fetch_and_add(&server->release_final, 0) == 1);
+  }
   send_all(fd, final, sizeof(final) - 1);
   assert(close(fd) == 0);
   return NULL;
@@ -1187,6 +1205,8 @@ prepare_echo(struct echo_server *server)
   server->tls_ctx = NULL;
   server->allow_body = 0;
   server->queue_abort_mode = 0;
+  server->hold_final = 0;
+  server->release_final = 0;
   server->listener = socket(AF_INET, SOCK_STREAM, 0);
   assert(server->listener >= 0);
   memset(&addr, 0, sizeof(addr));
@@ -1779,6 +1799,17 @@ chunked_decode(struct proxy_state *state, const unsigned char *data,
       state->chunk_line[state->chunk_line_length++] = (char)data[index++];
     }
   }
+  if (state->chunked_keepalive_mode &&
+      state->chunk_phase == UPLOAD_CHUNK_COMPLETE && index < length) {
+    assert(state->chunk_pipeline == NULL);
+    state->chunk_pipeline_length = length - index;
+    assert(state->chunk_pipeline_length <= http_header_max);
+    state->chunk_pipeline = kore_malloc(state->chunk_pipeline_length);
+    memcpy(state->chunk_pipeline, data + index,
+        state->chunk_pipeline_length);
+    if (state->chunk_pipeline_length > metrics->chunked_pipeline_max)
+      metrics->chunked_pipeline_max = state->chunk_pipeline_length;
+  }
   *consumed = index;
 }
 
@@ -1918,12 +1949,15 @@ http_download(char *data, size_t size, size_t count, void *arg)
   return amount;
 }
 
-static void
+static int
 http_pump(struct proxy_state *state)
 {
   static const char response_header[] =
       "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
       "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+  static const char keepalive_header[] =
+      "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+      "Transfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n";
   static const char gateway_error[] =
       "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 11\r\n"
       "Connection: close\r\n\r\nbad gateway";
@@ -1938,31 +1972,35 @@ http_pump(struct proxy_state *state)
   metrics->http_pump_calls++;
   if (state->http_queue_held) {
     http_schedule(state);
-    return;
+    return 1;
   }
   if (!TAILQ_EMPTY(&downstream->send_queue)) {
     downstream->evt.flags |= KORE_EVENT_WRITE;
     if (net_send_flush(downstream) != KORE_RESULT_OK) {
       kore_connection_disconnect(downstream);
-      return;
+      return 0;
     }
     if (!TAILQ_EMPTY(&downstream->send_queue)) {
       http_schedule(state);
-      return;
+      return 1;
     }
   }
   if (state->http_error_pending) {
     if (state->http_error_sent) {
       kore_connection_disconnect(downstream);
-      return;
+      return 0;
     }
     net_send_queue(downstream, gateway_error,
         sizeof(gateway_error) - 1);
     state->http_error_sent = 1;
     metrics->http_local_errors++;
   } else if (state->http_headers_ready && !state->http_headers_sent) {
-    net_send_queue(downstream, response_header,
-        sizeof(response_header) - 1);
+    if (state->chunked_keepalive_mode)
+      net_send_queue(downstream, keepalive_header,
+          sizeof(keepalive_header) - 1);
+    else
+      net_send_queue(downstream, response_header,
+          sizeof(response_header) - 1);
     state->http_headers_sent = 1;
   } else if (state->http_body_length != 0 &&
       state->http_headers_sent) {
@@ -1988,8 +2026,11 @@ http_pump(struct proxy_state *state)
     state->http_final_sent = 1;
   } else if (state->http_final_sent) {
     metrics->http_done++;
-    kore_connection_disconnect(downstream);
-    return;
+    if (state->chunked_keepalive_mode)
+      proxy_restore_http(state);
+    else
+      kore_connection_disconnect(downstream);
+    return 0;
   }
   if (!TAILQ_EMPTY(&downstream->send_queue)) {
     queued = 0;
@@ -2003,17 +2044,18 @@ http_pump(struct proxy_state *state)
     if (count > metrics->http_max_kore_buffers)
       metrics->http_max_kore_buffers = count;
     http_schedule(state);
-    return;
+    return 1;
   }
   if (state->http_paused) {
     state->http_paused = 0;
     assert(curl_easy_pause(state->easy, CURLPAUSE_CONT) == CURLE_OK);
     if (state->http_body_length != 0 || state->http_transfer_done) {
       http_schedule(state);
-      return;
+      return 1;
     }
   }
   http_schedule(state);
+  return 1;
 }
 
 static void
@@ -2300,6 +2342,43 @@ proxy_cancel(struct proxy_state *state)
     curl_slist_free_all(state->upload_headers);
     state->upload_headers = NULL;
   }
+  if (state->chunk_pipeline != NULL) {
+    kore_free(state->chunk_pipeline);
+    state->chunk_pipeline = NULL;
+  }
+}
+
+static void
+proxy_restore_http(struct proxy_state *state)
+{
+  struct connection *connection;
+  struct http_request *request;
+
+  assert(state->chunked_keepalive_mode);
+  assert(state->http_transfer_done && state->http_final_sent);
+  connection = state->downstream;
+  request = state->request;
+  assert(request != NULL);
+  assert(TAILQ_EMPTY(&connection->send_queue));
+  assert(connection->http_pipeline == NULL);
+  connection->http_pipeline = state->chunk_pipeline;
+  connection->http_pipeline_len = state->chunk_pipeline_length;
+  state->chunk_pipeline = NULL;
+  proxy_cancel(state);
+  request->flags |= HTTP_REQUEST_DELETE;
+  http_request_wakeup(request);
+  connection->disconnect = NULL;
+  connection->evt.handle = kore_connection_event;
+  connection->handle = kore_connection_handle;
+  connection->hdlr_extra = NULL;
+  connection->flags &= ~CONN_IS_BUSY;
+  kore_free(state);
+  kore_platform_event_schedule(connection->fd,
+      EPOLLIN | EPOLLRDHUP, 0, connection);
+  if (connection->http_pipeline_len == 0)
+    metrics->chunked_pipeline_empty_restored++;
+  metrics->chunked_pipeline_restored++;
+  http_start_recv(connection);
 }
 
 static void
@@ -2394,7 +2473,8 @@ downstream_event(void *arg, int error)
         metrics->http_half_closed++;
       }
     }
-    http_pump(state);
+    if (!http_pump(state))
+      return;
     if (state->upload_mode && !state->http_transfer_done)
       http_input_pump(state);
     return;
@@ -2449,6 +2529,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/sse-reset-before") != 0 &&
       strcmp(req->path, "/upload") != 0 &&
       strcmp(req->path, "/upload-chunked") != 0 &&
+      strcmp(req->path, "/upload-chunked-keepalive") != 0 &&
       strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
   assert(len == 0 || strcmp(req->path, "/relay") == 0 ||
@@ -2456,7 +2537,8 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/ws") == 0 ||
       strcmp(req->path, "/ws-reject") == 0 ||
       strcmp(req->path, "/upload") == 0 ||
-      strcmp(req->path, "/upload-chunked") == 0);
+      strcmp(req->path, "/upload-chunked") == 0 ||
+      strcmp(req->path, "/upload-chunked-keepalive") == 0);
   state = kore_calloc(1, sizeof(*state));
   state->relay_mode = strcmp(req->path, "/relay") == 0 ||
       strcmp(req->path, "/relay-tls") == 0 ||
@@ -2467,8 +2549,11 @@ takeover(struct http_request *req, const void *data, size_t len)
   state->ws_reject_mode = strcmp(req->path, "/ws-reject") == 0;
   state->relay_tls = strcmp(req->path, "/relay-tls") == 0 ||
       state->ws_mode;
+  state->chunked_keepalive_mode =
+      strcmp(req->path, "/upload-chunked-keepalive") == 0;
   state->chunked_upload_mode =
-      strcmp(req->path, "/upload-chunked") == 0;
+      strcmp(req->path, "/upload-chunked") == 0 ||
+      state->chunked_keepalive_mode;
   state->upload_mode = strcmp(req->path, "/upload") == 0 ||
       state->chunked_upload_mode;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
@@ -2496,6 +2581,7 @@ takeover(struct http_request *req, const void *data, size_t len)
     if (!state->chunked_upload_mode)
       state->upload_remaining = UPLOAD_BODY_SIZE;
   }
+  state->request = req;
   if (state->relay_mode) {
     int sndbuf;
 
@@ -3279,6 +3365,180 @@ check_chunked_upload(unsigned short port, struct echo_server *server)
   assert(strcmp(line, "\r\n") == 0);
   assert(recv(fd, body, sizeof(body), 0) == 0);
   assert(pthread_join(thread, NULL) == 0);
+  assert(close(fd) == 0);
+}
+
+static void
+pipeline_send(int fd, SSL *ssl, const void *data, size_t length)
+{
+  const unsigned char *bytes;
+  size_t offset;
+  size_t window;
+  int sent;
+
+  if (ssl == NULL) {
+    send_all(fd, data, length);
+    return;
+  }
+  bytes = (const unsigned char *)data;
+  offset = 0;
+  while (offset < length) {
+    window = length - offset;
+    if (window > 16384)
+      window = 16384;
+    sent = SSL_write(ssl, bytes + offset, (int)window);
+    assert(sent > 0);
+    offset += (size_t)sent;
+  }
+}
+
+static void
+check_chunked_keepalive(unsigned short port,
+    struct echo_server *server, int tls)
+{
+  static const char request[] =
+      "POST /upload-chunked-keepalive HTTP/1.1\r\nHost: localhost\r\n"
+      "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n\r\n";
+  static const char trailer_and_next[] =
+      "0\r\nX-Trace: done\r\n\r\n"
+      "GET /health HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: close\r\n\r\n";
+  static const char trailer[] = "0\r\nX-Trace: done\r\n\r\n";
+  static const char next_request[] =
+      "GET /health HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: close\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  SSL_CTX *ctx;
+  SSL *ssl;
+  unsigned char data[16384];
+  char line[32];
+  char response[2048];
+  char *first;
+  char *second;
+  char *marker;
+  size_t offset;
+  size_t n;
+  size_t used;
+  ssize_t got;
+  int fd;
+  int length;
+  int ssl_error;
+  int attempt;
+  unsigned done_before;
+  unsigned restored_before;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  ctx = NULL;
+  ssl = NULL;
+  if (tls) {
+    ctx = SSL_CTX_new(TLS_client_method());
+    assert(ctx != NULL);
+    assert(SSL_CTX_load_verify_locations(ctx, tls_cert_path, NULL) == 1);
+    ssl = SSL_new(ctx);
+    assert(ssl != NULL);
+    assert(SSL_set_fd(ssl, fd) == 1);
+    assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+    assert(SSL_set1_host(ssl, "localhost") == 1);
+    assert(SSL_connect(ssl) == 1);
+    assert(SSL_get_verify_result(ssl) == X509_V_OK);
+  }
+  pipeline_send(fd, ssl, request, sizeof(request) - 1);
+  for (offset = 0; offset < UPLOAD_BODY_SIZE; offset += sizeof(data)) {
+    length = snprintf(line, sizeof(line), "%zx\r\n", sizeof(data));
+    assert(length > 0 && (size_t)length < sizeof(line));
+    for (n = 0; n < sizeof(data); n++)
+      data[n] = relay_byte(offset + n);
+    pipeline_send(fd, ssl, line, (size_t)length);
+    pipeline_send(fd, ssl, data, sizeof(data));
+    pipeline_send(fd, ssl, "\r\n", 2);
+  }
+  usleep(10000u);
+  if (server->hold_final) {
+    done_before = __sync_fetch_and_add(&metrics->chunked_upload_done, 0);
+    restored_before = __sync_fetch_and_add(
+        &metrics->chunked_pipeline_restored, 0);
+    pipeline_send(fd, ssl, trailer, sizeof(trailer) - 1);
+    for (attempt = 0; attempt < 10000 &&
+        __sync_fetch_and_add(&metrics->chunked_upload_done, 0) ==
+        done_before; attempt++)
+      usleep(1000u);
+    assert(__sync_fetch_and_add(&metrics->chunked_upload_done, 0) >
+        done_before);
+    assert(__sync_fetch_and_add(&metrics->chunked_pipeline_restored, 0) ==
+        restored_before);
+    pipeline_send(fd, ssl, next_request,
+        sizeof(next_request) - 1);
+    usleep(1000u);
+    __sync_lock_test_and_set(&server->release_final, 1);
+  } else {
+    pipeline_send(fd, ssl, trailer_and_next,
+        sizeof(trailer_and_next) - 1);
+  }
+  used = 0;
+  response[0] = '\0';
+  while (used < sizeof(response) - 1) {
+    if (ssl == NULL) {
+      got = recv(fd, response + used,
+          sizeof(response) - 1 - used, 0);
+    } else {
+      ERR_clear_error();
+      got = SSL_read(ssl, response + used,
+          (int)(sizeof(response) - 1 - used));
+      if (got <= 0) {
+        ssl_error = SSL_get_error(ssl, (int)got);
+        assert(ssl_error == SSL_ERROR_ZERO_RETURN);
+        break;
+      }
+    }
+    if (got < 0)
+      fprintf(stderr, "pipeline recv: errno=%d bytes=%zu "
+          "restored=%u saved=%zu eof=%u trailer=%u "
+          "headers=%u pauses=%u server_early=%d response=%s\n", errno, used,
+          metrics->chunked_pipeline_restored,
+          metrics->chunked_pipeline_max, metrics->chunked_upload_done,
+          metrics->chunked_trailer_called, metrics->http_headers_ready,
+          metrics->chunked_upload_pauses, server->allow_body, response);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+    response[used] = '\0';
+    second = strstr(response + 1, "HTTP/1.1 200 OK\r\n");
+    if (second != NULL && strstr(second, "\r\n\r\nok") != NULL)
+      break;
+  }
+  first = strstr(response, "HTTP/1.1 200 OK\r\n");
+  assert(first == response);
+  second = strstr(first + 1, "HTTP/1.1 200 OK\r\n");
+  assert(second != NULL);
+  assert(strstr(second + 1, "HTTP/1.1 200 OK\r\n") == NULL);
+  marker = strstr(first, "Connection: keep-alive\r\n");
+  assert(marker != NULL && marker < second);
+  marker = strstr(first, "pong");
+  assert(marker != NULL && marker < second);
+  marker = strstr(first, "done");
+  assert(marker != NULL && marker < second);
+  marker = strstr(first, "0\r\n\r\n");
+  assert(marker != NULL && marker < second);
+  assert(strstr(second, "ok") != NULL);
+  assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  if (ssl != NULL)
+    SSL_free(ssl);
+  if (ctx != NULL)
+    SSL_CTX_free(ctx);
   assert(close(fd) == 0);
 }
 
@@ -4092,7 +4352,22 @@ main(void)
   check_chunked_upload(port, &upload_chunked);
   assert(metrics->chunked_upload_pauses > chunked_pauses_before);
   assert(pthread_join(upload_chunked.thread, NULL) == 0);
+  __sync_lock_test_and_set(&upload_chunked.allow_body, 0);
+  assert(pthread_create(&upload_chunked.thread, NULL,
+      upload_chunked_main, &upload_chunked) == 0);
+  check_chunked_keepalive(port, &upload_chunked, 0);
+  assert(pthread_join(upload_chunked.thread, NULL) == 0);
+  upload_chunked.hold_final = 1;
+  __sync_lock_test_and_set(&upload_chunked.allow_body, 0);
+  assert(pthread_create(&upload_chunked.thread, NULL,
+      upload_chunked_main, &upload_chunked) == 0);
+  check_chunked_keepalive(port, &upload_chunked, 0);
+  assert(pthread_join(upload_chunked.thread, NULL) == 0);
   assert(close(upload_chunked.listener) == 0);
+  assert(metrics->chunked_pipeline_restored == 2);
+  assert(metrics->chunked_pipeline_empty_restored == 1);
+  assert(metrics->chunked_pipeline_max > 0);
+  assert(metrics->chunked_pipeline_max <= http_header_max);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   assert(pthread_join(concurrent_client, NULL) == 0);
   assert(pthread_join(sse.thread, NULL) == 0);
@@ -4160,7 +4435,20 @@ main(void)
   check_tls_chunked_upload(port, &upload_chunked_tls);
   assert(metrics->chunked_upload_pauses > chunked_pauses_before);
   assert(pthread_join(upload_chunked_tls.thread, NULL) == 0);
+  __sync_lock_test_and_set(&upload_chunked_tls.allow_body, 0);
+  assert(pthread_create(&upload_chunked_tls.thread, NULL,
+      upload_chunked_main, &upload_chunked_tls) == 0);
+  check_chunked_keepalive(port, &upload_chunked_tls, 1);
+  assert(pthread_join(upload_chunked_tls.thread, NULL) == 0);
+  upload_chunked_tls.hold_final = 1;
+  __sync_lock_test_and_set(&upload_chunked_tls.allow_body, 0);
+  assert(pthread_create(&upload_chunked_tls.thread, NULL,
+      upload_chunked_main, &upload_chunked_tls) == 0);
+  check_chunked_keepalive(port, &upload_chunked_tls, 1);
+  assert(pthread_join(upload_chunked_tls.thread, NULL) == 0);
   assert(close(upload_chunked_tls.listener) == 0);
+  assert(metrics->chunked_pipeline_restored == 4);
+  assert(metrics->chunked_pipeline_empty_restored == 2);
   __sync_lock_test_and_set(&sse_queue_abort.allow_body, 0);
   assert(pthread_create(&sse_queue_abort.thread, NULL,
       sse_abort_main, &sse_queue_abort) == 0);
@@ -4212,17 +4500,17 @@ main(void)
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->http_done == 9);
-  assert(metrics->http_headers_ready == 14);
+  assert(metrics->http_done == 13);
+  assert(metrics->http_headers_ready == 18);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
-  assert(metrics->http_done == 6);
-  assert(metrics->http_headers_ready == 11);
+  assert(metrics->http_done == 10);
+  assert(metrics->http_headers_ready == 15);
 #endif
   assert(metrics->upload_done == 2);
-  assert(metrics->chunked_upload_done == 2);
-  assert(metrics->chunked_trailer_called == 2);
+  assert(metrics->chunked_upload_done == 6);
+  assert(metrics->chunked_trailer_called == 6);
   assert(metrics->chunked_upload_pauses > 0);
   assert(metrics->chunked_input_pauses > 0);
   assert(metrics->upload_pauses > 0);
