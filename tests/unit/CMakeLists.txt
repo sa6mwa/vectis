@@ -79,6 +79,13 @@ vectis_add_unit_test(vectis_unit_mailbox test_vectis_mailbox.c)
 vectis_add_unit_test(vectis_unit_webdav test_vectis_webdav.c)
 vectis_add_unit_test(vectis_unit_webdav_atomic test_vectis_webdav_atomic.c)
 if(VECTIS_WITH_KORE_RUNTIME)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    vectis_add_unit_test(vectis_unit_kore_proxy_direct_io
+      test_kore_proxy_direct_io.c)
+    target_include_directories(vectis_unit_kore_proxy_direct_io PRIVATE
+      "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
+    target_compile_options(vectis_unit_kore_proxy_direct_io PRIVATE -std=c99)
+  endif()
   vectis_add_unit_test(vectis_unit_kore_prebody_handoff
     test_kore_prebody_handoff.c)
   target_include_directories(vectis_unit_kore_prebody_handoff PRIVATE

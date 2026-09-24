@@ -95,16 +95,25 @@ retain the exact write buffer across retry, including Kore's enabled partial
 writes. [OpenSSL documents cross-direction retries and the stable write
 argument rule](https://docs.openssl.org/3.6/man3/SSL_write/).
 
-This candidate is **not proved**. It needs a proxy-only event-interest helper
-that can arm read or write independently on epoll and kqueue without a
-permanently writable fd spinning. Replacing `connection->evt.handle` would
-also let the proxy interpret `EPOLLRDHUP`/`EV_EOF` as a read-half-close rather
-than letting Kore's default event handler immediately disconnect it. The
-direct adapter must serialize all access to the accepted `SSL *`, drain
-decrypted data after resuming a paused read, and schedule continuation if its
-per-event work budget ends while OpenSSL still holds bytes. An executable
-slow-peer, half-close, TLS retry-direction, and cleanup probe is required
-before preferring it over Kore's send queue.
+The [Linux direct-I/O probe](../tests/unit/test_kore_proxy_direct_io.c) now
+proves the cleartext part on a running Kore listener. It temporarily replaces
+`connection->evt.handle`, changes only that connection to level-triggered
+read/write interest through Kore's existing epoll scheduling function, and
+keeps an 8 KiB application output queue. With a slow reader it relayed 1 MiB
+byte-for-byte, observed 106 write pauses in one run, never queued more than
+8 KiB, and completed after the client write-half-closed. It saw one read EOF
+and one disconnect, with 108 event callbacks and no writable-fd spin. Ten
+serial repetitions passed. This establishes the Linux plain-TCP pause/resume
+and half-close mechanism without another Kore patch.
+
+The full candidate is **not proved**. Kqueue still needs an equivalent
+interest helper and test. The accepted `SSL *` path needs serialized direct
+I/O, retry-direction tracking, stable write buffers, and an explicit drain
+after a paused read resumes. A per-event work budget needs a continuation
+when OpenSSL still holds bytes. Earlier Kore-queued responses need a drain
+barrier before direct output begins. TLS backpressure, those ownership
+transitions, and cancellation during worker shutdown must pass executable
+tests before preferring this path over Kore's send queue.
 
 ## Findings from the current source
 
