@@ -480,10 +480,15 @@ timing as above.
 Do not configure libcurl to continue sending an upload after an early final
 error; cancel that upload and apply the downstream drain-or-close policy.
 For HTTP/2, removing a live easy handle must cancel its stream promptly.
-An upstream `RST_STREAM` is sufficient cancellation evidence: libcurl may
-retain the underlying TLS connection for reuse, so do not wait for socket EOF
-to retire the exchange. Account for retained libcurl connections in the worker
-resource budget until the multi closes them.
+Libcurl can retain the underlying TLS connection after an `RST_STREAM`.
+Because this design disables multiplexing, mark a downstream-canceled
+HTTP/2 connection non-reusable before removing its easy handle. A peer may
+observe `RST_STREAM` or TCP closure; do not wait for socket EOF to retire the
+exchange. Allow reuse after a normally completed response, and account for
+those retained idle connections in the worker budget until the multi closes
+them. Validate close-on-cancel against the pinned libcurl build rather than
+assuming that setting `CURLOPT_FORBID_REUSE` during cancellation has an
+unconditional public API guarantee.
 
 Require a libcurl build with asynchronous DNS capability, or prove equivalent
 nonblocking resolution for every configured resolver path before enabling the
