@@ -183,6 +183,7 @@ struct loop_metrics {
   unsigned h2_abort_tcp_closed;
   unsigned h2_abort_terminal;
   unsigned h2_abort_cancelled;
+  unsigned h2_abort_reuse_done;
   pid_t h2_scale_worker_pid;
   unsigned long h2_scale_worker_baseline_kb;
   unsigned long h2_scale_worker_peak_kb;
@@ -869,6 +870,9 @@ struct h2_fixture_connection {
   size_t generated;
   size_t body_size;
   int abort_mode;
+  int32_t aborted_stream_id;
+  int32_t reused_stream_id;
+  size_t reuse_generated;
 };
 
 struct h2_connection_args {
@@ -925,22 +929,36 @@ h2_body(nghttp2_session *session, int32_t stream_id, uint8_t *data,
   size_t index;
 
   (void)session;
-  (void)stream_id;
   (void)source;
   connection = (struct h2_fixture_connection *)arg;
-  if (connection->abort_mode && connection->generated ==
-      SSE_CHUNK_SIZE)
-    return NGHTTP2_ERR_DEFERRED;
-  if (connection->abort_mode && length > SSE_CHUNK_SIZE)
-    length = SSE_CHUNK_SIZE;
-  if (length > connection->body_size - connection->generated)
+  if (connection->abort_mode) {
+    if (stream_id == connection->aborted_stream_id) {
+      if (connection->generated == SSE_CHUNK_SIZE)
+        return NGHTTP2_ERR_DEFERRED;
+      if (length > SSE_CHUNK_SIZE)
+        length = SSE_CHUNK_SIZE;
+    } else {
+      assert(stream_id == connection->reused_stream_id);
+      if (length > SSE_BODY_SIZE - connection->reuse_generated)
+        length = SSE_BODY_SIZE - connection->reuse_generated;
+    }
+  } else if (length > connection->body_size - connection->generated) {
     length = connection->body_size - connection->generated;
+  }
   assert(length > 0);
   for (index = 0; index < length; index++)
-    data[index] = sse_byte(connection->generated + index);
+    data[index] = sse_byte((connection->abort_mode &&
+        stream_id == connection->reused_stream_id ?
+        connection->reuse_generated : connection->generated) + index);
   connection->generated += length;
   __sync_fetch_and_add(&metrics->h2_generated, length);
-  if (connection->generated == connection->body_size)
+  if (connection->abort_mode &&
+      stream_id == connection->reused_stream_id)
+    connection->reuse_generated += length;
+  if ((connection->abort_mode &&
+      connection->reuse_generated == SSE_BODY_SIZE) ||
+      (!connection->abort_mode &&
+      connection->generated == connection->body_size))
     *flags |= NGHTTP2_DATA_FLAG_EOF;
   return (ssize_t)length;
 }
@@ -970,6 +988,15 @@ h2_request(nghttp2_session *session, const nghttp2_frame *frame,
   if (frame->hd.type != NGHTTP2_HEADERS ||
       frame->headers.cat != NGHTTP2_HCAT_REQUEST)
     return 0;
+  if (connection->abort_mode) {
+    if (connection->aborted_stream_id == 0)
+      connection->aborted_stream_id = frame->hd.stream_id;
+    else {
+      assert(connection->reused_stream_id == 0);
+      assert(metrics->h2_abort_rst_seen == 1);
+      connection->reused_stream_id = frame->hd.stream_id;
+    }
+  }
   __sync_fetch_and_add(&metrics->h2_requests, 1);
   memset(&provider, 0, sizeof(provider));
   provider.read_callback = h2_body;
@@ -1010,9 +1037,11 @@ h2_connection_main(void *arg)
   assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE,
       NULL, 0) == 0);
   assert(nghttp2_session_send(session) == 0);
-  while (connection.generated < connection.body_size &&
-      (!connection.abort_mode ||
-      __sync_fetch_and_add(&metrics->h2_abort_rst_seen, 0) == 0)) {
+  while ((!connection.abort_mode &&
+      connection.generated < connection.body_size) ||
+      (connection.abort_mode &&
+      (__sync_fetch_and_add(&metrics->h2_abort_rst_seen, 0) == 0 ||
+      connection.reuse_generated < SSE_BODY_SIZE))) {
     received = SSL_read(connection.ssl, input, sizeof(input));
     if (connection.abort_mode && received <= 0) {
       fprintf(stderr, "h2 abort upstream read: result=%d ssl_error=%d "
@@ -1029,11 +1058,17 @@ h2_connection_main(void *arg)
     assert(nghttp2_session_send(session) == 0);
   }
   if (connection.abort_mode) {
-    assert(connection.generated == SSE_CHUNK_SIZE);
-    assert(metrics->h2_abort_rst_seen == 1 ||
-        metrics->h2_abort_tcp_closed == 1);
+    assert(connection.generated == SSE_CHUNK_SIZE + SSE_BODY_SIZE);
+    assert(connection.reuse_generated == SSE_BODY_SIZE);
+    assert(metrics->h2_abort_rst_seen == 1);
     __sync_fetch_and_add(&metrics->h2_abort_terminal, 1);
+    for (received = 0; received < 3000 &&
+        __sync_fetch_and_add(&metrics->h2_abort_reuse_done, 0) == 0;
+        received++)
+      usleep(10000u);
+    assert(metrics->h2_abort_reuse_done == 1);
     nghttp2_session_del(session);
+    assert(SSL_shutdown(connection.ssl) >= 0);
     SSL_free(connection.ssl);
     assert(close(args->fd) == 0);
     return NULL;
@@ -3046,6 +3081,10 @@ check_sse(unsigned short port, struct echo_server *server,
       "GET /sse HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char h2_request[] =
       "GET /sse-h2 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  static const char h2_reuse_request[] =
+      "GET /sse-h2-abort HTTP/1.1\r\nHost: localhost\r\n\r\n";
+#endif
   struct sockaddr_in addr;
   struct timeval timeout;
   unsigned char body[HTTP_BODY_BUFFER_SIZE];
@@ -3069,8 +3108,12 @@ check_sse(unsigned short port, struct echo_server *server,
   timeout.tv_usec = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
       &timeout, sizeof(timeout)) == 0);
-  if (use_h2)
+  if (use_h2 == 1)
     send_all(fd, h2_request, sizeof(h2_request) - 1);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  else if (use_h2 == 2)
+    send_all(fd, h2_reuse_request, sizeof(h2_reuse_request) - 1);
+#endif
   else
     send_all(fd, request, sizeof(request) - 1);
   if (early_halfclose)
@@ -3104,7 +3147,7 @@ check_sse(unsigned short port, struct echo_server *server,
     for (i = 0; i < chunk; i++)
       assert(body[i] == sse_byte(received + i));
     received += chunk;
-    if (use_h2)
+    if (use_h2 == 1)
       metrics->h2_down_received = received;
     sse_read_exact(fd, ending, sizeof(ending));
     assert(memcmp(ending, "\r\n", 2) == 0);
@@ -3114,8 +3157,12 @@ check_sse(unsigned short port, struct echo_server *server,
   sse_read_line(fd, line, sizeof(line));
   assert(strcmp(line, "\r\n") == 0);
   assert(recv(fd, ending, sizeof(ending), 0) == 0);
-  if (use_h2)
+  if (use_h2 == 1)
     __sync_lock_test_and_set(&metrics->h2_down_done, 1);
+#if defined(VECTIS_PROXY_SHARED_MULTI)
+  else if (use_h2 == 2)
+    __sync_lock_test_and_set(&metrics->h2_abort_reuse_done, 1);
+#endif
   assert(close(fd) == 0);
 }
 
@@ -4715,7 +4762,14 @@ main(void)
   check_h2_abort(port);
   for (attempt = 0; attempt < 5000 &&
       (__sync_fetch_and_add(&metrics->h2_abort_cancelled, 0) == 0 ||
-      __sync_fetch_and_add(&metrics->h2_abort_terminal, 0) == 0); attempt++)
+      __sync_fetch_and_add(&metrics->h2_abort_rst_seen, 0) == 0); attempt++)
+    usleep(1000u);
+  assert(metrics->h2_abort_cancelled == 1);
+  assert(metrics->h2_abort_rst_seen == 1);
+  check_sse(port, &h2_abort, 0, 2);
+  for (attempt = 0; attempt < 5000 &&
+      __sync_fetch_and_add(&metrics->h2_abort_terminal, 0) == 0;
+      attempt++)
     usleep(1000u);
   fprintf(stderr, "h2 abort: cancelled=%u rst=%u tcp_closed=%u terminal=%u "
       "wait=%d generated=%zu\n", metrics->h2_abort_cancelled,
@@ -4723,15 +4777,17 @@ main(void)
       metrics->h2_abort_terminal, attempt,
       metrics->h2_generated - SSE_BODY_SIZE -
       H2_SCALE_CONNECTIONS * H2_SCALE_BODY_SIZE);
-  assert(metrics->h2_abort_cancelled == 1);
   assert(metrics->h2_abort_terminal == 1);
+  assert(metrics->h2_abort_reuse_done == 1);
+  assert(metrics->h2_abort_tcp_closed == 0);
   assert(pthread_join(h2_abort.thread, NULL) == 0);
   assert(close(h2_abort.listener) == 0);
   assert(metrics->h2_negotiated == 2 + H2_SCALE_CONNECTIONS);
-  assert(metrics->h2_requests == 2 + H2_SCALE_CONNECTIONS);
+  assert(metrics->h2_requests == 3 + H2_SCALE_CONNECTIONS);
   assert(metrics->h2_completed == 1 + H2_SCALE_CONNECTIONS);
   assert(metrics->h2_generated == SSE_BODY_SIZE +
-      H2_SCALE_CONNECTIONS * H2_SCALE_BODY_SIZE + SSE_CHUNK_SIZE);
+      H2_SCALE_CONNECTIONS * H2_SCALE_BODY_SIZE + SSE_CHUNK_SIZE +
+      SSE_BODY_SIZE);
 #endif
   SSL_CTX_free(relay_tls.tls_ctx);
 
@@ -4959,7 +5015,7 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 23 + H2_SCALE_CONNECTIONS);
+  assert(metrics->disconnects == 24 + H2_SCALE_CONNECTIONS);
 #else
   assert(metrics->disconnects == 19);
 #endif
@@ -4968,8 +5024,8 @@ main(void)
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->http_done == 13 + H2_SCALE_CONNECTIONS);
-  assert(metrics->http_headers_ready == 19 + H2_SCALE_CONNECTIONS);
+  assert(metrics->http_done == 14 + H2_SCALE_CONNECTIONS);
+  assert(metrics->http_headers_ready == 20 + H2_SCALE_CONNECTIONS);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
