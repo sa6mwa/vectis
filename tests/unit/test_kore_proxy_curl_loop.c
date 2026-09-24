@@ -114,6 +114,10 @@ struct loop_metrics {
   unsigned http_half_closed;
   unsigned http_upstream_failed;
   unsigned http_local_errors;
+  unsigned http_queue_blocked;
+  unsigned http_queue_abort_cancelled;
+  unsigned http_queue_abort_upstream_closed;
+  unsigned http_queue_pending_at_disconnect;
   unsigned upload_done;
   unsigned upload_pauses;
   unsigned upload_tls_pending_resumes;
@@ -162,6 +166,7 @@ struct proxy_state {
   int ws_rejected;
   int http_mode;
   int http_abort_mode;
+  int http_queue_abort_mode;
   int downstream_half_closed;
   int upload_mode;
   int upload_paused;
@@ -208,6 +213,7 @@ static unsigned short ws_port;
 static unsigned short ws_reject_port;
 static unsigned short sse_port;
 static unsigned short sse_abort_port;
+static unsigned short sse_queue_abort_port;
 static unsigned short sse_reset_port;
 static unsigned short sse_reset_before_port;
 static unsigned short upload_port;
@@ -699,6 +705,86 @@ sse_abort_main(void *arg)
   got = recv(fd, &byte, 1, 0);
   if (got == 0 || (got < 0 && errno == ECONNRESET))
     metrics->http_abort_upstream_closed++;
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static int
+sse_queue_send(int fd, const void *data, size_t length)
+{
+  const unsigned char *bytes;
+  size_t sent;
+  ssize_t amount;
+  int attempts;
+
+  bytes = (const unsigned char *)data;
+  sent = 0;
+  attempts = 0;
+  while (sent < length && attempts < 500) {
+    amount = send(fd, bytes + sent, length - sent,
+        MSG_DONTWAIT | MSG_NOSIGNAL);
+    if (amount > 0) {
+      sent += (size_t)amount;
+      attempts = 0;
+    } else if (amount < 0 &&
+        (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      attempts++;
+      usleep(10000u);
+    } else if (amount < 0 &&
+        (errno == EPIPE || errno == ECONNRESET)) {
+      return 0;
+    } else {
+      assert(0 && "unexpected queued SSE producer send failure");
+    }
+  }
+  assert(sent == length);
+  return 1;
+}
+
+static void *
+sse_queue_abort_main(void *arg)
+{
+  static const char header[] =
+      "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+      "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+  static const char frame_header[] = "1000\r\n";
+  struct echo_server *server;
+  char request[1024];
+  char body[SSE_CHUNK_SIZE];
+  size_t used;
+  ssize_t got;
+  int attempt;
+  int frame;
+  int fd;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0;
+  request[0] = '\0';
+  while (strstr(request, "\r\n\r\n") == NULL) {
+    assert(used < sizeof(request) - 1);
+    got = recv(fd, request + used, sizeof(request) - 1 - used, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  }
+  assert(strstr(request, "GET / HTTP/1.1\r\n") == request);
+  send_all(fd, header, sizeof(header) - 1);
+  for (attempt = 0; attempt < 500 &&
+      __sync_fetch_and_add(&server->allow_body, 0) == 0; attempt++)
+    usleep(10000u);
+  assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  memset(body, 'x', sizeof(body));
+  for (frame = 0; frame < 16384; frame++) {
+    if (!sse_queue_send(fd, frame_header, sizeof(frame_header) - 1) ||
+        !sse_queue_send(fd, body, sizeof(body)) ||
+        !sse_queue_send(fd, "\r\n", 2)) {
+      metrics->http_queue_abort_upstream_closed++;
+      break;
+    }
+  }
+  assert(frame < 16384);
   assert(close(fd) == 0);
   return NULL;
 }
@@ -1402,6 +1488,8 @@ http_pump(struct proxy_state *state)
       return;
     }
     if (!TAILQ_EMPTY(&downstream->send_queue)) {
+      if (state->http_queue_abort_mode)
+        metrics->http_queue_blocked++;
       http_schedule(state);
       return;
     }
@@ -1639,6 +1727,11 @@ downstream_disconnect(struct connection *connection)
   if (state != NULL) {
     if (state->http_abort_mode && state->multi != NULL)
       metrics->http_abort_cancelled++;
+    if (state->http_queue_abort_mode && state->multi != NULL) {
+      metrics->http_queue_abort_cancelled++;
+      if (!TAILQ_EMPTY(&connection->send_queue))
+        metrics->http_queue_pending_at_disconnect++;
+    }
     proxy_cancel(state);
   }
 }
@@ -1738,6 +1831,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/ws-reject") != 0 &&
       strcmp(req->path, "/sse") != 0 &&
       strcmp(req->path, "/sse-abort") != 0 &&
+      strcmp(req->path, "/sse-queue-abort") != 0 &&
       strcmp(req->path, "/sse-reset") != 0 &&
       strcmp(req->path, "/sse-reset-before") != 0 &&
       strcmp(req->path, "/upload") != 0 &&
@@ -1760,10 +1854,13 @@ takeover(struct http_request *req, const void *data, size_t len)
       state->ws_mode;
   state->upload_mode = strcmp(req->path, "/upload") == 0;
   state->http_abort_mode = strcmp(req->path, "/sse-abort") == 0;
+  state->http_queue_abort_mode =
+      strcmp(req->path, "/sse-queue-abort") == 0;
   state->http_mode = strcmp(req->path, "/sse") == 0 ||
       strcmp(req->path, "/sse-reset") == 0 ||
       strcmp(req->path, "/sse-reset-before") == 0 ||
       state->http_abort_mode ||
+      state->http_queue_abort_mode ||
       state->upload_mode;
   if (state->upload_mode) {
     assert(req->method == HTTP_METHOD_POST);
@@ -1793,6 +1890,13 @@ takeover(struct http_request *req, const void *data, size_t len)
           sizeof(relay_response) - 1);
       state->to_downstream_length = sizeof(relay_response) - 1;
     }
+    sndbuf = 4096;
+    assert(setsockopt(req->owner->fd, SOL_SOCKET, SO_SNDBUF,
+        &sndbuf, sizeof(sndbuf)) == 0);
+  }
+  if (state->http_queue_abort_mode) {
+    int sndbuf;
+
     sndbuf = 4096;
     assert(setsockopt(req->owner->fd, SOL_SOCKET, SO_SNDBUF,
         &sndbuf, sizeof(sndbuf)) == 0);
@@ -1831,6 +1935,8 @@ takeover(struct http_request *req, const void *data, size_t len)
     target_port = upload_port;
   else if (state->http_abort_mode)
     target_port = sse_abort_port;
+  else if (state->http_queue_abort_mode)
+    target_port = sse_queue_abort_port;
   else if (strcmp(req->path, "/sse-reset") == 0)
     target_port = sse_reset_port;
   else if (strcmp(req->path, "/sse-reset-before") == 0)
@@ -2069,6 +2175,54 @@ check_sse_abort(unsigned short port)
   assert(memcmp(body, "pong", sizeof(body)) == 0);
   sse_read_exact(fd, ending, sizeof(ending));
   assert(memcmp(ending, "\r\n", sizeof(ending)) == 0);
+  reset.l_onoff = 1;
+  reset.l_linger = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
+      &reset, sizeof(reset)) == 0);
+  assert(close(fd) == 0);
+}
+
+static void
+check_sse_queue_abort(unsigned short port, struct echo_server *server)
+{
+  static const char request[] =
+      "GET /sse-queue-abort HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  struct linger reset;
+  char line[256];
+  int recvbuf;
+  int attempt;
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  recvbuf = 4096;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
+      &recvbuf, sizeof(recvbuf)) == 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  send_all(fd, request, sizeof(request) - 1);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  for (;;) {
+    sse_read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+  }
+  __sync_lock_test_and_set(&server->allow_body, 1);
+  for (attempt = 0; attempt < 500 &&
+      __sync_fetch_and_add(&metrics->http_queue_blocked, 0) == 0;
+      attempt++)
+    usleep(10000u);
+  assert(__sync_fetch_and_add(&metrics->http_queue_blocked, 0) > 0);
   reset.l_onoff = 1;
   reset.l_linger = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
@@ -2639,6 +2793,7 @@ main(void)
   struct echo_server ws_reject;
   struct echo_server sse;
   struct echo_server sse_abort;
+  struct echo_server sse_queue_abort;
   struct echo_server sse_reset;
   struct echo_server sse_reset_before;
   struct echo_server upload;
@@ -2670,6 +2825,7 @@ main(void)
   prepare_echo(&ws_reject);
   prepare_echo(&sse);
   prepare_echo(&sse_abort);
+  prepare_echo(&sse_queue_abort);
   prepare_echo(&sse_reset);
   prepare_echo(&sse_reset_before);
   prepare_echo(&upload);
@@ -2682,6 +2838,7 @@ main(void)
   ws_reject_port = ws_reject.port;
   sse_port = sse.port;
   sse_abort_port = sse_abort.port;
+  sse_queue_abort_port = sse_queue_abort.port;
   sse_reset_port = sse_reset.port;
   sse_reset_before_port = sse_reset_before.port;
   upload_port = upload.port;
@@ -2802,6 +2959,15 @@ main(void)
   assert(metrics->http_abort_upstream_closed == 1);
   assert(metrics->http_half_closed > 0);
 
+  assert(pthread_create(&sse_queue_abort.thread, NULL,
+      sse_queue_abort_main, &sse_queue_abort) == 0);
+  check_sse_queue_abort(port, &sse_queue_abort);
+  assert(pthread_join(sse_queue_abort.thread, NULL) == 0);
+  assert(close(sse_queue_abort.listener) == 0);
+  assert(metrics->http_queue_abort_cancelled == 1);
+  assert(metrics->http_queue_abort_upstream_closed == 1);
+  assert(metrics->http_queue_pending_at_disconnect == 1);
+
   assert(pthread_create(&sse_reset.thread, NULL,
       sse_reset_main, &sse_reset) == 0);
   check_sse_reset(port, &sse_reset);
@@ -2907,13 +3073,13 @@ main(void)
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 14);
+  assert(metrics->disconnects == 15);
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
   assert(metrics->http_done == 4);
-  assert(metrics->http_headers_ready == 6);
+  assert(metrics->http_headers_ready == 7);
   assert(metrics->upload_done == 2);
   assert(metrics->upload_pauses > 0);
   assert(metrics->upload_max_queued <= RELAY_BUFFER_SIZE);
