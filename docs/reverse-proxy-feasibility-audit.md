@@ -217,6 +217,19 @@ used `vectis_response_source()`, which materializes the entire response in a
 temporary file; it was changed to the live source API to test the actual
 stream callback boundary.
 
+A separate ordinary-HTTP takeover mode in the same direct-I/O probe now
+returns ownership to Kore after its response has drained. It marks the
+sleeping request for deletion, restores Kore's connection and event handlers,
+rearms edge-triggered interest, and replays bounded bytes that arrived beyond
+the proxy request. On one connection, the client receives the proxy's `200`
+response, an ordinary 128 KiB response coalesced in the same write, and a
+second ordinary 128 KiB response sent later. The sequence passes over both
+cleartext and downstream TLS in three serial repetitions. This establishes
+that direct takeover can preserve keepalive reuse without extending Kore's
+ordinary transport API. The probe only covers a header-only proxy request and
+a small initial pipeline suffix; the real framer must hold arbitrary bounded
+body and suffix chunks until a safe return point.
+
 The same probe now stops a running app while a second taken-over cleartext
 connection remains open. Its worker teardown callback sees that live direct
 connection, then Kore's later connection cleanup invokes its disconnect
@@ -253,7 +266,7 @@ exchange pass elsewhere below; sustained coupled streaming remains open.
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
 | Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe; actual Vectis proxy route precedence remains untested. |
-| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. | Coalesced and split input passes on Linux, including downstream TLS; bounded pauses and cleanup races remain open. |
+| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. | Coalesced and split input passes on Linux, including downstream TLS. Direct-I/O ordinary HTTP takeover also restores Kore's event handler and serves two subsequent ordinary requests over cleartext and TLS. Bounded request-body framing and cleanup races remain open. |
 | Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` and the live test cover ordinary byte boundaries. A proxy-owned fixed/chunked framer and its bounds remain unproved. |
 | Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, and Kore's TLS wrappers collapse `WANT_READ` and `WANT_WRITE`. The Linux probe bypasses both for taken-over exchanges, uses direct OpenSSL I/O and an 8 KiB queue, and arms only the needed epoll direction. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Normal TLS read/write retries, slow readers, and bounded application output pass on Linux. Forced cross-direction retries, kqueue, and upstream coupling remain open. |
 | TLS buffered data | [OpenSSL documents](https://docs.openssl.org/3.0/man3/SSL_pending/) processed and unprocessed records that can remain after the socket stops reporting readable. An edge-triggered handler must drain buffered application data when capacity resumes, but it must not spin on a record that cannot yet produce application bytes. | Requires a bounded work budget and explicit continuation scheduling, not readiness alone. |
