@@ -554,8 +554,22 @@ and cancellation returned the client's descriptor count from six to four.
 The probe executed its runtime asynchronous-DNS, HTTP/2, and TLS feature
 assertions against this musl archive. This is a second release-bundle
 measurement, not a hard libcurl allocation cap or a coupled Kore worker
-allowance. Close-on-cancel in the musl Kore worker and tests of the
-aarch64/armhf and Darwin archives remain open.
+allowance. Close-on-cancel in the musl Kore worker remains open.
+
+The pinned aarch64 and armhf Linux archives, both GNU and musl, were each
+downloaded into ignored build directories and verified against their SHA-256
+entries in `scripts/deps.sh`. The same isolated sixteen-connection probe was
+cross-compiled as a static binary for each archive and executed with QEMU user
+emulation. One resume run and one cancellation run passed per archive: all
+sixteen 16 MiB responses arrived after resume, no body was delivered on
+cancellation, the client descriptor count returned from six to four, and the
+runtime libcurl checks reported asynchronous DNS, HTTP/2, and TLS. RSS was
+stable during each two-second pause. QEMU's host process RSS includes emulator
+memory, so these runs establish functional pause/cancel behavior and feature
+availability, not a native ARM memory allowance or timing bound. The GNU
+static builds also emitted glibc warnings about runtime shared-library
+requirements for dynamically loaded facilities. Native ARM execution and
+other proxy behaviors on these archives remain open.
 
 The [tagged libcurl 8.22.0 HTTP/2 source](https://github.com/curl/curl/blob/curl-8_22_0/lib/http2.c)
 sets a 64 KiB initial stream window, a 10 MiB maximum stream window, and a
@@ -573,8 +587,9 @@ The HTTP/2 probe asserts that runtime libcurl reports `AsynchDNS`, `HTTP2`,
 and `SSL`. The host-debug and x86_64 Linux GNU release presets in
 [`scripts/deps.sh`](../scripts/deps.sh) select the same
 `c.pkt.systems-0.10.0-x86_64-linux-gnu` archive by SHA-256; both were
-executed above. The x86_64 musl archive was executed separately. The
-distinct ARM and Darwin archives still need explicit checks before a proxy
+executed above. The x86_64 musl and four ARM Linux archives were executed
+separately for the isolated HTTP/2 probe. The Darwin archive and other proxy
+behaviors on all target archives still need explicit checks before a proxy
 route is available on those targets.
 
 ## Executable finding: pre-body handoff and replay
