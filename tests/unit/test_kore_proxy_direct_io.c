@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -16,6 +17,7 @@
 
 #include <kore/http.h>
 #include <kore/kore.h>
+#include <lc/lc.h>
 #include <vectis/vectis.h>
 
 #define DIRECT_BUFFER_SIZE 8192
@@ -39,6 +41,8 @@ struct direct_metrics {
   unsigned prior_queue_drained;
   unsigned worker_teardown_active;
   unsigned worker_teardown_calls;
+  unsigned stream_takeover_seen;
+  unsigned stream_probe_active;
   size_t max_queued;
 };
 
@@ -304,6 +308,8 @@ direct_prebody(struct http_request *req, const void *data, size_t len)
   c->http_timeout = 0;
   if (!TAILQ_EMPTY(&c->send_queue))
     metrics->prior_queue_seen++;
+  if (metrics->stream_probe_active)
+    metrics->stream_takeover_seen++;
   sndbuf = 4096;
   assert(setsockopt(c->fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0);
   state = kore_calloc(1, sizeof(*state));
@@ -397,6 +403,115 @@ health(vectis_app *app, vectis_request *request, vectis_response *response,
   body.size = sizeof(prior_payload);
   return vectis_response_bytes(response, 200, "application/octet-stream",
       body, error);
+}
+
+static vectis_status
+stream_response(vectis_app *app, vectis_request *request,
+    vectis_response *response, void *userdata, vectis_error *error)
+{
+  lc_source *source;
+  vectis_status result;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  source = NULL;
+  assert(lc_source_from_memory(prior_payload, sizeof(prior_payload),
+      &source, NULL) == LC_OK);
+  result = vectis_response_stream_source(response, 200,
+      "application/octet-stream", source, error);
+  if (result != VECTIS_OK)
+    lc_source_close(source);
+  return result;
+}
+
+static void
+read_exact(int fd, void *buffer, size_t length)
+{
+  size_t used;
+  ssize_t got;
+
+  used = 0;
+  while (used < length) {
+    got = recv(fd, (char *)buffer + used, length - used, 0);
+    assert(got > 0);
+    used += (size_t)got;
+  }
+}
+
+static void
+read_line(int fd, char *out, size_t capacity)
+{
+  size_t used;
+
+  used = 0;
+  for (;;) {
+    assert(used < capacity - 1);
+    read_exact(fd, out + used, 1);
+    used++;
+    out[used] = '\0';
+    if (used >= 2 && out[used - 2] == '\r' && out[used - 1] == '\n')
+      return;
+  }
+}
+
+static void
+check_stream_then_direct(unsigned short port)
+{
+  static const char request[] =
+      "GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n"
+      "GET /direct HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+  struct timeval timeout;
+  unsigned char buffer[DIRECT_BUFFER_SIZE];
+  char line[256];
+  size_t received;
+  size_t chunk;
+  int fd;
+
+  fd = connect_local(port);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+      sizeof(timeout)) == 0);
+  assert(send(fd, request, sizeof(request) - 1, MSG_NOSIGNAL) ==
+      (ssize_t)(sizeof(request) - 1));
+  read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  for (;;) {
+    read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+    if (strncasecmp(line, "transfer-encoding:", 18) == 0)
+      assert(strstr(line, "chunked") != NULL);
+  }
+  received = 0;
+  for (;;) {
+    read_line(fd, line, sizeof(line));
+    chunk = (size_t)strtoul(line, NULL, 16);
+    if (chunk == 0)
+      break;
+    assert(chunk <= sizeof(buffer));
+    assert(chunk <= sizeof(prior_payload) - received);
+    read_exact(fd, buffer, chunk);
+    assert(memcmp(buffer, prior_payload + received, chunk) == 0);
+    received += chunk;
+    read_exact(fd, line, 2);
+    assert(memcmp(line, "\r\n", 2) == 0);
+  }
+  assert(received == sizeof(prior_payload));
+  read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "\r\n") == 0);
+  read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 101 ") != NULL);
+  for (;;) {
+    read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+  }
+  assert(shutdown(fd, SHUT_WR) == 0);
+  assert(recv(fd, line, sizeof(line), 0) == 0);
+  assert(close(fd) == 0);
 }
 
 static void
@@ -550,6 +665,8 @@ main(void)
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/stream", stream_response, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
 
   fd = connect_local(port);
@@ -607,6 +724,9 @@ main(void)
   assert(poll(&watch, 1, 5000) > 0);
   assert(recv(fd, recvbuf, sizeof(recvbuf), 0) == 0);
   assert(close(fd) == 0);
+  metrics->stream_probe_active = 1;
+  check_stream_then_direct(port);
+  metrics->stream_probe_active = 0;
 
   fd = connect_local(port);
   assert(send(fd, direct_request, sizeof(direct_request) - 1, 0) ==
@@ -638,13 +758,14 @@ main(void)
       metrics->prior_queue_seen, metrics->prior_queue_drained);
   assert(metrics->events < 10000);
   assert(metrics->write_pauses > 0);
-  assert(metrics->read_eofs == 1);
-  assert(metrics->disconnects == 2);
+  assert(metrics->read_eofs == 2);
+  assert(metrics->disconnects == 3);
   assert(metrics->worker_teardown_calls == 1);
   assert(metrics->worker_teardown_active == 1);
   assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
-  assert(metrics->prior_queue_seen == 1);
-  assert(metrics->prior_queue_drained == 1);
+  assert(metrics->prior_queue_seen == 2);
+  assert(metrics->prior_queue_drained >= 1);
+  assert(metrics->stream_takeover_seen == 1);
 
   memset(metrics, 0, sizeof(*metrics));
   assert(snprintf(cert_path, sizeof(cert_path),
