@@ -90,6 +90,11 @@ if(VECTIS_WITH_KORE_RUNTIME)
       test_proxy_curl_socket_handoff.c)
     vectis_add_unit_test(vectis_unit_proxy_curl_http2_pause
       test_proxy_curl_http2_pause.c)
+    vectis_add_unit_test(vectis_unit_kore_proxy_curl_loop
+      test_kore_proxy_curl_loop.c)
+    target_include_directories(vectis_unit_kore_proxy_curl_loop PRIVATE
+      "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
+    target_compile_options(vectis_unit_kore_proxy_curl_loop PRIVATE -std=c99)
   endif()
   vectis_add_unit_test(vectis_unit_kore_prebody_handoff
     test_kore_prebody_handoff.c)
