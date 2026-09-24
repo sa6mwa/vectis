@@ -416,6 +416,20 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     http_response(req, 200, marker, sizeof(marker) - 1);
     return KORE_RESULT_ERROR;
   }
+  if (strcmp(req->path, "/framing-header-nul") == 0) {
+    static const char marker[] = "prebody-header-nul-hidden";
+
+    req->owner->flags |= CONN_CLOSE_EMPTY;
+    http_response(req, 200, marker, sizeof(marker) - 1);
+    return KORE_RESULT_ERROR;
+  }
+  if (strcmp(req->path, "/framing-bare-cr") == 0) {
+    static const char marker[] = "prebody-bare-cr-accepted";
+
+    req->owner->flags |= CONN_CLOSE_EMPTY;
+    http_response(req, 200, marker, sizeof(marker) - 1);
+    return KORE_RESULT_ERROR;
+  }
   if (strncmp(req->path, "/framing-", 9) == 0) {
     first_length = NULL;
     second_length = NULL;
@@ -1172,26 +1186,21 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
 }
 
 static int
-check_prebody_method_body_result(unsigned short port, const char *method,
-    const char *path, const char *version, const char *headers, int tls,
-    const char *body, int status, const char *marker)
+check_prebody_wire_result(unsigned short port, const void *wire,
+    size_t wire_length, const char *path, int tls, int status,
+    const char *marker)
 {
   SSL_CTX *ctx;
   SSL *ssl;
   struct pollfd watch;
-  char wire[512];
   char output[1024];
   size_t used;
   ssize_t got;
-  int length;
   int fd;
   int ok;
   char status_text[16];
 
-  length = snprintf(wire, sizeof(wire),
-      "%s %s HTTP/%s\r\nHost: localhost\r\n%s\r\n%s",
-      method, path, version, headers, body == NULL ? "" : body);
-  assert(length > 0 && (size_t)length < sizeof(wire));
+  assert(wire_length > 0 && wire_length <= INT_MAX);
   fd = connect_local(port);
   ctx = NULL;
   ssl = NULL;
@@ -1204,9 +1213,9 @@ check_prebody_method_body_result(unsigned short port, const char *method,
     assert(SSL_set_fd(ssl, fd) == 1);
     assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
     assert(SSL_connect(ssl) == 1);
-    assert(SSL_write(ssl, wire, length) == length);
+    assert(SSL_write(ssl, wire, (int)wire_length) == (int)wire_length);
   } else {
-    send_exact(fd, wire, (size_t)length);
+    send_exact(fd, wire, wire_length);
   }
   watch.fd = fd;
   watch.events = POLLIN;
@@ -1241,6 +1250,22 @@ check_prebody_method_body_result(unsigned short port, const char *method,
     SSL_CTX_free(ctx);
   assert(close(fd) == 0);
   return ok;
+}
+
+static int
+check_prebody_method_body_result(unsigned short port, const char *method,
+    const char *path, const char *version, const char *headers, int tls,
+    const char *body, int status, const char *marker)
+{
+  char wire[512];
+  int length;
+
+  length = snprintf(wire, sizeof(wire),
+      "%s %s HTTP/%s\r\nHost: localhost\r\n%s\r\n%s",
+      method, path, version, headers, body == NULL ? "" : body);
+  assert(length > 0 && (size_t)length < sizeof(wire));
+  return check_prebody_wire_result(port, wire, (size_t)length, path, tls,
+      status, marker);
 }
 
 static int
@@ -1292,6 +1317,30 @@ check_header_count_boundary(unsigned short port, int tls)
   assert(check_prebody_header_result(port, "/framing-header-limit",
       "1.1", headers, tls, 400, "Bad Request"));
   return 1;
+}
+
+static int
+check_embedded_header_nul(unsigned short port, int tls)
+{
+  static const char wire[] =
+      "GET /framing-header-nul HTTP/1.1\r\n"
+      "Host: localhost\r\nX-Pad: x\0\r\n"
+      "Transfer-Encoding: chunked\r\n\r\n";
+
+  return check_prebody_wire_result(port, wire, sizeof(wire) - 1u,
+      "/framing-header-nul", tls, 400, "Bad Request");
+}
+
+static int
+check_bare_header_cr(unsigned short port, int tls)
+{
+  static const char wire[] =
+      "GET /framing-bare-cr HTTP/1.1\r\n"
+      "Host: localhost\r\nX-Pad: x\r"
+      "Transfer-Encoding: chunked\r\n\r\n";
+
+  return check_prebody_wire_result(port, wire, sizeof(wire) - 1u,
+      "/framing-bare-cr", tls, 400, "Bad Request");
 }
 
 int
@@ -1435,6 +1484,8 @@ main(void)
   framing_headers_passed &= check_framing_header_visibility(port,
       "/framing-http10", "1.0", "", 0);
   framing_headers_passed &= check_header_count_boundary(port, 0);
+  framing_headers_passed &= check_embedded_header_nul(port, 0);
+  framing_headers_passed &= check_bare_header_cr(port, 0);
   raw_target_passed = check_prebody_header_result(port,
       "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
       "1.1", "", 0, 200, "raw-target-preserved");
@@ -1545,6 +1596,8 @@ main(void)
   framing_headers_passed &= check_framing_header_visibility(port,
       "/framing-http10", "1.0", "", 1);
   framing_headers_passed &= check_header_count_boundary(port, 1);
+  framing_headers_passed &= check_embedded_header_nul(port, 1);
+  framing_headers_passed &= check_bare_header_cr(port, 1);
   raw_target_passed &= check_prebody_header_result(port,
       "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
       "1.1", "", 1, 200, "raw-target-preserved");

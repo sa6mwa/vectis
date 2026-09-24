@@ -10,14 +10,26 @@ diff --git a/src/http.c b/src/http.c
  	char			*headers[HTTP_REQ_HEADER_MAX];
  	char			*value, *host, *request[4], *hbuf;
  
-@@ -873,6 +873,22 @@ http_header_recv(struct netbuf *nb)
+@@ -873,9 +873,34 @@ http_header_recv(struct netbuf *nb)
+ 
++	if (memchr(nb->buf, '\0', (size_t)(end_headers - nb->buf)) != NULL) {
++		http_error_response(c, HTTP_STATUS_BAD_REQUEST);
++		return (KORE_RESULT_OK);
++	}
++
+ 	*end_headers = '\0';
+ 	end_headers += skip;
  	len = end_headers - nb->buf;
  	hbuf = (char *)nb->buf;
  
-+	/* kore_split_string() stops at the output limit without an overflow signal. */
++	/* Do not silently truncate at the split array limit. */
 +	fields = 0;
 +	in_field = 0;
 +	for (value = hbuf; *value != '\0'; value++) {
++		if (*value == '\r' && value[1] != '\n') {
++			http_error_response(c, HTTP_STATUS_BAD_REQUEST);
++			return (KORE_RESULT_OK);
++		}
 +		if (*value == '\r' || *value == '\n') {
 +			in_field = 0;
 +		} else if (!in_field) {

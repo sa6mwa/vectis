@@ -755,13 +755,21 @@ The same probe exposed a separate header-count boundary. Kore passed at most
 `Transfer-Encoding` field after 22 padding fields and `Host` disappeared
 without an overflow indication. The live pre-body hook then returned `200`
 for a request whose final framing field was invisible. Patch
-[`0033`](../vendor/kore/patches/0033-kore-reject-truncated-request-headers.patch)
+[`0033`](../vendor/kore/patches/0033-kore-validate-request-header-block.patch)
 counts nonempty lines before the destructive split and rejects any excess
 with `400`. A boundary probe proves that the largest accepted header block
 reaches the hook intact and the next field is rejected before the hook on
 cleartext and TLS. This changes ordinary Kore requests at that limit from
 silent truncation to rejection; it does not implement the proxy's complete
 framing or header policy.
+
+The same destructive split hid everything after an embedded NUL in a field
+value, and treated a bare CR as a field separator. Live probes confirmed both
+cases could reach the hook and produce `200`. Patch `0033` now rejects either
+byte pattern before splitting, on cleartext and TLS. [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.5)
+requires rejection or replacement of NUL in a field value before forwarding;
+the patch chooses rejection. The remaining proxy admission checks still need
+to validate framing values and hop-by-hop field semantics.
 
 The pre-body view also retains the raw path `/raw-target/a%2Fb/%2e/c` and
 query `q=1&q=2&plus=%2B&empty=` byte-for-byte over cleartext and downstream
