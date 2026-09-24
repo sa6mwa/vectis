@@ -26,3 +26,4 @@
 0026-kore-vectis-acme-state-hook.patch
 0027-kore-pslog-accesslog-levels.patch
 0028-kore-bound-worker-pslog-messages.patch
+0029-kore-preserve-pipelined-request-bytes.patch

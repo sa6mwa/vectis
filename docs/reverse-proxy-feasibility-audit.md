@@ -1,9 +1,9 @@
 # Reverse proxy transport feasibility audit
 
-Status: source audit, 2026-09-24. The pre-body takeover is a candidate, not a
-proven implementation choice. No proxy transport code or prototype is included
-in this audit. The intended feature contract is in
-[reverse-proxy-spec.md](reverse-proxy-spec.md).
+Status: source audit plus a live Kore pipelining test, 2026-09-24. The pre-body
+takeover is a candidate, not a proven implementation choice. No proxy
+transport code or prototype is included in this audit. The intended feature
+contract is in [reverse-proxy-spec.md](reverse-proxy-spec.md).
 
 ## Decision
 
@@ -19,6 +19,21 @@ The alternative shared-framing approach avoids duplicating a fixed-length
 body counter but touches more of Kore's normal request path. The pre-body
 candidate is preferable only if the gates below pass without broadening its
 Kore changes into a second event/HTTP stack.
+
+## Executable finding: ordinary pipelining
+
+The focused [Kore pipelining test](../tests/unit/test_kore_pipelining.c) sent
+two ordinary GET requests in one TCP write to a running Vectis listener.
+Before the fix, it received one response. Patch
+[`0029`](../vendor/kore/patches/0029-kore-preserve-pipelined-request-bytes.patch)
+now retains the bounded suffix from the initial header read, clamps the
+initial body delivery to the declared `Content-Length`, and replays the suffix
+after the preceding response starts the next receive. The live test receives
+two responses for GET plus GET, fixed-length POST plus GET, and zero-length
+POST plus GET. It closes the app and waits for its workers before exiting.
+The existing HTTPS runtime test, header-limit test, and `kore_smoke` runtime
+case also pass. This proves the ordinary byte-replay prerequisite on Linux;
+it does not prove proxy takeover, TLS replay, or backpressure.
 
 ## Findings from the current source
 
