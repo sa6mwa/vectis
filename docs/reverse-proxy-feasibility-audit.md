@@ -787,6 +787,18 @@ same error status, so a raw fallback needs an independent, strict validator;
 it cannot infer safety from the decoder's error code. No production proxy kind
 or executable fallback test exists yet.
 
+The [Kore worker curl-loop probe](../tests/unit/test_kore_proxy_curl_loop.c)
+now covers the next transport boundary. Its pre-body hook receives
+`/sse/a%2Fb/%25/%3A?x=1&x=2&raw=%2F`, retains the escaped path and repeated
+query fields, prepends `/upstream`, and passes the resulting origin-form
+target through `CURLOPT_REQUEST_TARGET`. A dedicated HTTP/1.1 upstream checks
+the exact request line, while the downstream receives a complete 1 MiB SSE
+body through bounded queues. Both per-transfer and worker-shared curl multi
+variants pass on Linux. This proves raw-target transport through the composed
+hook and curl path for the fixture; it does not prove proxy route admission,
+raw-path validation, arbitrary director rewrites, or HTTP/2 upstream target
+forwarding in the worker loop.
+
 The same handoff probe now accepts a 1 MiB chunked POST with no
 `Content-Length`, before Kore's ordinary `411` path. Its temporary framer
 validates each body byte without storing the body, uses later receive windows

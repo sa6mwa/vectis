@@ -39,6 +39,11 @@
 #define UPLOAD_BODY_SIZE (1024 * 1024)
 #define CHUNK_LINE_SIZE 128
 
+static const char raw_path[] = "/sse/a%2Fb/%25/%3A";
+static const char raw_query[] = "x=1&x=2&raw=%2F";
+static const char rewritten_raw_target[] =
+    "/upstream/sse/a%2Fb/%25/%3A?x=1&x=2&raw=%2F";
+
 enum upload_chunk_phase {
   UPLOAD_CHUNK_SIZE,
   UPLOAD_CHUNK_DATA,
@@ -112,6 +117,7 @@ struct echo_server {
   int header_retry_reset_mode;
   int queue_abort_mode;
   int hold_final;
+  int raw_target_mode;
   volatile int release_final;
   size_t h2_body_size;
   int h2_abort_mode;
@@ -341,6 +347,7 @@ struct proxy_state {
   struct http_request *request;
   struct curl_slist *upload_headers;
   char curl_error[CURL_ERROR_SIZE];
+  char request_target[256];
   int http_status_seen;
   int http_headers_ready;
   int http_headers_sent;
@@ -397,6 +404,7 @@ static unsigned short ws_retry_port;
 static unsigned short ws_retry_abort_port;
 static unsigned short ws_reject_port;
 static unsigned short sse_port;
+static unsigned short raw_sse_port;
 static unsigned short sse_abort_port;
 static unsigned short sse_queue_abort_port;
 static unsigned short sse_write_fail_port;
@@ -1519,7 +1527,15 @@ sse_main(void *arg)
     used += (size_t)got;
     request[used] = '\0';
   }
-  assert(strstr(request, "GET / HTTP/1.1\r\n") == request);
+  if (server->raw_target_mode) {
+    assert(strncmp(request, "GET ", 4) == 0);
+    assert(strncmp(request + 4, rewritten_raw_target,
+        sizeof(rewritten_raw_target) - 1) == 0);
+    assert(strstr(request, " HTTP/1.1\r\n") ==
+        request + 4 + sizeof(rewritten_raw_target) - 1);
+  } else {
+    assert(strstr(request, "GET / HTTP/1.1\r\n") == request);
+  }
   send_all(fd, header, sizeof(header) - 1);
   for (attempt = 0; attempt < 500 &&
       __sync_fetch_and_add(&server->allow_body, 0) == 0; attempt++)
@@ -1789,6 +1805,7 @@ prepare_echo(struct echo_server *server)
   server->header_retry_reset_mode = 0;
   server->queue_abort_mode = 0;
   server->hold_final = 0;
+  server->raw_target_mode = 0;
   server->release_final = 0;
   server->h2_body_size = 0;
   server->h2_abort_mode = 0;
@@ -3358,8 +3375,12 @@ takeover(struct http_request *req, const void *data, size_t len)
   struct proxy_state *state;
   unsigned short target_port;
   char url[128];
+  int raw_mode;
+
+  raw_mode = strcmp(req->path, raw_path) == 0;
 
   if (strcmp(req->path, "/curl") != 0 &&
+      !raw_mode &&
       strcmp(req->path, "/relay") != 0 &&
       strcmp(req->path, "/relay-tls") != 0 &&
       strcmp(req->path, "/ws") != 0 &&
@@ -3411,6 +3432,14 @@ takeover(struct http_request *req, const void *data, size_t len)
   }
 #endif
   state = kore_calloc(1, sizeof(*state));
+  if (raw_mode) {
+    assert(req->query_string != NULL);
+    assert(strcmp(req->query_string, raw_query) == 0);
+    assert(snprintf(state->request_target, sizeof(state->request_target),
+        "/upstream%s?%s", req->path, req->query_string) ==
+        (int)(sizeof(rewritten_raw_target) - 1));
+    assert(strcmp(state->request_target, rewritten_raw_target) == 0);
+  }
   state->relay_mode = strcmp(req->path, "/relay") == 0 ||
       strcmp(req->path, "/relay-tls") == 0 ||
       strcmp(req->path, "/ws") == 0 ||
@@ -3483,7 +3512,7 @@ takeover(struct http_request *req, const void *data, size_t len)
     assert(req->owner->tls != NULL);
     state->tls_retry_write_once = 1;
   }
-  state->http_mode = strcmp(req->path, "/sse") == 0 ||
+  state->http_mode = raw_mode || strcmp(req->path, "/sse") == 0 ||
       state->h2_mode ||
       strcmp(req->path, "/sse-reset") == 0 ||
       strcmp(req->path, "/sse-reset-before") == 0 ||
@@ -3619,6 +3648,8 @@ takeover(struct http_request *req, const void *data, size_t len)
     target_port = sse_tls_reset_port;
   else if (strcmp(req->path, "/sse-reset-tls-before") == 0)
     target_port = sse_tls_reset_before_port;
+  else if (raw_mode)
+    target_port = raw_sse_port;
   else if (state->http_mode)
 #if defined(VECTIS_PROXY_SHARED_MULTI)
     target_port = strcmp(req->path, "/sse-h2-recovery") == 0 ?
@@ -3640,6 +3671,9 @@ takeover(struct http_request *req, const void *data, size_t len)
           ? "localhost" : "127.0.0.1",
       (unsigned)target_port) > 0);
   assert(curl_easy_setopt(state->easy, CURLOPT_URL, url) == CURLE_OK);
+  if (raw_mode)
+    assert(curl_easy_setopt(state->easy, CURLOPT_REQUEST_TARGET,
+        state->request_target) == CURLE_OK);
   if (!state->http_mode)
     assert(curl_easy_setopt(state->easy, CURLOPT_CONNECT_ONLY,
         1L) == CURLE_OK);
@@ -3792,6 +3826,9 @@ check_sse(unsigned short port, struct echo_server *server,
       "GET /sse HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char h2_request[] =
       "GET /sse-h2 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char raw_request[] =
+      "GET /sse/a%2Fb/%25/%3A?x=1&x=2&raw=%2F HTTP/1.1\r\n"
+      "Host: localhost\r\n\r\n";
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   static const char h2_reuse_request[] =
       "GET /sse-h2-abort HTTP/1.1\r\nHost: localhost\r\n\r\n";
@@ -3821,6 +3858,8 @@ check_sse(unsigned short port, struct echo_server *server,
       &timeout, sizeof(timeout)) == 0);
   if (use_h2 == 1)
     send_all(fd, h2_request, sizeof(h2_request) - 1);
+  else if (use_h2 == 3)
+    send_all(fd, raw_request, sizeof(raw_request) - 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   else if (use_h2 == 2)
     send_all(fd, h2_reuse_request, sizeof(h2_reuse_request) - 1);
@@ -5481,6 +5520,7 @@ main(void)
   struct echo_server ws_retry_abort;
   struct echo_server ws_reject;
   struct echo_server sse;
+  struct echo_server raw_sse;
   struct echo_server sse_abort;
   struct echo_server sse_queue_abort;
   struct echo_server sse_write_fail;
@@ -5560,6 +5600,8 @@ main(void)
   ws_retry_abort.ws_retry_abort_mode = 1;
   prepare_echo(&ws_reject);
   prepare_echo(&sse);
+  prepare_echo(&raw_sse);
+  raw_sse.raw_target_mode = 1;
   prepare_echo(&sse_abort);
   prepare_echo(&sse_queue_abort);
   sse_queue_abort.queue_abort_mode = 1;
@@ -5597,6 +5639,7 @@ main(void)
   ws_retry_abort_port = ws_retry_abort.port;
   ws_reject_port = ws_reject.port;
   sse_port = sse.port;
+  raw_sse_port = raw_sse.port;
   sse_abort_port = sse_abort.port;
   sse_queue_abort_port = sse_queue_abort.port;
   sse_write_fail_port = sse_write_fail.port;
@@ -5966,6 +6009,10 @@ main(void)
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
   check_sse(port, &sse, 1, 0);
   assert(pthread_join(sse.thread, NULL) == 0);
+  assert(pthread_create(&raw_sse.thread, NULL, sse_main, &raw_sse) == 0);
+  check_sse(port, &raw_sse, 0, 3);
+  assert(pthread_join(raw_sse.thread, NULL) == 0);
+  assert(close(raw_sse.listener) == 0);
 #if !defined(VECTIS_PROXY_SHARED_MULTI)
   assert(close(sse.listener) == 0);
 #endif
@@ -6254,22 +6301,22 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 35 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->disconnects == 36 + 2 * H2_SCALE_CONNECTIONS);
 #else
-  assert(metrics->disconnects == 28);
+  assert(metrics->disconnects == 29);
 #endif
   assert(metrics->relay_done == 6);
   assert(metrics->ws_upgraded == 3);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->http_done == 15 + H2_SCALE_CONNECTIONS);
-  assert(metrics->http_headers_ready == 28 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->http_done == 16 + H2_SCALE_CONNECTIONS);
+  assert(metrics->http_headers_ready == 29 + 2 * H2_SCALE_CONNECTIONS);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
-  assert(metrics->http_done == 11);
-  assert(metrics->http_headers_ready == 21);
+  assert(metrics->http_done == 12);
+  assert(metrics->http_headers_ready == 22);
 #endif
   assert(metrics->upload_done == 3);
   assert(metrics->chunked_upload_done == 6);
