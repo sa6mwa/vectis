@@ -505,8 +505,20 @@ mode and the focused ASan run pass. This proves that an edge-triggered
 interest mask plus a bounded delayed retry can make progress without a
 writable-fd spin in the simulated public API state. The wrapper, not libcurl,
 creates that state; actual OpenSSL transitions, much longer idle periods,
-timer cancellation during a disconnect, and native kqueue execution remain
-open.
+and native kqueue execution remain open.
+
+A second verified-TLS WebSocket exchange now resets the cleartext downstream
+socket immediately after the no-edge timer is armed. The first run exposed a
+real gap in the disposable relay: its raw read branch asserted on
+`ECONNRESET` instead of cancelling, and its event callback did not inspect a
+socket error before pumping. With both paths cancelling through Kore's
+disconnect callback, the upstream TLS fixture observes closure, the retry
+timer is removed once before its one-second due time, and the earlier
+successful tunnel's timer remains the only one to fire after waiting beyond
+that due time. Three serial debug runs in each curl mode and focused ASan
+pass. This proves the timer's normal disconnect lifetime for this Linux
+probe; other callback phases, abrupt upstream errors, and native kqueue
+batch lifetime remain open.
 
 The worker-loop probe also sends that early client frame to a WebSocket route
 whose verified HTTPS upstream returns `403` and a 1 MiB body. The upstream

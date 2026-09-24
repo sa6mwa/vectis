@@ -588,7 +588,10 @@ use a bounded, cancellable delayed retry so an internal TLS transition with
 no further socket edge cannot stall forever; measure its wakeup rate under an
 idle tunnel and a forced cross-direction retry. Never use a continuous
 level-triggered writable watcher as that retry mechanism. This raw-tunnel
-policy requires an executable probe before architecture commitment.
+policy requires an executable probe before architecture commitment. A
+downstream reset can arrive as an event error or as `ECONNRESET` on the next
+raw read; both paths must cancel the easy handle and delayed retry timer
+before the exchange is freed.
 The relay copies bounded byte chunks in both directions with independent
 ingress pause/resume. Kore's WebSocket message API remains for application
 WebSockets and is not used by transparent proxy tunnels.

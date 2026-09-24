@@ -68,6 +68,12 @@ static const char ws_retry_client_request[] =
     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
     "Sec-WebSocket-Version: 13\r\n"
     "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const char ws_retry_abort_client_request[] =
+    "GET /ws-retry-abort HTTP/1.1\r\nHost: localhost\r\n"
+    "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Protocol: chat\r\n\r\n";
 static const char ws_reject_client_request[] =
     "GET /ws-reject HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
     "Connection: Upgrade\r\n"
@@ -99,6 +105,7 @@ struct echo_server {
   SSL_CTX *tls_ctx;
   volatile int allow_body;
   int ws_retry_mode;
+  int ws_retry_abort_mode;
   int queue_abort_mode;
   int hold_final;
   volatile int release_final;
@@ -183,6 +190,9 @@ struct loop_metrics {
   unsigned ws_retry_tunnel_events;
   unsigned ws_retry_cached_injected;
   unsigned ws_retry_timer_fired;
+  unsigned ws_retry_timer_armed;
+  unsigned ws_retry_timer_cancelled;
+  unsigned ws_retry_upstream_closed;
   unsigned ws_retry_idle_events;
   unsigned http_body_pauses;
   unsigned http_chunks;
@@ -263,6 +273,7 @@ struct proxy_state {
   int ws_reject_mode;
   int ws_rejected;
   int ws_retry_mode;
+  int ws_retry_abort_mode;
   int ws_retry_send_injected;
   int ws_retry_recv_injected;
   int ws_retry_read_seen;
@@ -369,6 +380,7 @@ static unsigned short relay_port;
 static unsigned short relay_tls_port;
 static unsigned short ws_port;
 static unsigned short ws_retry_port;
+static unsigned short ws_retry_abort_port;
 static unsigned short ws_reject_port;
 static unsigned short sse_port;
 static unsigned short sse_abort_port;
@@ -689,6 +701,9 @@ ws_tls_main(void *arg)
   int fd;
   int got;
   int attempt;
+  int retry_target;
+  int ssl_error;
+  struct timeval timeout;
 
   server = (struct echo_server *)arg;
   fd = accept(server->listener, NULL, NULL);
@@ -718,11 +733,14 @@ ws_tls_main(void *arg)
   assert(SSL_write(ssl, response, sizeof(response)) ==
       (int)sizeof(response));
   if (server->ws_retry_mode) {
+    retry_target = server->ws_retry_abort_mode ? 2 : 1;
     for (attempt = 0; attempt < 5000 &&
-        __sync_fetch_and_add(&metrics->ws_retry_send_injected, 0) == 0;
+        __sync_fetch_and_add(&metrics->ws_retry_send_injected, 0) <
+            (unsigned)retry_target;
         attempt++)
       usleep(1000u);
-    assert(__sync_fetch_and_add(&metrics->ws_retry_send_injected, 0) == 1);
+    assert(__sync_fetch_and_add(&metrics->ws_retry_send_injected, 0) ==
+        (unsigned)retry_target);
     assert(SSL_write(ssl, ws_server_retry,
         sizeof(ws_server_retry)) == (int)sizeof(ws_server_retry));
   }
@@ -746,6 +764,24 @@ ws_tls_main(void *arg)
       sizeof(ws_client_later)) == 0);
   assert(SSL_write(ssl, ws_server_later, sizeof(ws_server_later)) ==
       (int)sizeof(ws_server_later));
+  if (server->ws_retry_abort_mode) {
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+        &timeout, sizeof(timeout)) == 0);
+    got = SSL_read(ssl, request, sizeof(request));
+    assert(got <= 0);
+    ssl_error = SSL_get_error(ssl, got);
+    assert(ssl_error == SSL_ERROR_ZERO_RETURN ||
+        ssl_error == SSL_ERROR_SYSCALL ||
+        ssl_error == SSL_ERROR_SSL);
+    if (ssl_error == SSL_ERROR_SYSCALL)
+      assert(errno != EAGAIN && errno != EWOULDBLOCK);
+    __sync_fetch_and_add(&metrics->ws_retry_upstream_closed, 1);
+    SSL_free(ssl);
+    assert(close(fd) == 0);
+    return NULL;
+  }
   assert(SSL_shutdown(ssl) >= 0);
   SSL_free(ssl);
   assert(close(fd) == 0);
@@ -1641,6 +1677,7 @@ prepare_echo(struct echo_server *server)
   server->tls_ctx = NULL;
   server->allow_body = 0;
   server->ws_retry_mode = 0;
+  server->ws_retry_abort_mode = 0;
   server->queue_abort_mode = 0;
   server->hold_final = 0;
   server->release_final = 0;
@@ -1997,6 +2034,10 @@ relay_pump(struct proxy_state *state)
         state->downstream_eof = 1;
         progress = 1;
       } else {
+        if (errno == ECONNRESET || errno == EPIPE) {
+          kore_connection_disconnect(downstream);
+          return;
+        }
         assert(errno == EAGAIN || errno == EWOULDBLOCK);
       }
     } else if (state->to_upstream_length != 0) {
@@ -2112,9 +2153,12 @@ finish:
     state->relay_continue_timer = kore_timer_add(relay_continue, 0,
         state, KORE_TIMER_ONESHOT);
   if (state->ws_retry_cache_pending && !state->ws_retry_cache_release &&
-      state->relay_retry_timer == NULL)
-    state->relay_retry_timer = kore_timer_add(relay_retry_cached, 25,
+      state->relay_retry_timer == NULL) {
+    state->relay_retry_timer = kore_timer_add(relay_retry_cached,
+        state->ws_retry_abort_mode ? 1000 : 25,
         state, KORE_TIMER_ONESHOT);
+    metrics->ws_retry_timer_armed++;
+  }
 schedule:
   down_events = 0;
   up_events = 0;
@@ -2903,6 +2947,8 @@ proxy_cancel(struct proxy_state *state)
     state->relay_continue_timer = NULL;
   }
   if (state->relay_retry_timer != NULL) {
+    if (state->ws_retry_abort_mode)
+      metrics->ws_retry_timer_cancelled++;
     kore_timer_remove(state->relay_retry_timer);
     state->relay_retry_timer = NULL;
   }
@@ -3040,7 +3086,8 @@ worker_cancel(void)
       metrics->active_watchers_at_teardown += state->curl_watch_count;
 #endif
       if (state->timer != NULL || state->deadline_timer != NULL ||
-          state->relay_continue_timer != NULL)
+          state->relay_continue_timer != NULL ||
+          state->relay_retry_timer != NULL)
         metrics->timers_at_teardown++;
       proxy_cancel(state);
       metrics->worker_cancelled++;
@@ -3112,6 +3159,15 @@ downstream_event(void *arg, int error)
     return;
   }
   if (state->relay_mode) {
+    if (error) {
+      error_length = sizeof(socket_error);
+      assert(getsockopt(connection->fd, SOL_SOCKET, SO_ERROR,
+          &socket_error, &error_length) == 0);
+      if (socket_error != 0) {
+        kore_connection_disconnect(connection);
+        return;
+      }
+    }
     if (connection->tls != NULL)
       metrics->tls_downstream_events++;
     if (state->phase != 0)
@@ -3150,6 +3206,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/relay-tls") != 0 &&
       strcmp(req->path, "/ws") != 0 &&
       strcmp(req->path, "/ws-retry") != 0 &&
+      strcmp(req->path, "/ws-retry-abort") != 0 &&
       strcmp(req->path, "/ws-reject") != 0 &&
       strcmp(req->path, "/sse") != 0 &&
 #if defined(VECTIS_PROXY_SHARED_MULTI)
@@ -3174,6 +3231,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/relay-tls") == 0 ||
       strcmp(req->path, "/ws") == 0 ||
       strcmp(req->path, "/ws-retry") == 0 ||
+      strcmp(req->path, "/ws-retry-abort") == 0 ||
       strcmp(req->path, "/ws-reject") == 0 ||
       strcmp(req->path, "/upload") == 0 ||
       strcmp(req->path, "/upload-tls-retry") == 0 ||
@@ -3195,11 +3253,16 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/relay-tls") == 0 ||
       strcmp(req->path, "/ws") == 0 ||
       strcmp(req->path, "/ws-retry") == 0 ||
+      strcmp(req->path, "/ws-retry-abort") == 0 ||
       strcmp(req->path, "/ws-reject") == 0;
   state->ws_mode = strcmp(req->path, "/ws") == 0 ||
       strcmp(req->path, "/ws-retry") == 0 ||
+      strcmp(req->path, "/ws-retry-abort") == 0 ||
       strcmp(req->path, "/ws-reject") == 0;
-  state->ws_retry_mode = strcmp(req->path, "/ws-retry") == 0;
+  state->ws_retry_abort_mode =
+      strcmp(req->path, "/ws-retry-abort") == 0;
+  state->ws_retry_mode = state->ws_retry_abort_mode ||
+      strcmp(req->path, "/ws-retry") == 0;
   state->ws_reject_mode = strcmp(req->path, "/ws-reject") == 0;
   state->relay_tls = strcmp(req->path, "/relay-tls") == 0 ||
       state->ws_mode;
@@ -3354,6 +3417,7 @@ takeover(struct http_request *req, const void *data, size_t len)
     target_port = stalled_port;
   else if (state->ws_mode)
     target_port = state->ws_reject_mode ? ws_reject_port :
+        state->ws_retry_abort_mode ? ws_retry_abort_port :
         state->ws_retry_mode ? ws_retry_port : ws_port;
   else if (strcmp(req->path, "/relay-tls") == 0)
     target_port = relay_tls_port;
@@ -4780,11 +4844,13 @@ check_tls_chunked_upload(unsigned short port, struct echo_server *server)
 }
 
 static void
-check_ws(unsigned short port, struct echo_server *sse_server, int retry)
+check_ws(unsigned short port, struct echo_server *sse_server,
+    int retry, int abort_retry)
 {
   struct sockaddr_in addr;
+  struct linger reset;
   struct timeval timeout;
-  unsigned char initial[sizeof(ws_retry_client_request) - 1 +
+  unsigned char initial[sizeof(ws_retry_abort_client_request) - 1 +
       sizeof(ws_client_early)];
   unsigned char bytes[sizeof(ws_response) - 1 + sizeof(ws_server_early)];
   const char *request;
@@ -4792,6 +4858,7 @@ check_ws(unsigned short port, struct echo_server *sse_server, int retry)
   unsigned idle_before;
   unsigned idle_after;
   int fd;
+  int attempt;
 
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
@@ -4804,7 +4871,8 @@ check_ws(unsigned short port, struct echo_server *sse_server, int retry)
   timeout.tv_usec = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
       &timeout, sizeof(timeout)) == 0);
-  request = retry ? ws_retry_client_request : ws_client_request;
+  request = abort_retry ? ws_retry_abort_client_request :
+      retry ? ws_retry_client_request : ws_client_request;
   request_length = strlen(request);
   memcpy(initial, request, request_length);
   memcpy(initial + request_length,
@@ -4817,18 +4885,33 @@ check_ws(unsigned short port, struct echo_server *sse_server, int retry)
   if (retry) {
     sse_read_exact(fd, bytes, sizeof(ws_server_retry));
     assert(memcmp(bytes, ws_server_retry, sizeof(ws_server_retry)) == 0);
-    usleep(50000u);
-    idle_before = __sync_fetch_and_add(
-        &metrics->ws_retry_tunnel_events, 0);
-    usleep(1500000u);
-    idle_after = __sync_fetch_and_add(
-        &metrics->ws_retry_tunnel_events, 0);
-    assert(idle_after >= idle_before && idle_after <= idle_before + 2);
-    metrics->ws_retry_idle_events = idle_after - idle_before;
+    if (!abort_retry) {
+      usleep(50000u);
+      idle_before = __sync_fetch_and_add(
+          &metrics->ws_retry_tunnel_events, 0);
+      usleep(1500000u);
+      idle_after = __sync_fetch_and_add(
+          &metrics->ws_retry_tunnel_events, 0);
+      assert(idle_after >= idle_before && idle_after <= idle_before + 2);
+      metrics->ws_retry_idle_events = idle_after - idle_before;
+    }
   }
   if (sse_server != NULL)
     check_sse(port, sse_server, 0, 0);
   send_all(fd, ws_client_later, sizeof(ws_client_later));
+  if (abort_retry) {
+    for (attempt = 0; attempt < 5000 &&
+        __sync_fetch_and_add(&metrics->ws_retry_timer_armed, 0) < 2;
+        attempt++)
+      usleep(1000u);
+    assert(__sync_fetch_and_add(&metrics->ws_retry_timer_armed, 0) == 2);
+    reset.l_onoff = 1;
+    reset.l_linger = 0;
+    assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
+        &reset, sizeof(reset)) == 0);
+    assert(close(fd) == 0);
+    return;
+  }
   sse_read_exact(fd, bytes, sizeof(ws_server_later));
   assert(memcmp(bytes, ws_server_later,
       sizeof(ws_server_later)) == 0);
@@ -5096,6 +5179,7 @@ main(void)
   struct echo_server relay_tls;
   struct echo_server ws;
   struct echo_server ws_retry;
+  struct echo_server ws_retry_abort;
   struct echo_server ws_reject;
   struct echo_server sse;
   struct echo_server sse_abort;
@@ -5168,6 +5252,9 @@ main(void)
   prepare_echo(&ws);
   prepare_echo(&ws_retry);
   ws_retry.ws_retry_mode = 1;
+  prepare_echo(&ws_retry_abort);
+  ws_retry_abort.ws_retry_mode = 1;
+  ws_retry_abort.ws_retry_abort_mode = 1;
   prepare_echo(&ws_reject);
   prepare_echo(&sse);
   prepare_echo(&sse_abort);
@@ -5198,6 +5285,7 @@ main(void)
   relay_tls_port = relay_tls.port;
   ws_port = ws.port;
   ws_retry_port = ws_retry.port;
+  ws_retry_abort_port = ws_retry_abort.port;
   ws_reject_port = ws_reject.port;
   sse_port = sse.port;
   sse_abort_port = sse_abort.port;
@@ -5229,6 +5317,7 @@ main(void)
   assert(SSL_CTX_check_private_key(relay_tls.tls_ctx) == 1);
   ws.tls_ctx = relay_tls.tls_ctx;
   ws_retry.tls_ctx = relay_tls.tls_ctx;
+  ws_retry_abort.tls_ctx = relay_tls.tls_ctx;
   ws_reject.tls_ctx = relay_tls.tls_ctx;
   port = available_port();
   vectis_kore_set_prebody_probe(takeover);
@@ -5299,16 +5388,16 @@ main(void)
   assert(pthread_create(&ws.thread, NULL, ws_tls_main, &ws) == 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
-  check_ws(port, &sse, 0);
+  check_ws(port, &sse, 0, 0);
   assert(pthread_join(sse.thread, NULL) == 0);
 #else
-  check_ws(port, NULL, 0);
+  check_ws(port, NULL, 0, 0);
 #endif
   assert(pthread_join(ws.thread, NULL) == 0);
   assert(close(ws.listener) == 0);
   assert(pthread_create(&ws_retry.thread, NULL,
       ws_tls_main, &ws_retry) == 0);
-  check_ws(port, NULL, 1);
+  check_ws(port, NULL, 1, 0);
   assert(pthread_join(ws_retry.thread, NULL) == 0);
   assert(close(ws_retry.listener) == 0);
   assert(metrics->ws_retry_send_injected == 1);
@@ -5317,8 +5406,25 @@ main(void)
   assert(metrics->ws_retry_write_wakeups == 1);
   assert(metrics->ws_retry_cached_injected == 1);
   assert(metrics->ws_retry_timer_fired == 1);
+  assert(metrics->ws_retry_timer_armed == 1);
   assert(metrics->ws_retry_idle_events <= 2);
   assert(metrics->ws_retry_tunnel_events < 100);
+  assert(pthread_create(&ws_retry_abort.thread, NULL,
+      ws_tls_main, &ws_retry_abort) == 0);
+  check_ws(port, NULL, 1, 1);
+  assert(pthread_join(ws_retry_abort.thread, NULL) == 0);
+  assert(close(ws_retry_abort.listener) == 0);
+  for (attempt = 0; attempt < 500 &&
+      __sync_fetch_and_add(&metrics->ws_retry_timer_cancelled, 0) == 0;
+      attempt++)
+    usleep(1000u);
+  assert(metrics->ws_retry_timer_cancelled == 1);
+  assert(metrics->ws_retry_upstream_closed == 1);
+  usleep(1100000u);
+  assert(metrics->ws_retry_timer_fired == 1);
+  assert(metrics->ws_retry_timer_armed == 2);
+  assert(metrics->ws_retry_cached_injected == 2);
+  assert(metrics->ws_retry_tunnel_events < 200);
   assert(pthread_create(&ws_reject.thread, NULL,
       ws_reject_main, &ws_reject) == 0);
   check_ws_reject(port);
@@ -5771,8 +5877,8 @@ main(void)
       metrics->tls_down_write_want_write,
       metrics->tls_down_read_want_read,
       metrics->downstream_tls_read_want_write);
-  assert(metrics->connect_done == 7);
-  assert(metrics->tls_connect_done == 5);
+  assert(metrics->connect_done == 8);
+  assert(metrics->tls_connect_done == 6);
   assert(metrics->curl_watch_removed > 0);
   fprintf(stderr, "retired watchers: removed=%u ignored=%u\n",
       metrics->curl_watch_removed,
@@ -5782,12 +5888,12 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 29 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->disconnects == 30 + 2 * H2_SCALE_CONNECTIONS);
 #else
-  assert(metrics->disconnects == 22);
+  assert(metrics->disconnects == 23);
 #endif
   assert(metrics->relay_done == 6);
-  assert(metrics->ws_upgraded == 2);
+  assert(metrics->ws_upgraded == 3);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
