@@ -491,8 +491,22 @@ public libcurl outcome**; it does not force OpenSSL itself to return
 cross-direction retries. A test-only query for `CURLINFO_TLS_SSL_PTR` after
 connect-only completion returned a null internal pointer in both modes, so
 direct BIO injection at that point is unavailable through that public
-handle. Long-lived idle behavior and the delayed no-progress retry remain
-unproved.
+handle.
+
+The retry tunnel now also has a no-edge fixture. After libcurl reads one
+six-byte final WebSocket frame, the test wrapper holds that bounded chunk and
+returns `CURLE_AGAIN` to model internally cached bytes unavailable on that
+call. It releases the chunk only on a one-shot 25 ms Kore worker timer; no
+new upstream application data is sent. Both worker modes deliver the frame
+and close cleanly, with one injected pause and one timer firing each. Before
+that final exchange, the tunnel remains idle for 1.5 seconds with at most
+two extra upstream callbacks and then resumes. Three serial debug runs per
+mode and the focused ASan run pass. This proves that an edge-triggered
+interest mask plus a bounded delayed retry can make progress without a
+writable-fd spin in the simulated public API state. The wrapper, not libcurl,
+creates that state; actual OpenSSL transitions, much longer idle periods,
+timer cancellation during a disconnect, and native kqueue execution remain
+open.
 
 The worker-loop probe also sends that early client frame to a WebSocket route
 whose verified HTTPS upstream returns `403` and a 1 MiB body. The upstream

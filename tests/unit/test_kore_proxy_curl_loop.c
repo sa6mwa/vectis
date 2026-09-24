@@ -181,6 +181,9 @@ struct loop_metrics {
   unsigned ws_retry_read_wakeups;
   unsigned ws_retry_write_wakeups;
   unsigned ws_retry_tunnel_events;
+  unsigned ws_retry_cached_injected;
+  unsigned ws_retry_timer_fired;
+  unsigned ws_retry_idle_events;
   unsigned http_body_pauses;
   unsigned http_chunks;
   unsigned http_headers_ready;
@@ -240,6 +243,7 @@ struct proxy_state {
   struct kore_timer *timer;
   struct kore_timer *deadline_timer;
   struct kore_timer *relay_continue_timer;
+  struct kore_timer *relay_retry_timer;
   struct kore_timer *upload_continue_timer;
   CURLM *multi;
   CURL *easy;
@@ -263,6 +267,10 @@ struct proxy_state {
   int ws_retry_recv_injected;
   int ws_retry_read_seen;
   int ws_retry_write_seen;
+  int ws_retry_cached_once;
+  int ws_retry_cache_pending;
+  int ws_retry_cache_release;
+  size_t ws_retry_cache_length;
   int http_mode;
   int h2_mode;
   int h2_scale_mode;
@@ -558,6 +566,20 @@ relay_continue(void *arg, u_int64_t now)
   state = (struct proxy_state *)arg;
   state->relay_continue_timer = NULL;
   metrics->relay_continuations++;
+  relay_pump(state);
+}
+
+static void
+relay_retry_cached(void *arg, u_int64_t now)
+{
+  struct proxy_state *state;
+
+  (void)now;
+  state = (struct proxy_state *)arg;
+  assert(state->ws_retry_cache_pending);
+  state->relay_retry_timer = NULL;
+  state->ws_retry_cache_release = 1;
+  metrics->ws_retry_timer_fired++;
   relay_pump(state);
 }
 
@@ -1818,7 +1840,33 @@ relay_recv(struct proxy_state *state, void *bytes, size_t length,
     *result = CURLE_AGAIN;
     return;
   }
+  if (state->ws_retry_cache_pending) {
+    if (!state->ws_retry_cache_release) {
+      *result = CURLE_AGAIN;
+      return;
+    }
+    assert(length >= state->ws_retry_cache_length);
+    assert(bytes == state->to_downstream);
+    *read = state->ws_retry_cache_length;
+    state->ws_retry_cache_pending = 0;
+    state->ws_retry_cache_length = 0;
+    *result = CURLE_OK;
+    return;
+  }
   *result = curl_easy_recv(state->easy, bytes, length, read);
+  if (state->ws_retry_mode && state->ws_upgraded &&
+      !state->ws_retry_cached_once && *result == CURLE_OK &&
+      *read == sizeof(ws_server_later) &&
+      memcmp(bytes, ws_server_later, sizeof(ws_server_later)) == 0) {
+    /* Keep one chunk in the existing scratch buffer until the timer wakes. */
+    assert(bytes == state->to_downstream);
+    state->ws_retry_cache_length = *read;
+    state->ws_retry_cache_pending = 1;
+    state->ws_retry_cached_once = 1;
+    metrics->ws_retry_cached_injected++;
+    *read = 0;
+    *result = CURLE_AGAIN;
+  }
 }
 
 static void
@@ -2062,6 +2110,10 @@ finish:
   }
   if (step == 64 && state->relay_continue_timer == NULL)
     state->relay_continue_timer = kore_timer_add(relay_continue, 0,
+        state, KORE_TIMER_ONESHOT);
+  if (state->ws_retry_cache_pending && !state->ws_retry_cache_release &&
+      state->relay_retry_timer == NULL)
+    state->relay_retry_timer = kore_timer_add(relay_retry_cached, 25,
         state, KORE_TIMER_ONESHOT);
 schedule:
   down_events = 0;
@@ -2849,6 +2901,10 @@ proxy_cancel(struct proxy_state *state)
   if (state->relay_continue_timer != NULL) {
     kore_timer_remove(state->relay_continue_timer);
     state->relay_continue_timer = NULL;
+  }
+  if (state->relay_retry_timer != NULL) {
+    kore_timer_remove(state->relay_retry_timer);
+    state->relay_retry_timer = NULL;
   }
   if (state->upload_continue_timer != NULL) {
     kore_timer_remove(state->upload_continue_timer);
@@ -4733,6 +4789,8 @@ check_ws(unsigned short port, struct echo_server *sse_server, int retry)
   unsigned char bytes[sizeof(ws_response) - 1 + sizeof(ws_server_early)];
   const char *request;
   size_t request_length;
+  unsigned idle_before;
+  unsigned idle_after;
   int fd;
 
   memset(&addr, 0, sizeof(addr));
@@ -4759,6 +4817,14 @@ check_ws(unsigned short port, struct echo_server *sse_server, int retry)
   if (retry) {
     sse_read_exact(fd, bytes, sizeof(ws_server_retry));
     assert(memcmp(bytes, ws_server_retry, sizeof(ws_server_retry)) == 0);
+    usleep(50000u);
+    idle_before = __sync_fetch_and_add(
+        &metrics->ws_retry_tunnel_events, 0);
+    usleep(1500000u);
+    idle_after = __sync_fetch_and_add(
+        &metrics->ws_retry_tunnel_events, 0);
+    assert(idle_after >= idle_before && idle_after <= idle_before + 2);
+    metrics->ws_retry_idle_events = idle_after - idle_before;
   }
   if (sse_server != NULL)
     check_sse(port, sse_server, 0, 0);
@@ -5249,6 +5315,9 @@ main(void)
   assert(metrics->ws_retry_recv_injected == 1);
   assert(metrics->ws_retry_read_wakeups == 1);
   assert(metrics->ws_retry_write_wakeups == 1);
+  assert(metrics->ws_retry_cached_injected == 1);
+  assert(metrics->ws_retry_timer_fired == 1);
+  assert(metrics->ws_retry_idle_events <= 2);
   assert(metrics->ws_retry_tunnel_events < 100);
   assert(pthread_create(&ws_reject.thread, NULL,
       ws_reject_main, &ws_reject) == 0);
