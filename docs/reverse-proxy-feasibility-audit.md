@@ -64,6 +64,28 @@ completed `pongdone` after it. This proves response progress during a paused
 HTTP/1.1 upload in this build; it does not prove the event-loop integration,
 HTTP/2 duplex, or cancellation behavior.
 
+The Linux [socket handoff test](../tests/unit/test_proxy_curl_socket_handoff.c)
+drives connect-only setup through `curl_multi_socket_action()` with a socket
+callback and timer callback on an epoll loop. In the pinned build, libcurl
+reports `CURL_POLL_REMOVE` when setup completes, while the easy handle remains
+attached and the active socket stays usable. The test then registers the same
+fd under an application-owned watcher and exchanges bytes through
+`curl_easy_send()`/`curl_easy_recv()`. Five serial repetitions pass. This
+proves the local epoll watcher transition in isolation; Kore worker-loop
+integration and TLS watcher handoff need an end-to-end probe.
+
+The [libcurl pause contract](https://curl.se/libcurl/c/curl_easy_pause.html)
+allows up to an HTTP/2 stream flow-control window of internal receive caching
+when a transfer is paused, with a documented 10 MiB default window example.
+Setting `CURLMOPT_PIPELINING` to `CURLPIPE_NOTHING` disables multiplexing
+([option contract](https://curl.se/libcurl/c/CURLMOPT_PIPELINING.html)); it
+does not establish an 8 KiB libcurl memory ceiling. The proposal therefore
+requires an explicit per-connection HTTP/2 memory allowance and per-worker
+admission limit, validated against the pinned binary under a paused slow
+consumer. No numerical allowance has been measured yet. If that allowance
+cannot satisfy the streaming memory budget, the architecture needs a
+different HTTP/2 client transport or a narrower supported contract.
+
 ## Executable finding: pre-body handoff and replay
 
 Patch [`0030`](../vendor/kore/patches/0030-kore-prebody-handoff-hook.patch)
@@ -165,7 +187,7 @@ an end-to-end coupled upstream transfer remain unproved.
 | Response output | Vectis uses [`net_send_stream()`](../vendor/kore/upstream/src/net.c) for generated responses, but Kore invokes stream callbacks during connection removal after freeing `hdlr_extra`. The direct-I/O probe owns its output queue and teardown. | Direct output passes slow-peer tests without send callbacks. A 128 KiB earlier Kore response drains before takeover output on cleartext and TLS; a preceding streaming response remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) skips the normal idle check while a request remains attached and can enforce ordinary send timeouts on queued output. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). | Proxy timers and one owner for cancellation are required. Cancel curl handles and timers before connection/request teardown, including worker stop. |
-| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, plus paused-upload/concurrent-download HTTP/1.1, pass. Complete WebSocket handshake/tunnel, event-loop socket ownership, release-bundle features, and HTTP/2 memory remain open. |
+| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, paused-upload/concurrent-download HTTP/1.1, and isolated Linux epoll watcher handoff pass. Complete WebSocket handshake/tunnel, Kore worker-loop integration, release-bundle features, and HTTP/2 memory remain open. |
 
 ## Minimum executable proof before architecture commitment
 
