@@ -13,7 +13,14 @@ function(vectis_add_unit_test target_name)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
-  add_test(NAME ${target_name} COMMAND ${target_name})
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+      target_name MATCHES "^vectis_unit_kore_proxy_(curl_loop|direct_io)$")
+    add_test(NAME ${target_name} COMMAND bash
+      "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+      15 0 $<TARGET_FILE:${target_name}>)
+  else()
+    add_test(NAME ${target_name} COMMAND ${target_name})
+  endif()
   set_tests_properties(${target_name} PROPERTIES
     LABELS "unit;local"
     TIMEOUT 180)
@@ -95,6 +102,18 @@ if(VECTIS_WITH_KORE_RUNTIME)
     target_include_directories(vectis_unit_kore_proxy_curl_loop PRIVATE
       "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
     target_compile_options(vectis_unit_kore_proxy_curl_loop PRIVATE -std=c99)
+    add_test(NAME vectis_unit_kore_proxy_curl_loop_failure_cleanup
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_EXIT_AFTER_START=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        10 71 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop>)
+    set_tests_properties(vectis_unit_kore_proxy_curl_loop_failure_cleanup
+      PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 20)
+    add_test(NAME vectis_unit_kore_proxy_curl_loop_timeout_cleanup
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_HANG_AFTER_START=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        1 124 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop>)
+    set_tests_properties(vectis_unit_kore_proxy_curl_loop_timeout_cleanup
+      PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 10)
   endif()
   vectis_add_unit_test(vectis_unit_kore_prebody_handoff
     test_kore_prebody_handoff.c)

@@ -349,14 +349,19 @@ completion callback, but not stream abort during takeover. The new bounded
 Kore-output path passes the predecessor/keepalive sequence over cleartext and
 TLS, but TLS queue abort during disconnect remains open. Worker shutdown with
 an active libcurl handshake and sustained cleartext and double-TLS exchanges
-pass; HTTP-framed streaming remains open.
+pass; the cleartext SSE fixture passes, while general HTTP framing remains
+open.
 
-An assertion failure in a probe can leave the already started Kore parent and
-worker alive after the test process exits. Two such orphaned probe instances
-were found and terminated by their exact PIDs during this audit. Successful
-probe runs stop their apps, but failure-path process cleanup is not yet proven.
-The eventual proxy tests need a failure-safe supervisor or equivalent teardown
-so a failed assertion or timeout cannot strand workers or a generated pid file.
+An assertion failure in a probe previously left its Kore parent and worker
+alive after the controller exited. The two Linux proxy probes now run through
+[a supervisor](../scripts/run_forked_kore_test.sh) in separate temporary build
+directories. It verifies the executable recorded in `kore.pid`, stops that
+exact parent and its known workers on exit, and removes the generated files.
+Dedicated tests force an immediate controller exit and a timeout after Kore
+starts; both pass, and the recorded parent/worker PIDs and temporary
+directories are gone afterward. Normal runs of both probes also pass through
+the supervisor. This covers those two probes; the broader Kore runtime test
+harness and production proxy cancellation paths still need their own proof.
 
 ## Findings from the current source
 

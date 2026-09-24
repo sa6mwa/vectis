@@ -1111,9 +1111,9 @@ main(void)
 
   memset(metrics, 0, sizeof(*metrics));
   assert(snprintf(cert_path, sizeof(cert_path),
-      "/tmp/vectis-kore-direct-%ld-cert.pem", (long)getpid()) > 0);
+      "vectis-kore-direct-%ld-cert.pem", (long)getpid()) > 0);
   assert(snprintf(key_path, sizeof(key_path),
-      "/tmp/vectis-kore-direct-%ld-key.pem", (long)getpid()) > 0);
+      "vectis-kore-direct-%ld-key.pem", (long)getpid()) > 0);
   vectis_cert_bundle_config_init(&certs);
   certs.subject.common_name = "localhost";
   certs.dns_names = "localhost";

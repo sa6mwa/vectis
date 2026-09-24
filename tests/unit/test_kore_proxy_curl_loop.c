@@ -1571,6 +1571,11 @@ main(void)
     fprintf(stderr, "curl loop startup: %s\n", error.message);
     assert(0);
   }
+  if (getenv("VECTIS_KORE_PROBE_EXIT_AFTER_START") != NULL)
+    _exit(71);
+  if (getenv("VECTIS_KORE_PROBE_HANG_AFTER_START") != NULL)
+    for (;;)
+      pause();
   assert(pthread_create(&upstream.thread, NULL, echo_main, &upstream) == 0);
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
