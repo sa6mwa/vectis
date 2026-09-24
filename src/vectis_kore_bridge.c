@@ -1,5 +1,6 @@
 #include "vectis_acme_state.h"
 #include "vectis_internal.h"
+#include "vectis_proxy_curl.h"
 
 #include <kore/acme.h>
 #include <kore/http.h>
@@ -118,6 +119,7 @@ void vectis_kore_set_worker_teardown_probe(void (*probe)(void)) {
 }
 
 void kore_worker_teardown(void) {
+  vectis_proxy_curl_worker_cleanup();
   if (vectis_kore_worker_teardown_probe != NULL) {
     vectis_kore_worker_teardown_probe();
   }

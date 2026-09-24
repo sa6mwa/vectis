@@ -14,7 +14,7 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|direct_io)|prebody_handoff)$")
+      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io)|prebody_handoff)$")
     set(kore_test_deadline 15)
     if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
       set(kore_test_deadline 30)
@@ -153,6 +153,11 @@ if(VECTIS_WITH_KORE_RUNTIME)
       VECTIS_HTTP2_FRAMED_GET=1 VECTIS_HTTP2_UNKNOWN_LENGTH=1)
     vectis_add_unit_test(vectis_unit_kore_proxy_curl_loop
       test_kore_proxy_curl_loop.c)
+    vectis_add_unit_test(vectis_unit_kore_proxy_curl_pool
+      test_proxy_curl_pool.c)
+    target_include_directories(vectis_unit_kore_proxy_curl_pool PRIVATE
+      "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
+    target_compile_options(vectis_unit_kore_proxy_curl_pool PRIVATE -std=c99)
     target_include_directories(vectis_unit_kore_proxy_curl_loop PRIVATE
       "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
     target_compile_options(vectis_unit_kore_proxy_curl_loop PRIVATE -std=c99)

@@ -1,7 +1,9 @@
 # Reverse Proxy Design and Verification Spec
 
-Status: architecture selected for implementation, 2026-09-25. The proxy route
-is not implemented yet. The
+Status: architecture selected for implementation, 2026-09-25. Route
+registration, header and body framing, target construction, route selection,
+and the worker curl pool are in progress; the proxy route does not yet serve
+traffic. The
 [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
 
@@ -320,9 +322,12 @@ Keep the Vectis implementation split along its ownership boundaries:
 | Vectis source | Responsibility |
 | --- | --- |
 | `vectis_proxy_route.c` | Route configuration, target policy, and synchronous application hooks. |
+| `vectis_proxy_select.c` | Header-time route precedence and strict proxy-only raw-path fallback. |
+| `vectis_proxy_url.c` | Validated origin-form target and authority construction from raw request metadata. |
 | `vectis_proxy_headers.c` | Inbound framing and header validation, hop-by-hop sanitization, forwarding metadata, and outbound request metadata. |
 | `vectis_proxy_framing.c` | Bounded incremental body and trailer framing, with explicit consumed-byte and pause results. |
 | `vectis_proxy_curl.c` | Per-worker libcurl multi pools, socket/timer readiness, admission, and easy-handle lifetime. |
+| `vectis_proxy_events.c` | Linux and BSD readiness translation shared by curl sockets and taken-over connections. |
 | `vectis_proxy_http.c` | HTTP upload/download callbacks, response headers and trailers, and stream completion. |
 | `vectis_proxy_ws.c` | HTTP/1.1 WebSocket handshake validation, rejection framing, and opaque duplex relay. |
 | `vectis_kore_proxy.c` | Header-time route selection, accepted-connection takeover, Kore send queue, TLS readiness, and connection restoration. |
