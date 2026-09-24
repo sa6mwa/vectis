@@ -354,6 +354,10 @@ resume. Do not use the existing binary `on_body_chunk` callback as a fake
 pause mechanism or apply Kore's ordinary `http_body_max` to a bounded proxy
 transfer. Non-proxy framing and body policy remain unchanged except for the
 shared byte-boundary corrections above.
+For a fixed-length upload, a client write-side close can be reported while
+declared body bytes are still available in the socket or TLS buffers. Keep
+draining until the declared length is consumed; only a read returning EOF
+before that point is a framing error.
 
 After takeover, install a proxy-specific connection event handler. The proxy
 reads bounded request chunks directly from Kore's accepted fd or `SSL *`, but

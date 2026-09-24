@@ -11,7 +11,7 @@ The candidate reduces changes to Kore's ordinary body path by letting Kore
 parse the request line and headers, then handing only selected proxy requests
 to a proxy-owned connection handler. Live probes now establish handoff,
 queued-response ordering, bounded 1 MiB cleartext and double-TLS relays,
-libcurl HTTP/1.1 upload/download overlap, SSE delivery, and a coupled
+coupled HTTP/1.1 upload/download overlap, SSE delivery, and a coupled
 HTTP/1.1 WebSocket upgrade over verified upstream TLS. The leading output
 choice uses one bounded Kore send netbuf at a time. It is **not yet a proven
 complete proxy architecture**: general HTTP framing and header translation,
@@ -170,6 +170,22 @@ body delivery, pause/resume, and a bounded application queue for this
 cleartext HTTP/1.1 SSE fixture. It does not establish general header/status
 translation, trailers, request upload framing, TLS on this HTTP transfer,
 long-lived idle SSE behavior, or client-disconnect cancellation.
+
+The worker-loop probe also runs a fixed-length 1 MiB POST through a normal
+libcurl HTTP/1.1 upload callback. It borrows any post-header bytes already in
+Kore's receive buffer, then reads further bytes into an 8 KiB queue only when
+libcurl has consumed the preceding chunk. The upstream verifies every byte
+incrementally and sends a first response chunk after 8 KiB, while the client
+is still sending. The client receives that chunk before its upload completes,
+then receives the final response after the upstream has read the full body.
+Ten serial repetitions pass; the test asserts upload callback pauses and an
+8 KiB maximum input queue. An initial run exposed a lifecycle bug: a client
+write-side close can occur while bytes remain queued in the kernel. Treating
+that event as a full disconnect cancelled libcurl with 16 KiB still unread.
+The probe now drains the declared length before completing the response. This
+proves fixed-length duplex transport on cleartext legs in the Kore worker; it
+does not prove chunked ingress framing, downstream TLS upload, upload
+cancellation, or response status/header translation.
 
 The worker-loop probe also runs a WebSocket-style HTTP/1.1 upgrade across a
 cleartext downstream and certificate-verified HTTPS upstream. The takeover
@@ -422,7 +438,7 @@ harness and production proxy cancellation paths still need their own proof.
 | Response output | `net_send_stream()` callbacks need an independent lifetime because Kore can invoke them during connection removal after freeing `hdlr_extra`. `net_send_queue()` instead copies a bounded chunk and needs no proxy completion callback. The proxy detects queue drain in its connection event handler before resuming upstream reads. Its first flush is deferred beyond the pre-body hook to avoid reentering a predecessor stream callback. | One 8 KiB Kore netbuf and one 8 KiB scratch buffer suffice for the 1 MiB slow-peer probe over cleartext and double TLS. The queue-based writer preserves a live streamed predecessor, its own response, and an ordinary successor over cleartext and TLS. Abort coverage remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) still enforces the header timer after pre-body takeover unless the proxy clears it. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis exposes the worker teardown hook through its static-runtime symbol table. | A one-second timer killed an idle takeover before the fix; clearing `http_timeout` preserved it. Active downstream connection was observed at teardown and disconnected once. A stalled upstream TLS handshake was cancelled with its curl handle, Kore socket watchers, and deadline timer before event-loop cleanup. Other callback phases and timeout policies remain open. |
-| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, paused-upload/concurrent-download HTTP/1.1, Linux Kore worker-loop connect-only/tunnel handoff, 1 MiB coupled cleartext and double-TLS relays, a live 1 MiB HTTP/1.1 SSE stream, and four paused/resumed HTTPS HTTP/2 connections pass. Complete WebSocket handshake/tunnel, full HTTP framing, other release-bundle features, and a production HTTP/2 memory allowance remain open. |
+| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, a 1 MiB coupled fixed-length HTTP/1.1 upload with an early response, Linux Kore worker-loop connect-only/tunnel handoff, 1 MiB coupled cleartext and double-TLS relays, a live 1 MiB HTTP/1.1 SSE stream, and four paused/resumed HTTPS HTTP/2 connections pass. General HTTP framing, WebSocket rejection, other release-bundle features, and a production HTTP/2 memory allowance remain open. |
 
 ## Minimum executable proof before architecture commitment
 
