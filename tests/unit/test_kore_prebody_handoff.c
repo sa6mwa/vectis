@@ -271,6 +271,7 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
   const char *second_length;
   const char *transfer_encoding;
   const char *second_host;
+  const char *expect;
   u_int64_t declared;
   unsigned length_count;
   unsigned encoding_count;
@@ -517,13 +518,19 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
       net_recv_reset(c, chunk_next_window(chunk), chunk_recv);
     return KORE_RESULT_RETRY;
   }
-  if (strcmp(req->path, "/probe") != 0)
+  if (strcmp(req->path, "/probe") != 0 &&
+      strcmp(req->path, "/probe-continue") != 0)
     return KORE_RESULT_OK;
   assert(req->method == HTTP_METHOD_POST ||
       req->method == HTTP_METHOD_GET ||
       req->method == HTTP_METHOD_OPTIONS);
   assert(http_request_header_uint64(req, "content-length", &declared));
   assert(declared == 4);
+  if (strcmp(req->path, "/probe-continue") == 0) {
+    assert(http_request_header(req, "expect", &expect));
+    assert(strcmp(expect, "100-continue") == 0);
+    assert(len == 0);
+  }
   c = req->owner;
   assert(c->hdlr_extra == NULL);
   state = kore_calloc(1, sizeof(*state));
@@ -540,6 +547,11 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
   c->flags |= CONN_IS_BUSY;
   c->handle = probe_connection_handle;
   http_request_sleep(req);
+  if (strcmp(req->path, "/probe-continue") == 0) {
+    static const char interim[] = "HTTP/1.1 100 Continue\r\n\r\n";
+
+    net_send_queue(c, interim, sizeof(interim) - 1);
+  }
   if (state->have == sizeof(state->body)) {
     probe_finish(c);
   } else {
@@ -1186,6 +1198,177 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
 }
 
 static int
+check_expect_continue_handoff(unsigned short port, int tls)
+{
+  static const char headers[] =
+      "POST /probe-continue HTTP/1.1\r\nHost: localhost\r\n"
+      "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n";
+  static const char body_and_next[] =
+      "dataGET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  SSL_CTX *ctx;
+  SSL *ssl;
+  struct pollfd watch;
+  char output[4096];
+  size_t used;
+  ssize_t got;
+  int fd;
+  int ok;
+
+  fd = connect_local(port);
+  ctx = NULL;
+  ssl = NULL;
+  if (tls) {
+    ctx = SSL_CTX_new(TLS_client_method());
+    assert(ctx != NULL);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    ssl = SSL_new(ctx);
+    assert(ssl != NULL);
+    assert(SSL_set_fd(ssl, fd) == 1);
+    assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+    assert(SSL_connect(ssl) == 1);
+    assert(SSL_write(ssl, headers, (int)(sizeof(headers) - 1u)) ==
+        (int)(sizeof(headers) - 1u));
+  } else {
+    send_exact(fd, headers, sizeof(headers) - 1u);
+  }
+  watch.fd = fd;
+  watch.events = POLLIN;
+  used = 0;
+  output[0] = '\0';
+  while (used < sizeof(output) - 1u &&
+      strstr(output, "\r\n\r\n") == NULL) {
+    if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
+      break;
+    if (tls)
+      got = SSL_read(ssl, output + used,
+          (int)(sizeof(output) - 1u - used));
+    else
+      got = recv(fd, output + used, sizeof(output) - 1u - used, 0);
+    if (got <= 0)
+      break;
+    used += (size_t)got;
+    output[used] = '\0';
+  }
+  ok = strcmp(output, "HTTP/1.1 100 Continue\r\n\r\n") == 0;
+  if (ok) {
+    if (tls) {
+      assert(SSL_write(ssl, body_and_next,
+          (int)(sizeof(body_and_next) - 1u)) ==
+          (int)(sizeof(body_and_next) - 1u));
+    } else {
+      send_exact(fd, body_and_next, sizeof(body_and_next) - 1u);
+    }
+    while (used < sizeof(output) - 1u && response_count(output) < 2) {
+      if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
+        break;
+      if (tls)
+        got = SSL_read(ssl, output + used,
+            (int)(sizeof(output) - 1u - used));
+      else
+        got = recv(fd, output + used, sizeof(output) - 1u - used, 0);
+      if (got <= 0)
+        break;
+      used += (size_t)got;
+      output[used] = '\0';
+    }
+    ok = response_count(output) == 2 && strstr(output, "data") != NULL &&
+        strstr(output, "ok") != NULL &&
+        strstr(output + sizeof("HTTP/1.1 100 Continue\r\n\r\n") - 1u,
+            "HTTP/1.1 100 Continue") == NULL;
+  }
+  fprintf(stderr, "%s 100-continue + pipelined GET: %s\n",
+      tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
+  if (!ok)
+    fprintf(stderr, "received: %s\n", output);
+  if (ssl != NULL)
+    SSL_free(ssl);
+  if (ctx != NULL)
+    SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+  return ok;
+}
+
+static int
+check_expect_rejection_close(unsigned short port, int tls)
+{
+  static const char wire[] =
+      "POST /forbidden HTTP/1.1\r\nHost: localhost\r\n"
+      "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n"
+      "dataGET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  SSL_CTX *ctx;
+  SSL *ssl;
+  struct pollfd watch;
+  char output[2048];
+  size_t used;
+  ssize_t got;
+  const char *first403;
+  int fd;
+  int closed;
+  int ok;
+  int tls_error;
+
+  fd = connect_local(port);
+  ctx = NULL;
+  ssl = NULL;
+  if (tls) {
+    ctx = SSL_CTX_new(TLS_client_method());
+    assert(ctx != NULL);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    ssl = SSL_new(ctx);
+    assert(ssl != NULL);
+    assert(SSL_set_fd(ssl, fd) == 1);
+    assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+    assert(SSL_connect(ssl) == 1);
+    assert(SSL_write(ssl, wire, (int)(sizeof(wire) - 1u)) ==
+        (int)(sizeof(wire) - 1u));
+  } else {
+    send_exact(fd, wire, sizeof(wire) - 1u);
+  }
+  watch.fd = fd;
+  watch.events = POLLIN;
+  used = 0;
+  closed = 0;
+  tls_error = 0;
+  output[0] = '\0';
+  while (used < sizeof(output) - 1u) {
+    if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
+      break;
+    if (tls)
+      got = SSL_read(ssl, output + used,
+          (int)(sizeof(output) - 1u - used));
+    else
+      got = recv(fd, output + used, sizeof(output) - 1u - used, 0);
+    if (got <= 0) {
+      if (tls) {
+        tls_error = SSL_get_error(ssl, (int)got);
+        closed = tls_error == SSL_ERROR_ZERO_RETURN;
+      } else {
+        closed = got == 0;
+      }
+      break;
+    }
+    used += (size_t)got;
+    output[used] = '\0';
+  }
+  first403 = strstr(output, "HTTP/1.1 403");
+  ok = closed && first403 != NULL &&
+      strstr(output, "forbidden") != NULL &&
+      strstr(output, "connection: close") != NULL &&
+      strstr(output, "HTTP/1.1 100") == NULL &&
+      strstr(first403 + 1, "HTTP/1.1 ") == NULL;
+  fprintf(stderr, "%s Expect rejection closes unread body: %s\n",
+      tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
+  if (!ok)
+    fprintf(stderr, "received: %s\nTLS error=%d\n", output, tls_error);
+  if (ssl != NULL)
+    SSL_free(ssl);
+  if (ctx != NULL)
+    SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+  return ok;
+}
+
+static int
 check_prebody_wire_result(unsigned short port, const void *wire,
     size_t wire_length, const char *path, int tls, int status,
     const char *marker)
@@ -1472,6 +1655,8 @@ main(void)
   small_chunked_passed = check_small_chunked_ingress(port, 0);
   framed_methods_passed = check_framed_method_handoff(port, "GET", 0);
   framed_methods_passed &= check_framed_method_handoff(port, "OPTIONS", 0);
+  framed_methods_passed &= check_expect_continue_handoff(port, 0);
+  framed_methods_passed &= check_expect_rejection_close(port, 0);
   framing_headers_passed = check_framing_header_visibility(port,
       "/framing-cl-te", "1.1",
       "Content-Length: 4\r\nTransfer-Encoding: chunked\r\n", 0);
@@ -1584,6 +1769,8 @@ main(void)
   tls_chunked_passed = check_small_chunked_ingress(port, 1);
   framed_methods_passed &= check_framed_method_handoff(port, "GET", 1);
   framed_methods_passed &= check_framed_method_handoff(port, "OPTIONS", 1);
+  framed_methods_passed &= check_expect_continue_handoff(port, 1);
+  framed_methods_passed &= check_expect_rejection_close(port, 1);
   framing_headers_passed &= check_framing_header_visibility(port,
       "/framing-cl-te", "1.1",
       "Content-Length: 4\r\nTransfer-Encoding: chunked\r\n", 1);

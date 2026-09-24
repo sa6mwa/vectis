@@ -732,6 +732,20 @@ expected body. Five serial supervised runs pass. This proves method-independent
 fixed-length byte ownership at the hook, not outbound forwarding or general
 framing validation.
 
+The same hook can queue one local `HTTP/1.1 100 Continue` after accepting
+headers. A client that waits for it then sends the four-byte body plus an
+ordinary pipelined GET; both final `200` responses arrive in order over
+cleartext and TLS. A separate test sends `Expect: 100-continue` with body and
+the next GET already in the initial write to a locally forbidden path. The
+hook emits only `403`, closes the connection, and never dispatches the
+following GET. These are test-only admission and close-policy probes. A
+production proxy must still validate expectation tokens, suppress upstream
+`100`, coordinate libcurl upload setup, and handle early final responses.
+In the TLS rejection, `SSL_read()` reports `SSL_ERROR_ZERO_RETURN` for the
+peer's `close_notify` before the raw socket necessarily reaches EOF. The
+client probe treats that TLS signal, together with `Connection: close`, as
+closure of the HTTP exchange rather than requiring immediate fd EOF.
+
 The header reader originally matched the first four bytes of a candidate
 `Host` field name. A `Hostile: attacker.invalid` field before the real `Host`
 therefore selected the wrong authority before the pre-body hook; the live
