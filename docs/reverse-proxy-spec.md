@@ -378,6 +378,9 @@ epoll registration and is appropriate only when neither direction needs a
 wakeup. Re-register when a bounded queue becomes writable again. Handle
 `SSL_read` `WANT_READ` and `WANT_WRITE` directly; for queued output, call
 `net_send_flush()` and use `SSL_want()` to arm the required retry direction.
+When a bounded TLS read leaves decrypted bytes inside OpenSSL, schedule a
+continuation after the consumer drains that chunk: `SSL_pending()` bytes do
+not necessarily produce another socket readiness notification.
 When closing a downstream TLS connection, send `close_notify` after the final
 queue drains; hand a reusable connection back to Kore without shutting TLS.
 Prove bounded progress and no readiness spin on Linux and BSD. This output

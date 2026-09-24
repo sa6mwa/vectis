@@ -102,6 +102,7 @@ struct loop_metrics {
   unsigned http_done;
   unsigned upload_done;
   unsigned upload_pauses;
+  unsigned upload_tls_pending_resumes;
   size_t upload_max_queued;
   unsigned ws_upgraded;
   unsigned http_body_pauses;
@@ -126,6 +127,7 @@ struct proxy_state {
   struct kore_timer *timer;
   struct kore_timer *deadline_timer;
   struct kore_timer *relay_continue_timer;
+  struct kore_timer *upload_continue_timer;
   CURLM *multi;
   CURL *easy;
   curl_socket_t upstream_fd;
@@ -143,6 +145,7 @@ struct proxy_state {
   int http_mode;
   int upload_mode;
   int upload_paused;
+  int upload_read_wait;
   size_t upload_remaining;
   unsigned char upload_buffer[RELAY_BUFFER_SIZE];
   size_t upload_length;
@@ -194,6 +197,19 @@ static void curl_event(void *arg, int error);
 static void downstream_event(void *arg, int error);
 static void relay_pump(struct proxy_state *state);
 static void http_pump(struct proxy_state *state);
+static void http_input_pump(struct proxy_state *state);
+
+static void
+upload_continue(void *arg, u_int64_t now)
+{
+  struct proxy_state *state;
+
+  (void)now;
+  state = (struct proxy_state *)arg;
+  state->upload_continue_timer = NULL;
+  metrics->upload_tls_pending_resumes++;
+  http_input_pump(state);
+}
 
 static void
 relay_continue(void *arg, u_int64_t now)
@@ -1024,16 +1040,24 @@ http_schedule(struct proxy_state *state)
   int events;
 
   events = 0;
-  if (!TAILQ_EMPTY(&state->downstream->send_queue) ||
-      (state->http_headers_ready && !state->http_headers_sent) ||
+  if (!TAILQ_EMPTY(&state->downstream->send_queue)) {
+    if (state->downstream->tls != NULL &&
+        SSL_want(state->downstream->tls) == SSL_READING)
+      events |= EPOLLIN;
+    else
+      events |= EPOLLOUT;
+  }
+  if (TAILQ_EMPTY(&state->downstream->send_queue) &&
+      ((state->http_headers_ready && !state->http_headers_sent) ||
       (state->http_headers_sent && state->http_body_length != 0) ||
       (state->http_transfer_done && !state->http_final_sent) ||
-      state->http_final_sent || state->http_paused)
+      state->http_final_sent || state->http_paused))
     events |= EPOLLOUT;
   if (state->upload_mode && !state->http_transfer_done &&
       state->initial_offset == state->initial_length &&
       state->upload_length == 0 && state->upload_remaining != 0)
-    events |= EPOLLIN | EPOLLRDHUP;
+    events |= state->upload_read_wait != 0
+        ? state->upload_read_wait : (int)(EPOLLIN | EPOLLRDHUP);
   if (events != 0) {
     kore_platform_event_schedule(state->downstream->fd,
         events, 0, state->downstream);
@@ -1071,6 +1095,12 @@ http_upload(char *buffer, size_t size, size_t count, void *arg)
     if (state->upload_offset == state->upload_length) {
       state->upload_offset = 0;
       state->upload_length = 0;
+      if (state->downstream->tls != NULL &&
+          SSL_pending(state->downstream->tls) > 0 &&
+          state->upload_remaining > amount &&
+          state->upload_continue_timer == NULL)
+        state->upload_continue_timer = kore_timer_add(upload_continue, 0,
+            state, KORE_TIMER_ONESHOT);
     }
   } else {
     state->upload_paused = 1;
@@ -1224,6 +1254,7 @@ http_input_pump(struct proxy_state *state)
     got = recv(downstream->fd, state->upload_buffer, limit, 0);
   }
   if (got > 0) {
+    state->upload_read_wait = 0;
     state->upload_length = (size_t)got;
     if ((size_t)got > metrics->upload_max_queued)
       metrics->upload_max_queued = (size_t)got;
@@ -1235,6 +1266,8 @@ http_input_pump(struct proxy_state *state)
     ssl_error = SSL_get_error(downstream->tls, (int)got);
     assert(ssl_error == SSL_ERROR_WANT_READ ||
         ssl_error == SSL_ERROR_WANT_WRITE);
+    state->upload_read_wait = ssl_error == SSL_ERROR_WANT_READ
+        ? EPOLLIN : EPOLLOUT;
   } else if (got == 0) {
     assert(0 && "downstream upload closed before Content-Length");
   } else {
@@ -1256,6 +1289,14 @@ drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
     return;
   msg = curl_multi_info_read(state->multi, &pending);
   assert(msg != NULL && msg->msg == CURLMSG_DONE);
+  if (msg->data.result != CURLE_OK)
+    fprintf(stderr, "curl transfer failed: %s phase=%d upload_left=%zu "
+        "read_wait=%d pending=%d paused=%d\n",
+        curl_easy_strerror(msg->data.result), state->phase,
+        state->upload_remaining, state->upload_read_wait,
+        state->downstream->tls != NULL
+            ? SSL_pending(state->downstream->tls) : 0,
+        state->upload_paused);
   assert(msg->data.result == CURLE_OK);
   if (state->http_mode) {
     state->http_transfer_done = 1;
@@ -1315,6 +1356,10 @@ proxy_cancel(struct proxy_state *state)
   if (state->relay_continue_timer != NULL) {
     kore_timer_remove(state->relay_continue_timer);
     state->relay_continue_timer = NULL;
+  }
+  if (state->upload_continue_timer != NULL) {
+    kore_timer_remove(state->upload_continue_timer);
+    state->upload_continue_timer = NULL;
   }
   if (state->tunnel_watched) {
     kore_platform_disable_read((int)state->upstream_fd);
@@ -1770,6 +1815,117 @@ check_upload(unsigned short port, struct echo_server *server)
 }
 
 static void
+check_tls_upload(unsigned short port, struct echo_server *server)
+{
+  static const char request[] =
+      "POST /upload HTTP/1.1\r\nHost: localhost\r\n"
+      "Content-Length: 1048576\r\n\r\n";
+  struct sockaddr_in addr;
+  struct pollfd watch;
+  struct timeval timeout;
+  SSL_CTX *ctx;
+  SSL *ssl;
+  unsigned char output[16384];
+  char response[512];
+  size_t sent;
+  size_t used;
+  size_t index;
+  int fd;
+  int flags;
+  int amount;
+  int ssl_error;
+  int events;
+  int progress;
+  int early_seen;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  assert(SSL_CTX_load_verify_locations(ctx, tls_cert_path, NULL) == 1);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_set1_host(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_get_verify_result(ssl) == X509_V_OK);
+  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+      (int)(sizeof(request) - 1));
+  flags = fcntl(fd, F_GETFL, 0);
+  assert(flags >= 0);
+  assert(fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+  sent = 0;
+  used = 0;
+  early_seen = 0;
+  memset(response, 0, sizeof(response));
+  while (strstr(response, "0\r\n\r\n") == NULL) {
+    progress = 0;
+    events = 0;
+    if (sent < UPLOAD_BODY_SIZE) {
+      for (index = 0; index < sizeof(output); index++)
+        output[index] = relay_byte(sent + index);
+      ERR_clear_error();
+      amount = SSL_write(ssl, output, (int)sizeof(output));
+      if (amount > 0) {
+        assert(amount == (int)sizeof(output));
+        sent += (size_t)amount;
+        progress = 1;
+        usleep(1000u);
+      } else {
+        ssl_error = SSL_get_error(ssl, amount);
+        assert(ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE);
+        events |= ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+      }
+    }
+    ERR_clear_error();
+    amount = SSL_read(ssl, response + used,
+        (int)(sizeof(response) - used - 1));
+    if (amount > 0) {
+      used += (size_t)amount;
+      response[used] = '\0';
+      progress = 1;
+      if (!early_seen && strstr(response, "pong") != NULL) {
+        assert(sent < UPLOAD_BODY_SIZE);
+        early_seen = 1;
+      }
+    } else {
+      ssl_error = SSL_get_error(ssl, amount);
+      assert(ssl_error == SSL_ERROR_WANT_READ ||
+          ssl_error == SSL_ERROR_WANT_WRITE);
+      events |= ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+    }
+    if (!progress) {
+      assert(events != 0);
+      watch.fd = fd;
+      watch.events = (short)events;
+      assert(poll(&watch, 1, 10000) > 0);
+    }
+  }
+  assert(sent == UPLOAD_BODY_SIZE);
+  assert(early_seen);
+  assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  assert(strstr(response, "HTTP/1.1 200 OK\r\n") == response);
+  assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
+  assert(strstr(response, "done") != NULL);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+}
+
+static void
 check_ws(unsigned short port)
 {
   struct sockaddr_in addr;
@@ -2013,6 +2169,7 @@ main(void)
   struct echo_server ws;
   struct echo_server sse;
   struct echo_server upload;
+  struct echo_server upload_tls;
   struct echo_server stalled;
   struct sockaddr_in addr;
   struct timeval timeout;
@@ -2039,6 +2196,7 @@ main(void)
   prepare_echo(&ws);
   prepare_echo(&sse);
   prepare_echo(&upload);
+  prepare_echo(&upload_tls);
   prepare_echo(&stalled);
   upstream_port = upstream.port;
   relay_port = relay.port;
@@ -2184,6 +2342,7 @@ main(void)
   config.tls.private_key_path = tls_key_path;
   config.tls.ca_bundle_path = tls_cert_path;
   config.server.worker_count = 1u;
+  upload_port = upload_tls.port;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
@@ -2197,6 +2356,11 @@ main(void)
   check_tls_relay(port);
   assert(pthread_join(relay_tls.thread, NULL) == 0);
   assert(close(relay_tls.listener) == 0);
+  assert(pthread_create(&upload_tls.thread, NULL,
+      upload_main, &upload_tls) == 0);
+  check_tls_upload(port, &upload_tls);
+  assert(pthread_join(upload_tls.thread, NULL) == 0);
+  assert(close(upload_tls.listener) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   SSL_CTX_free(relay_tls.tls_ctx);
@@ -2228,14 +2392,15 @@ main(void)
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 8);
+  assert(metrics->disconnects == 9);
   assert(metrics->relay_done == 4);
   assert(metrics->ws_upgraded == 1);
-  assert(metrics->http_done == 2);
-  assert(metrics->http_headers_ready == 2);
-  assert(metrics->upload_done == 1);
+  assert(metrics->http_done == 3);
+  assert(metrics->http_headers_ready == 3);
+  assert(metrics->upload_done == 2);
   assert(metrics->upload_pauses > 0);
   assert(metrics->upload_max_queued <= RELAY_BUFFER_SIZE);
+  assert(metrics->upload_tls_pending_resumes > 0);
   assert(metrics->http_chunks > 0);
   assert(metrics->http_body_pauses > 0);
   assert(metrics->http_pump_calls < 5000);
@@ -2245,9 +2410,10 @@ main(void)
       metrics->http_chunks, metrics->http_body_pauses,
       metrics->http_pump_calls,
       (unsigned long)metrics->http_max_kore_queued);
-  fprintf(stderr, "upload loop: done=%u pauses=%u max_queue=%zu\n",
+  fprintf(stderr, "upload loop: done=%u pauses=%u max_queue=%zu "
+      "tls_pending_resumes=%u\n",
       metrics->upload_done, metrics->upload_pauses,
-      metrics->upload_max_queued);
+      metrics->upload_max_queued, metrics->upload_tls_pending_resumes);
   assert(metrics->downstream_tls_close_notify == 1);
   assert(metrics->downstream_tls_write_pauses > 0);
   assert(metrics->relay_max_queued <= RELAY_BUFFER_SIZE);
