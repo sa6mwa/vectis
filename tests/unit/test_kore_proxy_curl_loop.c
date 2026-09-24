@@ -407,6 +407,7 @@ takeover(struct http_request *req, const void *data, size_t len)
   assert(len == 0);
   state = kore_calloc(1, sizeof(*state));
   state->downstream = req->owner;
+  state->downstream->http_timeout = 0;
   state->upstream_fd = CURL_SOCKET_BAD;
   state->tunnel_event.handle = tunnel_event;
   state->tunnel_event.type = KORE_TYPE_CONNECTION;

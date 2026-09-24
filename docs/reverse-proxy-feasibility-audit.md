@@ -217,6 +217,15 @@ worker cleanup must use that hook to remove curl easy handles and socket
 watchers, cancel timers, and mark active exchanges before Kore frees accepted
 connections. The current probe has no upstream handle to cancel.
 
+A short-header-timeout variant exposed another takeover invariant. Kore invokes
+the pre-body hook before it clears `connection->http_timeout` for an ordinary
+header-only request. With a one-second header limit, an otherwise healthy
+idle taken-over connection was closed after roughly 1.6 seconds. The probe
+now sets `http_timeout` to zero at takeover and leaves a direct connection
+idle past that limit; the socket remains open. Proxy-owned connect, idle, and
+optional total deadlines must replace the inherited Kore header/body timer
+for the entire HTTP/SSE/WebSocket exchange.
+
 The full candidate is **not proved**. Kqueue still needs an equivalent
 interest helper and test. The TLS probe covers normal `WANT_READ` and
 `WANT_WRITE` from read and write respectively; it has not forced either
@@ -238,7 +247,7 @@ an end-to-end coupled upstream transfer remain unproved.
 | EOF and half-close | [`net_read()`](../vendor/kore/upstream/src/net.c) disconnects the whole connection on a zero-byte read; `kore_tls_read()` treats `SSL_ERROR_ZERO_RETURN` as an error. The direct-I/O probe keeps writing after TCP EOF and after a TLS client `close_notify`. | One cleartext and one TLS half-close exchange pass. Early upstream final responses, resets, and close deadlines remain open. |
 | Response output | Vectis uses [`net_send_stream()`](../vendor/kore/upstream/src/net.c) for generated responses, but Kore invokes stream callbacks during connection removal after freeing `hdlr_extra`. The direct-I/O probe owns its output queue and teardown. | Direct output passes slow-peer tests without send callbacks. A 128 KiB earlier Kore response drains before takeover output on cleartext and TLS; a preceding streaming response remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
-| Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) skips the normal idle check while a request remains attached and can enforce ordinary send timeouts on queued output. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis now exposes the worker teardown hook through its static-runtime symbol table. | Active downstream connection observed at teardown, then disconnected once by Kore cleanup. A stalled upstream TLS handshake is cancelled with its curl handle, Kore socket watchers, and timer before event-loop cleanup. Other callback phases and timeout policies remain open. |
+| Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) still enforces the header timer after pre-body takeover unless the proxy clears it. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis exposes the worker teardown hook through its static-runtime symbol table. | A one-second timer killed an idle takeover before the fix; clearing `http_timeout` preserved it. Active downstream connection was observed at teardown and disconnected once. A stalled upstream TLS handshake was cancelled with its curl handle, Kore socket watchers, and deadline timer before event-loop cleanup. Other callback phases and timeout policies remain open. |
 | Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, paused-upload/concurrent-download HTTP/1.1, Linux Kore worker-loop connect-only/tunnel handoff, and a stable single-stream HTTPS HTTP/2 pause pass. Complete WebSocket handshake/tunnel, sustained coupled streaming, release-bundle features, and concurrent HTTP/2 memory remain open. |
 
 ## Minimum executable proof before architecture commitment

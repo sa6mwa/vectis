@@ -311,6 +311,11 @@ and malformed WebSocket key/version or subprotocol offers for a selected proxy
 before an upstream connection starts. Run proxy `auth`/`preflight`/`rewrite`
 at this boundary; a locally rejected proxy request follows a defined
 drain-or-close policy so unread body bytes cannot become the next request.
+On `TAKEOVER`, clear Kore's inherited `connection->http_timeout` immediately:
+the pre-body hook runs before Kore clears the header timer on its ordinary
+header-only path. The proxy then owns connect, idle, write-progress, and
+optional total deadlines through cancellable worker timers. A healthy SSE or
+WebSocket connection must survive the ordinary header/body timeout.
 
 Kore currently passes initial body bytes to `http_body_update()` before
 `on_headers`, and some zero-length paths return before that hook. Insert the

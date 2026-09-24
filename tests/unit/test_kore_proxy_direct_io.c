@@ -301,6 +301,7 @@ direct_prebody(struct http_request *req, const void *data, size_t len)
     return KORE_RESULT_OK;
   assert(len <= DIRECT_BUFFER_SIZE - (sizeof(header) - 1));
   c = req->owner;
+  c->http_timeout = 0;
   if (!TAILQ_EMPTY(&c->send_queue))
     metrics->prior_queue_seen++;
   sndbuf = 4096;
@@ -524,6 +525,8 @@ main(void)
   char cert_path[128];
   char key_path[128];
   int rcvbuf;
+  int idle_probe;
+  int idle_errno;
 
   metrics = mmap(NULL, sizeof(*metrics), PROT_READ | PROT_WRITE,
       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -540,6 +543,7 @@ main(void)
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.server.worker_count = 1u;
+  config.server.request_header_timeout_ms = 1000L;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
   app = vectis_app_new(&config, &error);
@@ -618,9 +622,14 @@ main(void)
     response_header[header_used] = '\0';
   }
   assert(strstr(response_header, " 101 ") != NULL);
+  usleep(1600000u);
+  idle_probe = (int)recv(fd, &ch, 1, MSG_PEEK | MSG_DONTWAIT);
+  idle_errno = errno;
   assert(vectis_stop(app, &error) == VECTIS_OK);
   assert(close(fd) == 0);
   app->close(app);
+  assert(idle_probe < 0 &&
+      (idle_errno == EAGAIN || idle_errno == EWOULDBLOCK));
   fprintf(stderr,
       "direct io: events=%u continuations=%u pauses=%u eof=%u "
       "disconnects=%u max_queue=%zu prior_seen=%u prior_drained=%u\n",
