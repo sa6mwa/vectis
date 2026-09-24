@@ -346,18 +346,21 @@ pause mechanism or apply Kore's ordinary `http_body_max` to a bounded proxy
 transfer. Non-proxy framing and body policy remain unchanged except for the
 shared byte-boundary corrections above.
 
-After takeover, install a proxy-specific `connection->handle` and receive
-callback while continuing to use Kore's accepted socket, TLS read/write
-functions, event loop, and send queue. Gate application reads in that handler
-when its bounded upload queue is full, and explicitly drain on resume so an
-edge-triggered event is not lost. Do not call Linux's current
-`kore_platform_disable_read()` for this: it deletes the whole epoll
-registration, including needed write events. Prove that logical gating does
-not spin or starve writes on Linux and BSD. TLS `SSL_read` can need write
-readiness and `SSL_write` can need read readiness; if the current Kore TLS
-functions cannot expose that need to the proxy handler, add a small
-direction-specific result there rather than changing ordinary HTTP read/write
-scheduling. Do not infer TLS progress from plain TCP tests.
+After takeover, install a proxy-specific connection event handler. The proxy
+owns bounded downstream input and output queues and performs nonblocking I/O
+on Kore's accepted fd or `SSL *`. Kore retains connection allocation, TLS
+handshake, event-loop, and teardown ownership. Drain any earlier Kore send
+queue before emitting proxy response bytes; do not enqueue proxy bytes behind
+`net_send_stream()`, whose completion callback can outlive `hdlr_extra` during
+connection removal. Gate application reads when the upload queue is full and
+explicitly drain on resume so an edge-triggered event is not lost. Track
+read/write readiness together: Linux's `kore_platform_disable_read()` removes
+the entire epoll registration and is appropriate only when neither direction
+needs a wakeup. Re-register when a bounded queue becomes writable again.
+Handle `SSL_read`/`SSL_write` `WANT_READ` and `WANT_WRITE` per operation without
+changing ordinary Kore TLS scheduling. Prove bounded progress and no readiness
+spin on Linux and BSD. The direct-I/O choice remains subject to the
+[feasibility audit](reverse-proxy-feasibility-audit.md).
 
 Sleep the taken-over request so Kore's normal complete-body dispatch cannot
 run it. Hold its lifetime through streaming and finalize it once after
@@ -416,11 +419,11 @@ default short curl transfer timeout.
 ### Downstream response writer
 
 Use a proxy-owned asynchronous response controller attached to the Kore
-connection. Reuse `net_send_stream()` and its send-completion callback, as the
-existing Vectis generated-response stream does, but enqueue only within an
-accounted high-water mark. An empty upstream queue means wait for a producer
-wakeup; it is not EOF. Emit proxy response headers explicitly, including
-interim and WebSocket `101` headers. The ordinary `http_response()` helper
+connection. It writes from a bounded queue directly to the accepted fd or
+`SSL *` after any preceding Kore send queue drains. An empty upstream queue
+means wait for a producer wakeup; it is not EOF. Emit proxy response headers
+explicitly, including interim and WebSocket `101` headers. The ordinary
+`http_response()` helper
 injects `Content-Length` and connection fields and may synthesize a pretty
 error body for an upstream `4xx` or `5xx`, so it cannot preserve the upstream
 response contract reliably. Explicit emission must preserve Kore's HSTS,
@@ -428,8 +431,8 @@ response count, access logging, and close behavior. The controller handles
 chunk framing, trailers, producer wakeup, and cancellation without requiring
 a new generic Kore response API. A response may
 begin before the request body ends. Once final headers are committed, failures
-abort the downstream stream rather than attempting a second response. Feed
-HTTP bytes through Kore's send queue and completion callbacks. The response hook
+abort the downstream stream rather than attempting a second response. Write
+HTTP bytes through the proxy-owned bounded queue. The response hook
 cannot set `Content-Length`, `Transfer-Encoding`, `Connection`, or `Trailer`;
 the writer computes them after the hook's status decision. For a body-bearing
 response in the `auto` pool, commit downstream HTTP/1.1 chunked framing even
@@ -512,8 +515,8 @@ checkout is disposable. The relevant current code is
 ## Delivery gates and architecture risks
 
 Deliver the transport foundation first: pre-body takeover, proxy-owned body
-framing, logical read gating with TLS progress, proxy-owned curl multi, and
-asynchronous response control through Kore's send queue. Prove full-duplex
+framing, read gating with TLS progress, proxy-owned curl multi, and
+asynchronous bounded direct response output. Prove full-duplex
 fixed-length and chunked HTTP streaming under slow peers before adding SSE
 and raw upgrade. Then add
 informational responses and trailers, followed by WebSocket tunneling. These
@@ -529,7 +532,8 @@ Treat these as feasibility gates before committing to the full implementation:
    duplicating request-line/header parsing or losing pipelined and early
    WebSocket bytes. Ordinary header-only and fixed-length requests followed
    by proxy requests in one read retain exact byte boundaries. Proxy-only
-   pause and resume preserve downstream TLS progress on Linux and BSD.
+   pause and resume preserve downstream TLS progress on Linux and BSD, with
+   no busy loop when both legs are half-closed or one queue is full.
 3. Curl multi and the chosen TLS build provide nonblocking DNS and bounded
    paused transfers.
 4. A retained connect-only easy handle supports the TLS WebSocket relay and

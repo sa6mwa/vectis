@@ -19,6 +19,12 @@
 #include <kore/kore.h>
 #include <vectis/vectis.h>
 
+#define RELAY_BUFFER_SIZE 8192
+#define RELAY_PAYLOAD_SIZE (1024 * 1024)
+
+static const char relay_response[] =
+    "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n";
+
 struct echo_server {
   int listener;
   unsigned short port;
@@ -37,6 +43,11 @@ struct loop_metrics {
   unsigned worker_cancelled;
   unsigned active_watchers_at_teardown;
   unsigned timers_at_teardown;
+  unsigned relay_done;
+  unsigned relay_read_pauses;
+  unsigned relay_write_pauses;
+  unsigned relay_pump_calls;
+  size_t relay_max_queued;
 };
 
 struct proxy_state;
@@ -57,14 +68,27 @@ struct proxy_state {
   curl_socket_t upstream_fd;
   unsigned curl_watch_count;
   int tunnel_watched;
+  int downstream_watched;
   int phase;
   int running;
   size_t response_sent;
+  int relay_mode;
+  unsigned char to_upstream[RELAY_BUFFER_SIZE];
+  size_t to_upstream_offset;
+  size_t to_upstream_length;
+  unsigned char to_downstream[RELAY_BUFFER_SIZE];
+  size_t to_downstream_offset;
+  size_t to_downstream_length;
+  int downstream_eof;
+  int upstream_eof;
+  int upstream_write_closed;
+  int relay_finished;
 };
 
 static struct loop_metrics *metrics;
 static unsigned short upstream_port;
 static unsigned short stalled_port;
+static unsigned short relay_port;
 
 extern void vectis_kore_set_prebody_probe(
     int (*probe)(struct http_request *, const void *, size_t));
@@ -73,6 +97,7 @@ extern void vectis_kore_set_worker_teardown_probe(void (*probe)(void));
 static void drive_curl(struct proxy_state *state, curl_socket_t fd, int flags);
 static void curl_event(void *arg, int error);
 static void downstream_event(void *arg, int error);
+static void relay_pump(struct proxy_state *state);
 
 static void *
 echo_main(void *arg)
@@ -88,6 +113,79 @@ echo_main(void *arg)
   assert(memcmp(input, "ping", 4) == 0);
   assert(send(fd, "pong", 4, MSG_NOSIGNAL) == 4);
   assert(close(fd) == 0);
+  return NULL;
+}
+
+static void *
+relay_echo_main(void *arg)
+{
+  struct echo_server *server;
+  unsigned char bytes[4096];
+  size_t received;
+  size_t offset;
+  ssize_t amount;
+  int fd;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  received = 0;
+  for (;;) {
+    amount = recv(fd, bytes, sizeof(bytes), 0);
+    assert(amount >= 0);
+    if (amount == 0)
+      break;
+    received += (size_t)amount;
+    assert(received <= RELAY_PAYLOAD_SIZE);
+    offset = 0;
+    while (offset < (size_t)amount) {
+      ssize_t written;
+
+      written = send(fd, bytes + offset, (size_t)amount - offset,
+          MSG_NOSIGNAL);
+      assert(written > 0);
+      offset += (size_t)written;
+    }
+  }
+  assert(received == RELAY_PAYLOAD_SIZE);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+struct relay_sender {
+  int fd;
+};
+
+static unsigned char
+relay_byte(size_t offset)
+{
+  return (unsigned char)((offset * 73u + 19u) & 0xffu);
+}
+
+static void *
+relay_send_main(void *arg)
+{
+  struct relay_sender *sender;
+  unsigned char bytes[4096];
+  size_t offset;
+  size_t used;
+  ssize_t amount;
+
+  sender = (struct relay_sender *)arg;
+  offset = 0;
+  while (offset < RELAY_PAYLOAD_SIZE) {
+    for (used = 0; used < sizeof(bytes); used++)
+      bytes[used] = relay_byte(offset + used);
+    used = 0;
+    while (used < sizeof(bytes)) {
+      amount = send(sender->fd, bytes + used, sizeof(bytes) - used,
+          MSG_NOSIGNAL);
+      assert(amount > 0);
+      used += (size_t)amount;
+    }
+    offset += sizeof(bytes);
+  }
+  assert(shutdown(sender->fd, SHUT_WR) == 0);
   return NULL;
 }
 
@@ -218,15 +316,142 @@ timer_change(CURLM *multi, long timeout_ms, void *arg)
     kore_timer_remove(state->timer);
     state->timer = NULL;
   }
-  if (state->deadline_timer != NULL) {
-    kore_timer_remove(state->deadline_timer);
-    state->deadline_timer = NULL;
-  }
   if (timeout_ms >= 0)
     state->timer = kore_timer_add(timeout_event,
         (u_int64_t)(timeout_ms > 0 ? timeout_ms : 1), state,
         KORE_TIMER_ONESHOT);
   return 0;
+}
+
+static void
+relay_pump(struct proxy_state *state)
+{
+  struct connection *downstream;
+  size_t amount;
+  ssize_t sent;
+  CURLcode code;
+  int step;
+  int progress;
+  int down_events;
+  int up_events;
+
+  downstream = state->downstream;
+  if (state->relay_finished)
+    return;
+  metrics->relay_pump_calls++;
+  for (step = 0; step < 64; step++) {
+    progress = 0;
+    if (state->to_upstream_offset < state->to_upstream_length) {
+      code = curl_easy_send(state->easy,
+          state->to_upstream + state->to_upstream_offset,
+          state->to_upstream_length - state->to_upstream_offset, &amount);
+      assert(code == CURLE_OK || code == CURLE_AGAIN);
+      if (code == CURLE_OK && amount > 0) {
+        state->to_upstream_offset += amount;
+        progress = 1;
+        if (state->to_upstream_offset == state->to_upstream_length) {
+          state->to_upstream_offset = 0;
+          state->to_upstream_length = 0;
+        }
+      } else {
+        metrics->relay_write_pauses++;
+      }
+    }
+    if (state->to_downstream_offset < state->to_downstream_length) {
+      sent = send(downstream->fd,
+          state->to_downstream + state->to_downstream_offset,
+          state->to_downstream_length - state->to_downstream_offset,
+          MSG_NOSIGNAL);
+      if (sent > 0) {
+        state->to_downstream_offset += (size_t)sent;
+        progress = 1;
+        if (state->to_downstream_offset == state->to_downstream_length) {
+          state->to_downstream_offset = 0;
+          state->to_downstream_length = 0;
+        }
+      } else {
+        assert(sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+        metrics->relay_write_pauses++;
+      }
+    }
+    if (state->to_upstream_length == 0 && !state->downstream_eof) {
+      sent = recv(downstream->fd, state->to_upstream,
+          sizeof(state->to_upstream), 0);
+      if (sent > 0) {
+        state->to_upstream_length = (size_t)sent;
+        progress = 1;
+        if ((size_t)sent > metrics->relay_max_queued)
+          metrics->relay_max_queued = (size_t)sent;
+      } else if (sent == 0) {
+        state->downstream_eof = 1;
+        progress = 1;
+      } else {
+        assert(errno == EAGAIN || errno == EWOULDBLOCK);
+      }
+    } else if (state->to_upstream_length != 0) {
+      metrics->relay_read_pauses++;
+    }
+    if (state->downstream_eof && state->to_upstream_length == 0 &&
+        !state->upstream_write_closed) {
+      assert(shutdown((int)state->upstream_fd, SHUT_WR) == 0);
+      state->upstream_write_closed = 1;
+      progress = 1;
+    }
+    if (state->to_downstream_length == 0 && !state->upstream_eof) {
+      code = curl_easy_recv(state->easy, state->to_downstream,
+          sizeof(state->to_downstream), &amount);
+      if (code != CURLE_OK && code != CURLE_AGAIN)
+        fprintf(stderr, "relay recv failed: %d %s phase=%d eof=%d\n",
+            (int)code, curl_easy_strerror(code), state->phase,
+            state->downstream_eof);
+      assert(code == CURLE_OK || code == CURLE_AGAIN);
+      if (code == CURLE_OK && amount > 0) {
+        state->to_downstream_length = amount;
+        progress = 1;
+        if (amount > metrics->relay_max_queued)
+          metrics->relay_max_queued = amount;
+      } else if (code == CURLE_OK) {
+        state->upstream_eof = 1;
+        progress = 1;
+      }
+    } else if (state->to_downstream_length != 0) {
+      metrics->relay_read_pauses++;
+    }
+    if (!progress)
+      break;
+  }
+  if (state->upstream_eof && state->to_downstream_length == 0) {
+    state->relay_finished = 1;
+    metrics->relay_done++;
+    kore_connection_disconnect(downstream);
+    return;
+  }
+  down_events = 0;
+  up_events = 0;
+  if (state->to_downstream_length != 0)
+    down_events |= EPOLLOUT;
+  if (state->to_upstream_length == 0 && !state->downstream_eof)
+    down_events |= EPOLLIN | EPOLLRDHUP;
+  if (state->to_upstream_length != 0)
+    up_events |= EPOLLOUT;
+  if (state->to_downstream_length == 0 && !state->upstream_eof)
+    up_events |= EPOLLIN;
+  assert(down_events != 0 || up_events != 0);
+  if (down_events != 0) {
+    kore_platform_event_schedule(downstream->fd, down_events, 0, downstream);
+    state->downstream_watched = 1;
+  } else if (state->downstream_watched) {
+    kore_platform_disable_read(downstream->fd);
+    state->downstream_watched = 0;
+  }
+  if (up_events != 0) {
+    kore_platform_event_schedule((int)state->upstream_fd, up_events, 0,
+        &state->tunnel_event);
+    state->tunnel_watched = 1;
+  } else if (state->tunnel_watched) {
+    kore_platform_disable_read((int)state->upstream_fd);
+    state->tunnel_watched = 0;
+  }
 }
 
 static void
@@ -240,6 +465,10 @@ tunnel_event(void *arg, int error)
   state = (struct proxy_state *)((char *)arg -
       offsetof(struct proxy_state, tunnel_event));
   state->tunnel_event.flags = 0;
+  if (state->relay_mode) {
+    relay_pump(state);
+    return;
+  }
   if (error) {
     kore_connection_disconnect(state->downstream);
     return;
@@ -288,6 +517,10 @@ drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
   assert(state->curl_watch_count == 0);
   metrics->connect_done++;
   state->phase = 1;
+  if (state->relay_mode) {
+    relay_pump(state);
+    return;
+  }
   kore_platform_event_schedule((int)state->upstream_fd,
       EPOLLOUT, 0, &state->tunnel_event);
   state->tunnel_watched = 1;
@@ -315,6 +548,10 @@ proxy_cancel(struct proxy_state *state)
   if (state->timer != NULL) {
     kore_timer_remove(state->timer);
     state->timer = NULL;
+  }
+  if (state->deadline_timer != NULL) {
+    kore_timer_remove(state->deadline_timer);
+    state->deadline_timer = NULL;
   }
   if (state->tunnel_watched) {
     kore_platform_disable_read((int)state->upstream_fd);
@@ -376,6 +613,13 @@ downstream_event(void *arg, int error)
   connection = (struct connection *)arg;
   state = (struct proxy_state *)connection->hdlr_extra;
   connection->evt.flags = 0;
+  if (state->relay_mode) {
+    if (state->phase != 0)
+      relay_pump(state);
+    if (connection->evt.handle == downstream_event)
+      connection->evt.flags = 0;
+    return;
+  }
   if (error) {
     kore_connection_disconnect(connection);
     return;
@@ -402,11 +646,28 @@ takeover(struct http_request *req, const void *data, size_t len)
 
   (void)data;
   if (strcmp(req->path, "/curl") != 0 &&
+      strcmp(req->path, "/relay") != 0 &&
       strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
-  assert(len == 0);
+  assert(len == 0 || strcmp(req->path, "/relay") == 0);
   state = kore_calloc(1, sizeof(*state));
+  state->relay_mode = strcmp(req->path, "/relay") == 0;
+  if (state->relay_mode) {
+    int sndbuf;
+
+    assert(len <= sizeof(state->to_upstream));
+    if (len > 0)
+      memcpy(state->to_upstream, data, len);
+    state->to_upstream_length = len;
+    memcpy(state->to_downstream, relay_response,
+        sizeof(relay_response) - 1);
+    state->to_downstream_length = sizeof(relay_response) - 1;
+    sndbuf = 4096;
+    assert(setsockopt(req->owner->fd, SOL_SOCKET, SO_SNDBUF,
+        &sndbuf, sizeof(sndbuf)) == 0);
+  }
   state->downstream = req->owner;
+  state->downstream_watched = 1;
   state->downstream->http_timeout = 0;
   state->upstream_fd = CURL_SOCKET_BAD;
   state->tunnel_event.handle = tunnel_event;
@@ -430,13 +691,18 @@ takeover(struct http_request *req, const void *data, size_t len)
   assert(snprintf(url, sizeof(url), "%s://127.0.0.1:%u/",
       strcmp(req->path, "/pending") == 0 ? "https" : "http",
       (unsigned)(strcmp(req->path, "/pending") == 0
-          ? stalled_port : upstream_port)) > 0);
+          ? stalled_port : (state->relay_mode ? relay_port : upstream_port)))
+      > 0);
   assert(curl_easy_setopt(state->easy, CURLOPT_URL, url) == CURLE_OK);
   assert(curl_easy_setopt(state->easy, CURLOPT_CONNECT_ONLY, 1L) == CURLE_OK);
   assert(curl_easy_setopt(state->easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   assert(curl_multi_add_handle(state->multi, state->easy) == CURLM_OK);
   state->running = 1;
   drive_curl(state, CURL_SOCKET_TIMEOUT, 0);
+  if (state->relay_mode && state->phase == 0) {
+    kore_platform_disable_read(state->downstream->fd);
+    state->downstream_watched = 0;
+  }
   if (strcmp(req->path, "/pending") == 0) {
     state->deadline_timer = kore_timer_add(deadline_expired, 10000,
         state, KORE_TIMER_ONESHOT);
@@ -455,6 +721,64 @@ health(vectis_app *app, vectis_request *request, vectis_response *response,
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
+static void
+check_relay(unsigned short port)
+{
+  static const char request[] =
+      "GET /relay HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  struct relay_sender sender;
+  pthread_t thread;
+  unsigned char bytes[4096];
+  size_t total;
+  size_t index;
+  ssize_t amount;
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(send(fd, request, sizeof(request) - 1, MSG_NOSIGNAL) ==
+      (ssize_t)(sizeof(request) - 1));
+  sender.fd = fd;
+  assert(pthread_create(&thread, NULL, relay_send_main, &sender) == 0);
+  total = 0;
+  for (;;) {
+    amount = recv(fd, bytes, sizeof(bytes), 0);
+    assert(amount >= 0);
+    if (amount == 0)
+      break;
+    assert(total + (size_t)amount <=
+        sizeof(relay_response) - 1 + RELAY_PAYLOAD_SIZE);
+    for (index = 0; index < (size_t)amount; index++) {
+      size_t position;
+
+      position = total + index;
+      if (position < sizeof(relay_response) - 1)
+        assert(bytes[index] == (unsigned char)relay_response[position]);
+      else
+        assert(bytes[index] ==
+            relay_byte(position - (sizeof(relay_response) - 1)));
+    }
+    total += (size_t)amount;
+    usleep(1000u);
+  }
+  assert(total == sizeof(relay_response) - 1 + RELAY_PAYLOAD_SIZE);
+  assert(pthread_join(thread, NULL) == 0);
+  assert(close(fd) == 0);
+}
+
 int
 main(void)
 {
@@ -465,6 +789,7 @@ main(void)
   static const char pending_request[] =
       "GET /pending HTTP/1.1\r\nHost: localhost\r\n\r\n";
   struct echo_server upstream;
+  struct echo_server relay;
   struct echo_server stalled;
   struct sockaddr_in addr;
   struct timeval timeout;
@@ -485,8 +810,10 @@ main(void)
   memset(metrics, 0, sizeof(*metrics));
   assert(curl_global_init(CURL_GLOBAL_ALL) == CURLE_OK);
   prepare_echo(&upstream);
+  prepare_echo(&relay);
   prepare_echo(&stalled);
   upstream_port = upstream.port;
+  relay_port = relay.port;
   stalled_port = stalled.port;
   port = available_port();
   vectis_kore_set_prebody_probe(takeover);
@@ -538,6 +865,11 @@ main(void)
   assert(pthread_join(upstream.thread, NULL) == 0);
   assert(close(upstream.listener) == 0);
 
+  assert(pthread_create(&relay.thread, NULL, relay_echo_main, &relay) == 0);
+  check_relay(port);
+  assert(pthread_join(relay.thread, NULL) == 0);
+  assert(close(relay.listener) == 0);
+
   assert(pthread_create(&stalled.thread, NULL, stall_main, &stalled) == 0);
   fd = socket(AF_INET, SOCK_STREAM, 0);
   assert(fd >= 0);
@@ -558,11 +890,19 @@ main(void)
   assert(pthread_join(stalled.thread, NULL) == 0);
   assert(close(stalled.listener) == 0);
   curl_global_cleanup();
-  assert(metrics->connect_done == 1);
+  fprintf(stderr, "relay metrics: done=%u max=%zu read_pauses=%u "
+      "write_pauses=%u pump_calls=%u disconnects=%u\n", metrics->relay_done,
+      metrics->relay_max_queued, metrics->relay_read_pauses,
+      metrics->relay_write_pauses, metrics->relay_pump_calls,
+      metrics->disconnects);
+  assert(metrics->connect_done == 2);
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 2);
+  assert(metrics->disconnects == 3);
+  assert(metrics->relay_done == 1);
+  assert(metrics->relay_max_queued <= RELAY_BUFFER_SIZE);
+  assert(metrics->relay_read_pauses > 0);
   assert(metrics->worker_cancelled == 1);
   assert(metrics->active_watchers_at_teardown > 0);
   assert(metrics->timers_at_teardown == 1);
