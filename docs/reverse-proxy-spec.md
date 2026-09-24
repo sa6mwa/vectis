@@ -71,14 +71,31 @@ the connection authority and TLS peer. Reject absolute-form targets, fragments,
 control characters, and ambiguous escaping before passing that target to
 libcurl, which sends it verbatim.
 
-This route-selection rule has an unresolved feasibility gate: the current
+This route-selection rule has an unresolved feasibility gate. The current
 Vectis decoder rejects escaped slashes, and its ordinary path validator can
-reject other escaped forms before route matching. Kore's pre-body hook does
-retain the raw bytes. To support Go-like raw target fidelity without changing
-ordinary routes, a proxy-specific validated raw segment match may be needed.
-Prove its overlap order against ordinary, upload, static, and application
-WebSocket routes before committing to the public route contract. Until then,
-the spec does not claim that every escaped inbound path reaches a proxy route.
+reject other escaped forms before route matching. Kore's pre-body hook retains
+the raw bytes. The candidate selector first uses the existing decoded-path
+selection, including the static-site trailing-slash exception and static
+`405` check. Only when ordinary decoding fails, or the existing selector
+rejects the decoded path as invalid with no static-site exception, may it
+validate the raw path separately and scan proxy routes in registration order.
+A raw path that passes this second check must have origin-form syntax, valid
+percent triplets, no raw or encoded controls or backslash, and no raw or
+once-decoded dot segments. Malformed or unsafe paths must fail locally before
+`preflight`, `rewrite`, or an upstream connection.
+If no proxy route matches, preserve the ordinary rejection. The raw fallback
+must never make an ordinary, upload, static, or application WebSocket route
+handle a path it currently rejects.
+
+The raw fallback is a distinct public matching case: an encoded slash stays
+inside one raw segment, and a proxy parameter captures its escaped spelling.
+Forwarding still uses the original raw target, not that parameter. A proxy
+literal pattern cannot contain percent escapes under current route
+registration rules, so escaped-path fallback depends on a parameter or regex
+pattern. Prove this behavior, including encoded percent and colon, mixed-case
+escapes, and overlaps with every existing route kind before fixing the public
+contract. The current code has no proxy route kind, so this is a candidate,
+not a claim that escaped targets can already reach a proxy route.
 
 This follows Go's newer `Rewrite(in, out)` model rather than copying the
 behavior of its older `Director`: sanitize first, then let application code
@@ -313,6 +330,12 @@ wins an overlap; that check runs before ordinary body handling today.
 Exact duplicate method/path-kind/path registrations already conflict, but
 literal, parameter, and regex patterns can overlap. Test both registration
 orders for overlaps so header-time admission and later route dispatch agree.
+The raw fallback is eligible only after ordinary decoding fails or the
+ordinary selector rejects the decoded path as invalid. A decoded path served
+through the static-site trailing-slash exception stays on its current path.
+Do not use the fallback merely because no ordinary route matched: a proxy
+regex could acquire a valid decoded path that currently returns `404`.
+This keeps normal-path precedence and static `405` intact.
 The current body-policy return value alone cannot identify a proxy winner:
 it contains only policy and a live-upload flag. Extend this internal result
 with the winning route kind; do not duplicate its method, path, parameter,
@@ -689,8 +712,11 @@ Treat these as feasibility gates before committing to the full implementation:
    slow-consumer load.
 8. A proxy route can admit and forward validated escaped raw paths, including
    an encoded slash, without changing ordinary route rejection behavior or
-   registration order. Prove the raw target reaches the director intact and
-   is sent upstream intact after an allowed rewrite.
+   registration order. Reject malformed escapes, controls, backslashes, and
+   dot traversal before a director or upstream connection. Prove both route
+   orders for overlapping proxy and ordinary patterns, plus raw parameter
+   captures, and prove the raw target reaches the director and upstream intact
+   after an allowed rewrite.
 
 A failed gate requires revisiting the transport design or dependency, not
 substituting a worker thread per stream, full-body buffer, or hidden spool
@@ -726,7 +752,7 @@ evidence is integration and end-to-end behavior.
 
 | Layer | Required cases and assertions |
 | --- | --- |
-| Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed proxy framing and handshake rejection; pre-body proxy selection agreeing with later non-proxy dispatch. Cover both registration orders for proxy literal versus ordinary regex, proxy regex versus static or live upload, and an application WebSocket route overlapping a proxy route. The application WebSocket route must keep its current priority for GET with valid, missing, or malformed upgrade headers; exact duplicate route registration must still fail. |
+| Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed proxy framing and handshake rejection; pre-body proxy selection agreeing with later non-proxy dispatch. Cover both registration orders for proxy literal versus ordinary regex, proxy regex versus static or live upload, and an application WebSocket route overlapping a proxy route. Test raw encoded slash, percent, colon, malformed escape, encoded dot traversal, raw parameter capture, valid decoded-path `404`, and the static-site trailing-slash exception. The application WebSocket route must keep its current priority for GET with valid, missing, or malformed upgrade headers; exact duplicate route registration must still fail. |
 | Parser and readiness integration | For a proxy takeover, initial read containing headers plus body, bodyless or `Content-Length: 0` request followed by another request, exactly and beyond declared length, and an early WebSocket frame; split and malformed chunk boundaries; duplicate/conflicting lengths and `Content-Length`/`Transfer-Encoding` ambiguity; trailers; pausing midway through a chunk; resume without a new epoll edge and with pending writes; downstream TLS `WANT_READ`/`WANT_WRITE` progress on Linux and BSD. For `CONTINUE`, compare ordinary route, live-upload, and application WebSocket behavior to existing fixtures, including current body limits and dispatch timing; also send ordinary header-only and fixed-length requests immediately followed by a proxy request in one read. Assert byte ownership, exactly one dispatch per request, and no desynchronization, spin, or premature next-request read. |
 | HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; declared request trailers, rejection of undeclared request trailers, and relay of permitted undeclared response trailers, verifying upload EOF and final-chunk ordering; exactly one local `100` even when upstream also sends `100`, bounded upload while upstream connects, `100` followed by `502` on connection failure, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; exact upstream `4xx`/`5xx` status, headers, and body with Kore pretty errors enabled; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Assert upstream receives the expected bytes and metadata. |
 | HTTP/2 upstream integration | A local HTTPS upstream offers `h2` and `http/1.1`, then `h2` only: ordinary HTTP and SSE negotiate `h2`, while forced-HTTP/1.1 routes and WebSocket handshakes stay on HTTP/1.1 and fail with `502` against an `h2`-only peer. Verify HTTP/1.1 fallback still produces downstream chunked framing in the auto pool, TLS 1.2 minimum, no h2c, no concurrent streams per connection, server push refusal, `:path`/`:authority` rewrites, known/unknown upload length, early response, HEAD, and selected HTTP/1.1 pool for request trailers. Verify an HTTP/2 response with both `Content-Length` and undeclared trailers is sent downstream with chunked framing, intact trailer fields, and declared-length validation. Under many slow downstream readers and concurrent long-lived SSE streams, assert both the per-transfer application queue limit and the separately budgeted libcurl/TLS worker-memory envelope. At the configured active and idle limits, send one extra request and assert immediate `503`, no easy handle queued in libcurl, and bounded memory across both protocol pools and retained WebSocket tunnels. Repeat with much larger response sizes and durations; memory must not track payload size. |

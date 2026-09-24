@@ -770,6 +770,23 @@ validation and registration order intact. Its overlap
 semantics and security checks need executable proof; widening the shared
 ordinary decoder would change unrelated routes.
 
+Source inspection narrows that candidate. The existing body-policy query
+validates the decoded path before scanning routes in registration order; its
+matcher treats a parameter as one slash-delimited segment and compares regexes
+against the supplied path. Registration forbids percent escapes in literal or
+parameter route patterns, while regex patterns can contain them. Therefore a
+raw fallback can scan only proxy routes after ordinary selection rejects the
+path, and treat `%2F` as part of one segment. The ordinary selector has a
+static-site trailing-slash exception to its path validator, so that exception
+and the static `405` check must run before deciding whether fallback is
+eligible. Proxy parameter captures would contain escaped bytes in this
+fallback. Running it after a valid
+decoded-path `404` would change route precedence and is excluded. The current
+decoder reports malformed escapes and disallowed escaped bytes through the
+same error status, so a raw fallback needs an independent, strict validator;
+it cannot infer safety from the decoder's error code. No production proxy kind
+or executable fallback test exists yet.
+
 The same handoff probe now accepts a 1 MiB chunked POST with no
 `Content-Length`, before Kore's ordinary `411` path. Its temporary framer
 validates each body byte without storing the body, uses later receive windows
