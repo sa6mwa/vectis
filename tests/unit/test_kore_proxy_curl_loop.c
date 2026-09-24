@@ -370,6 +370,8 @@ probe_downstream_write(struct connection *connection, size_t length,
     errno = EPIPE;
     return KORE_RESULT_ERROR;
   }
+  if (connection->tls != NULL)
+    return kore_tls_write(connection, length, written);
   return net_write(connection, length, written);
 }
 
@@ -3707,6 +3709,65 @@ check_sse_write_fail(unsigned short port)
 }
 
 static void
+check_tls_sse_write_fail(unsigned short port)
+{
+  static const char request[] =
+      "GET /sse-write-fail HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  SSL_CTX *ctx;
+  SSL *ssl;
+  char response[256];
+  size_t used;
+  int fd;
+  int got;
+  int ssl_error;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  assert(SSL_CTX_load_verify_locations(ctx, tls_cert_path, NULL) == 1);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_set1_host(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_get_verify_result(ssl) == X509_V_OK);
+  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+      (int)(sizeof(request) - 1));
+  used = 0;
+  response[0] = '\0';
+  while (strstr(response, "\r\n\r\n") == NULL) {
+    assert(used < sizeof(response) - 1);
+    assert(SSL_read(ssl, response + used, 1) == 1);
+    response[++used] = '\0';
+  }
+  assert(strstr(response, "HTTP/1.1 200 OK\r\n") == response);
+  assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
+  got = SSL_read(ssl, response, sizeof(response));
+  assert(got <= 0);
+  ssl_error = SSL_get_error(ssl, got);
+  assert(ssl_error != SSL_ERROR_WANT_READ &&
+      ssl_error != SSL_ERROR_WANT_WRITE);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+}
+
+static void
 check_sse_reset(unsigned short port, struct echo_server *server)
 {
   static const char request[] =
@@ -5128,7 +5189,6 @@ main(void)
       sse_abort_main, &sse_write_fail) == 0);
   check_sse_write_fail(port);
   assert(pthread_join(sse_write_fail.thread, NULL) == 0);
-  assert(close(sse_write_fail.listener) == 0);
   assert(metrics->http_write_failures == 1);
   assert(metrics->http_write_fail_cancelled == 1);
   assert(metrics->http_write_fail_pending_at_disconnect == 1);
@@ -5280,6 +5340,15 @@ main(void)
   assert(metrics->http_queue_abort_upstream_closed == 2);
   assert(metrics->http_queue_pending_at_disconnect == 2);
   assert(metrics->http_tls_queue_cancelled == 1);
+  assert(pthread_create(&sse_write_fail.thread, NULL,
+      sse_abort_main, &sse_write_fail) == 0);
+  check_tls_sse_write_fail(port);
+  assert(pthread_join(sse_write_fail.thread, NULL) == 0);
+  assert(close(sse_write_fail.listener) == 0);
+  assert(metrics->http_write_failures == 2);
+  assert(metrics->http_write_fail_cancelled == 2);
+  assert(metrics->http_write_fail_pending_at_disconnect == 2);
+  assert(metrics->http_abort_upstream_closed == 3);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   SSL_CTX_free(relay_tls.tls_ctx);
@@ -5317,9 +5386,9 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 26 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->disconnects == 27 + 2 * H2_SCALE_CONNECTIONS);
 #else
-  assert(metrics->disconnects == 19);
+  assert(metrics->disconnects == 20);
 #endif
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
@@ -5327,12 +5396,12 @@ main(void)
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   assert(metrics->http_done == 14 + H2_SCALE_CONNECTIONS);
-  assert(metrics->http_headers_ready == 22 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->http_headers_ready == 23 + 2 * H2_SCALE_CONNECTIONS);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
   assert(metrics->http_done == 10);
-  assert(metrics->http_headers_ready == 15);
+  assert(metrics->http_headers_ready == 16);
 #endif
   assert(metrics->upload_done == 2);
   assert(metrics->chunked_upload_done == 6);
