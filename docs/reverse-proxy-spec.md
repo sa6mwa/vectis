@@ -315,6 +315,22 @@ the series by applying it to a clean pinned checkout with
 `make verify-kore-patches`; never treat edits to the generated upstream
 checkout as the source of truth.
 
+Keep the Vectis implementation split along its ownership boundaries:
+
+| Vectis source | Responsibility |
+| --- | --- |
+| `vectis_proxy_route.c` | Route configuration, target policy, and synchronous application hooks. |
+| `vectis_proxy_headers.c` | Inbound framing and header validation, hop-by-hop sanitization, forwarding metadata, and outbound request metadata. |
+| `vectis_proxy_framing.c` | Bounded incremental body and trailer framing, with explicit consumed-byte and pause results. |
+| `vectis_proxy_curl.c` | Per-worker libcurl multi pools, socket/timer readiness, admission, and easy-handle lifetime. |
+| `vectis_proxy_http.c` | HTTP upload/download callbacks, response headers and trailers, and stream completion. |
+| `vectis_proxy_ws.c` | HTTP/1.1 WebSocket handshake validation, rejection framing, and opaque duplex relay. |
+| `vectis_kore_proxy.c` | Header-time route selection, accepted-connection takeover, Kore send queue, TLS readiness, and connection restoration. |
+
+Share private state through small `src/` headers. Keep Kore-specific types out
+of the public API and avoid copying the test-only transport probes into one
+production file.
+
 ### Audited boundary in the current code
 
 Vectis registers one catch-all Kore route per domain, with

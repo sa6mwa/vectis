@@ -671,7 +671,10 @@ if(VECTIS_WITH_KORE_RUNTIME)
     )
   endif()
   vectis_apply_relocatable_paths(vectis_kore_runtime)
-  list(APPEND vectis_sources src/vectis_kore_bridge.c $<TARGET_OBJECTS:vectis_kore_runtime>)
+  list(APPEND vectis_sources
+    src/vectis_kore_bridge.c
+    src/vectis_proxy_framing.c
+    $<TARGET_OBJECTS:vectis_kore_runtime>)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     set_source_files_properties(src/vectis_kore_bridge.c PROPERTIES
       COMPILE_OPTIONS "-std=gnu99;-Wno-pedantic;-Wno-long-long;-Wno-cast-qual;-Wno-missing-prototypes"
