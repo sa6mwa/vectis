@@ -1,7 +1,9 @@
 # Reverse Proxy Design and Verification Spec
 
 Status: proposed; this document specifies a future Vectis feature. No proxy
-route or transport described here is implemented yet.
+route or transport described here is implemented yet. The pre-body takeover
+is a candidate pending the [transport feasibility audit](reverse-proxy-feasibility-audit.md)
+and its executable gates.
 
 ## Objective
 
