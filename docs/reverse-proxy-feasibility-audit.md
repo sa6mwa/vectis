@@ -69,9 +69,8 @@ the fixture observes two TLS handshakes. This establishes that this bundled
 libcurl keeps a completed connect-only connection unavailable for an ordinary
 same-origin transfer even when both handles share a multi. It does not prove
 simultaneous active HTTP transfers, socket-callback reentrancy, or worker
-shutdown in a shared multi. The Kore worker-loop probe still creates one
-multi per exchange, while the proposed production pool is per worker; that
-integration difference remains an explicit proof gate.
+shutdown in a shared multi. The later worker-shared probe below exercises
+those cases for HTTP/1.1; HTTP/2 inside that worker loop remains open.
 
 The [HTTP/1.1 duplex test](../tests/unit/test_proxy_curl_duplex.c) pauses the
 upload callback after its first four bytes. A local server sends a final
