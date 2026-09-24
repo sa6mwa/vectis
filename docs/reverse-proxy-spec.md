@@ -351,14 +351,17 @@ through the static-site trailing-slash exception stays on its current path.
 Do not use the fallback merely because no ordinary route matched: a proxy
 regex could acquire a valid decoded path that currently returns `404`.
 This keeps normal-path precedence and static `405` intact.
+The live pre-body probe now confirms that an earlier static directory serves
+its file and produces `405` with `Allow` for POST over cleartext and TLS;
+an escaped path under its prefix can still enter proxy-only raw fallback.
 The selected handler pointer identifies a private proxy marker without a new
 route kind or a duplicate normal-path matcher. Its userdata pointer identifies
 the route-owned proxy configuration without another matching pass. Takeover
 must retain that configuration until the exchange is destroyed, including
 worker shutdown. The raw fallback validates the raw path and filters the same
-registry to marker
-routes, using its existing method, parameter, and regex matcher, and returns
-the matched userdata. The bridge already consumes a selected live-upload route
+registry to marker routes, using its existing method, parameter, and regex
+matcher, and returns the matched userdata. The bridge already consumes a
+selected live-upload route
 before ordinary handler dispatch. Live tests cover
 both registration orders for overlapping buffered and live-upload routes,
 plus application WebSocket priority over an earlier ordinary handler. A live

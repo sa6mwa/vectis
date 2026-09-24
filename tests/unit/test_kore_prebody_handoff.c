@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <openssl/ssl.h>
 #include <poll.h>
@@ -284,11 +285,14 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     vectis_error probe_error;
     vectis_status status;
     vectis_status path_status;
+    vectis_http_method route_method;
     const char *allow;
     char *decoded;
     int denied;
     int raw_fallback_eligible;
 
+    if (req->method != HTTP_METHOD_GET && req->method != HTTP_METHOD_POST)
+      return KORE_RESULT_OK;
     assert(probe_app != NULL);
     probe_request = vectis_internal_request_new(&probe_error);
     assert(probe_request != NULL);
@@ -297,6 +301,8 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     denied = 0;
     raw_fallback_eligible = 0;
     allow = NULL;
+    route_method = req->method == HTTP_METHOD_POST ? VECTIS_HTTP_POST :
+        VECTIS_HTTP_GET;
     status = vectis_internal_kore_decode_request_path(
         req->path, &decoded, &probe_error);
     if (status == VECTIS_OK) {
@@ -308,9 +314,9 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
         return KORE_RESULT_ERROR;
       }
       raw_fallback_eligible = path_status == VECTIS_ERR_INVALID;
-      if (path_status == VECTIS_OK) {
+      if (path_status == VECTIS_OK && route_method == VECTIS_HTTP_GET) {
         status = vectis_internal_match_websocket(
-            probe_app, VECTIS_HTTP_GET, decoded, probe_request, &ws_match,
+            probe_app, route_method, decoded, probe_request, &ws_match,
             &probe_error);
         if (status == VECTIS_OK) {
           free(decoded);
@@ -325,18 +331,18 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
       }
       vectis_error_clear(&probe_error);
       status = vectis_internal_static_route_method_denied(
-          probe_app, VECTIS_HTTP_GET, decoded, &denied, &allow,
+          probe_app, route_method, decoded, &denied, &allow,
           &probe_error);
       if (status == VECTIS_OK && !denied)
         status = vectis_internal_route_body_policy(
-            probe_app, VECTIS_HTTP_GET, decoded, &policy, NULL, &selected,
+            probe_app, route_method, decoded, &policy, NULL, &selected,
             NULL, probe_request, &probe_error);
     } else if (status == VECTIS_ERR_INVALID) {
       raw_fallback_eligible = 1;
     }
     if (raw_fallback_eligible && status == VECTIS_ERR_INVALID && !denied) {
       status = vectis_internal_proxy_raw_path_match(
-          probe_app, VECTIS_HTTP_GET, req->path, proxy_marker_reply,
+          probe_app, route_method, req->path, proxy_marker_reply,
           probe_request, NULL, &probe_error);
       if (status == VECTIS_OK)
         selected = proxy_marker_reply;
@@ -543,6 +549,7 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
 {
   vectis_route_config ordinary;
   vectis_route_config proxy;
+  vectis_route_config static_overlap_proxy;
   vectis_websocket_route_config websocket;
 
   ordinary = vectis_route(VECTIS_HTTP_GET, "^/proxy-select/.*$", reply, NULL);
@@ -557,9 +564,26 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
     assert(vectis_register_route(app, &ordinary, error) == VECTIS_OK);
     assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
   }
+  static_overlap_proxy = vectis_route(
+      VECTIS_HTTP_GET, "^/proxy-select/static/.*$", proxy_marker_reply,
+      NULL);
+  static_overlap_proxy.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  assert(vectis_register_route(app, &static_overlap_proxy, error) == VECTIS_OK);
   websocket = vectis_websocket_route(
       "/proxy-select/ws", selection_ws_message, NULL);
   assert(app->websocket(app, &websocket, error) == VECTIS_OK);
+}
+
+static void
+register_proxy_static_overlap(vectis_app *app, const char *root,
+    vectis_error *error)
+{
+  vectis_static_directory_config mount;
+
+  vectis_static_directory_config_init(&mount);
+  mount.path_prefix = "/proxy-select/static/";
+  mount.root_dir = root;
+  assert(app->static_directory(app, &mount, error) == VECTIS_OK);
 }
 
 static unsigned short
@@ -1009,9 +1033,9 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
 }
 
 static int
-check_prebody_header_result(unsigned short port, const char *path,
-    const char *version, const char *headers, int tls, int status,
-    const char *marker)
+check_prebody_method_result(unsigned short port, const char *method,
+    const char *path, const char *version, const char *headers, int tls,
+    int status, const char *marker)
 {
   SSL_CTX *ctx;
   SSL *ssl;
@@ -1026,8 +1050,8 @@ check_prebody_header_result(unsigned short port, const char *path,
   char status_text[16];
 
   length = snprintf(wire, sizeof(wire),
-      "GET %s HTTP/%s\r\nHost: localhost\r\n%s\r\n",
-      path, version, headers);
+      "%s %s HTTP/%s\r\nHost: localhost\r\n%s\r\n",
+      method, path, version, headers);
   assert(length > 0 && (size_t)length < sizeof(wire));
   fd = connect_local(port);
   ctx = NULL;
@@ -1081,6 +1105,15 @@ check_prebody_header_result(unsigned short port, const char *path,
 }
 
 static int
+check_prebody_header_result(unsigned short port, const char *path,
+    const char *version, const char *headers, int tls, int status,
+    const char *marker)
+{
+  return check_prebody_method_result(port, "GET", path, version, headers,
+      tls, status, marker);
+}
+
+static int
 check_framing_header_visibility(unsigned short port, const char *path,
     const char *version, const char *headers, int tls)
 {
@@ -1101,6 +1134,7 @@ main(void)
       "Content-Length: 4\r\n\r\nda";
   static const char split_end[] =
       "taGET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char static_content[] = "static-prebody-winner";
   vectis_app_config config;
   vectis_cert_bundle_config certs;
   vectis_route_config route;
@@ -1127,7 +1161,26 @@ main(void)
   int raw_target_passed;
   char cert_path[128];
   char key_path[128];
+  char static_root[] = "proxy-static.XXXXXX";
+  char static_root_abs[PATH_MAX];
+  char static_file_path[PATH_MAX];
+  char working_dir[PATH_MAX];
+  FILE *static_file;
+  int path_length;
 
+  assert(getcwd(working_dir, sizeof(working_dir)) != NULL);
+  assert(mkdtemp(static_root) != NULL);
+  path_length = snprintf(static_root_abs, sizeof(static_root_abs), "%s/%s",
+      working_dir, static_root);
+  assert(path_length > 0 && (size_t)path_length < sizeof(static_root_abs));
+  path_length = snprintf(static_file_path, sizeof(static_file_path),
+      "%s/file.txt", static_root);
+  assert(path_length > 0 && (size_t)path_length < sizeof(static_file_path));
+  static_file = fopen(static_file_path, "wb");
+  assert(static_file != NULL);
+  assert(fwrite(static_content, 1, sizeof(static_content) - 1, static_file) ==
+      sizeof(static_content) - 1);
+  assert(fclose(static_file) == 0);
   port = available_port();
   vectis_kore_set_prebody_probe(probe_prebody);
   vectis_app_config_init(&config);
@@ -1144,6 +1197,7 @@ main(void)
       "^/ordinary-raw-target/.*$", reply, NULL);
   raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
+  register_proxy_static_overlap(app, static_root_abs, &error);
   register_proxy_selection_routes(app, 0, &error);
   probe_app = app;
   assert(app->start(app, &error) == VECTIS_OK);
@@ -1242,6 +1296,15 @@ main(void)
       "", 0, 400, " 400 "));
   assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
       "Connection: Upgrade\r\nUpgrade: h2c\r\n", 0, 400, " 400 "));
+  assert(check_prebody_header_result(port,
+      "/proxy-select/static/file.txt", "1.1", "", 0, 200,
+      "static-prebody-winner"));
+  assert(check_prebody_method_result(port, "POST",
+      "/proxy-select/static/file.txt", "1.1", "Content-Length: 0\r\n",
+      0, 405, "allow: GET, HEAD"));
+  assert(check_prebody_header_result(port,
+      "/proxy-select/static/a%2Fb", "1.1", "", 0, 200,
+      "proxy-prebody-selected"));
   reject_passed = check_local_rejection(port, "/reject", 400);
   reject_passed &= check_local_rejection(port, "/forbidden", 403);
   assert(vectis_stop(app, &error) == VECTIS_OK);
@@ -1279,6 +1342,7 @@ main(void)
       "^/ordinary-raw-target/.*$", reply, NULL);
   raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
+  register_proxy_static_overlap(app, static_root_abs, &error);
   register_proxy_selection_routes(app, 1, &error);
   probe_app = app;
   assert(app->start(app, &error) == VECTIS_OK);
@@ -1326,12 +1390,23 @@ main(void)
       "", 1, 400, " 400 "));
   assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
       "Connection: Upgrade\r\nUpgrade: h2c\r\n", 1, 400, " 400 "));
+  assert(check_prebody_header_result(port,
+      "/proxy-select/static/file.txt", "1.1", "", 1, 200,
+      "static-prebody-winner"));
+  assert(check_prebody_method_result(port, "POST",
+      "/proxy-select/static/file.txt", "1.1", "Content-Length: 0\r\n",
+      1, 405, "allow: GET, HEAD"));
+  assert(check_prebody_header_result(port,
+      "/proxy-select/static/a%2Fb", "1.1", "", 1, 200,
+      "proxy-prebody-selected"));
   tls_raw_passed = check_raw_handoff(port, 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   probe_app = NULL;
   assert(remove(cert_path) == 0);
   assert(remove(key_path) == 0);
+  assert(remove(static_file_path) == 0);
+  assert(rmdir(static_root) == 0);
   vectis_kore_set_prebody_probe(NULL);
   return count == 3 && split_count == 2 && tls_passed &&
       raw_passed && tls_raw_passed && reject_passed && chunked_passed &&
