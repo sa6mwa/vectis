@@ -1,9 +1,9 @@
 # Reverse Proxy Design and Verification Spec
 
-Status: proposed; this document specifies a future Vectis feature. No proxy
-route or transport described here is implemented yet. The pre-body takeover
-is a candidate pending the [transport feasibility audit](reverse-proxy-feasibility-audit.md)
-and its executable gates.
+Status: architecture selected for implementation, 2026-09-25. The proxy route
+is not implemented yet. The
+[transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
+evidence behind this choice and the checks required during implementation.
 
 ## Objective
 
@@ -299,6 +299,22 @@ The proxy owns only its request-body framing, response framing, and tunnel
 after takeover. Do not add a second request-line/header parser or outbound
 HTTP/TLS client to Vectis.
 
+### Vendored Kore boundary
+
+`vendor/kore/upstream/` is a disposable checkout. Every required change to
+Kore itself belongs in a focused numbered patch in `vendor/kore/patches/series`;
+the existing pipelining, pre-body hook, half-close, Host matching, and header
+validation patches provide the current transport boundary. Keep the proxy
+route, director and response hooks, framing, bounded queues, libcurl multi
+integration, readiness adapter, and WebSocket tunnel in Vectis-owned source.
+Use Kore's existing platform event calls from that adapter, including separate
+read and write filter removal on kqueue. Add another Kore patch only when an
+essential behavior cannot be expressed through the existing hook and event
+surface, and cover ordinary non-proxy behavior with a regression test. Verify
+the series by applying it to a clean pinned checkout with
+`make verify-kore-patches`; never treat edits to the generated upstream
+checkout as the source of truth.
+
 ### Audited boundary in the current code
 
 Vectis registers one catch-all Kore route per domain, with
@@ -542,7 +558,7 @@ retired object and do nothing. Worker teardown drains the retired list after
 event processing stops. A taken-over downstream connection likewise ignores
 any later batch result after entering Kore's disconnecting state. This is
 proxy-owned watcher lifetime management and requires no new generic Kore
-event API; native kqueue execution remains a feasibility gate.
+event API. Native kqueue execution is an implementation verification gate.
 
 Use libcurl upload mode with a known length or a streamed unknown length when
 a framed body is present, then set the validated method string. On HTTP/1.1,
@@ -660,9 +676,9 @@ use a bounded, cancellable delayed retry so an internal TLS transition with
 no further socket edge cannot stall forever; measure its wakeup rate under an
 idle tunnel and a forced cross-direction retry. Never use a continuous
 level-triggered writable watcher as that retry mechanism. This raw-tunnel
-policy requires an executable probe before architecture commitment. A
-downstream reset can arrive as an event error or as `ECONNRESET` on the next
-raw read; both paths must cancel the easy handle and delayed retry timer
+policy has targeted executable probes and must be verified in the production
+path. A downstream reset can arrive as an event error or as `ECONNRESET` on
+the next raw read; both paths must cancel the easy handle and delayed retry timer
 before the exchange is freed.
 The relay copies bounded byte chunks in both directions with independent
 ingress pause/resume. Kore's WebSocket message API remains for application

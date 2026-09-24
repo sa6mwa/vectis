@@ -1,28 +1,37 @@
 # Reverse proxy transport feasibility audit
 
-Status: source audit plus targeted live transport probes, 2026-09-24. The
-pre-body takeover is a candidate, not a complete implementation choice. The
-probes do not implement a production proxy route. The intended feature
-contract is in [reverse-proxy-spec.md](reverse-proxy-spec.md).
+Status: architecture selected for implementation, 2026-09-25, based on source
+audit and targeted live transport probes. The probes do not implement a
+production proxy route. The intended feature contract is in
+[reverse-proxy-spec.md](reverse-proxy-spec.md).
 
 ## Decision
 
-The candidate reduces changes to Kore's ordinary body path by letting Kore
-parse the request line and headers, then handing only selected proxy requests
+The selected design reduces changes to Kore's ordinary body path by letting
+Kore parse the request line and headers, then handing selected proxy requests
 to a proxy-owned connection handler. Live probes now establish handoff,
 queued-response ordering, bounded 1 MiB cleartext and double-TLS relays,
 coupled HTTP/1.1 fixed-length and chunked upload/download overlap with
 downstream TLS, SSE delivery over HTTP/1.1 and HTTP/2 upstreams, and a
 coupled HTTP/1.1 WebSocket upgrade over verified upstream TLS. The leading
-output choice uses one bounded Kore send netbuf at a time. It is **not yet a
-proven complete proxy architecture**: general HTTP framing and header translation,
-WebSocket rejection and long-lived close behavior, all cleanup paths, and the
-release HTTP/2 memory envelope remain open.
+output choice uses one bounded Kore send netbuf at a time. This evidence is
+sufficient to choose the architecture and begin implementation. General HTTP
+framing and header translation, complete WebSocket rejection behavior,
+remaining cleanup paths, native kqueue execution, and the release HTTP/2
+memory envelope are implementation and shipping checks, not reasons to keep
+the architecture undecided.
 
 The alternative shared-framing approach avoids duplicating a fixed-length
 body counter but touches more of Kore's normal request path. The pre-body
-candidate is preferable only if the gates below pass without broadening its
-Kore changes into a second event/HTTP stack.
+handoff is the least intrusive known design that satisfies the streaming
+contract: Kore retains connection, inbound TLS, event-loop, and bounded send
+queue ownership; the proxy owns framing and transfer state; libcurl multi
+handles HTTP/SSE upstreams and a connect-only HTTP/1.1 WebSocket tunnel.
+Kore changes remain a small, auditable patch series; the proxy implementation
+belongs in Vectis source, not in `vendor/kore/upstream/`. If implementation
+evidence shows this boundary cannot meet a stated
+requirement, revisit the decision explicitly rather than hiding the failure
+behind buffering or a worker thread per stream.
 
 ## Executable finding: ordinary pipelining
 
@@ -604,7 +613,7 @@ Kore/libcurl integration: full header and trailer policy, response rewriting,
 interim delivery, downstream framing, TLS cancellation, and connection reuse
 still need executable proof. The test rejects unsupported transfer codings;
 whether that is the intended public proxy policy must be settled before
-architecture commitment.
+shipping.
 
 This output choice came from a failed direct-TLS experiment in the same
 worker loop. Level-triggered writable interest generated more than 150,000
@@ -1118,10 +1127,10 @@ idle past that limit; the socket remains open. Proxy-owned connect, idle, and
 optional total deadlines must replace the inherited Kore header/body timer
 for the entire HTTP/SSE/WebSocket exchange.
 
-The full candidate is **not proved**. Kqueue still needs an equivalent
-interest helper and native test. Kore's Linux backend updates one epoll
-registration with the combined read/write mask; its BSD backend adds or
-deletes separate `EVFILT_READ` and `EVFILT_WRITE` filters and can invoke the
+The chosen architecture is **not yet a complete implementation**. Kqueue still
+needs an equivalent interest helper and native test. Kore's Linux backend
+updates one epoll registration with the combined read/write mask; its BSD
+backend adds or deletes separate `EVFILT_READ` and `EVFILT_WRITE` filters and can invoke the
 connection callback once per filter in a single wait cycle. The production
 scheduler must map the same proxy read/write interest state to those distinct
 operations, including the case where neither direction is armed. The Linux
@@ -1167,7 +1176,7 @@ harness and production proxy cancellation paths still need their own proof.
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) still enforces the header timer after pre-body takeover unless the proxy clears it. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis exposes the worker teardown hook through its static-runtime symbol table. | A one-second timer killed an idle takeover before the fix; clearing `http_timeout` preserved it. Active downstream connection was observed at teardown and disconnected once. A stalled upstream TLS handshake was cancelled with its curl handle, Kore socket watchers, and deadline timer before event-loop cleanup. TCP upstream resets before and after response commitment, queued output abort over cleartext and TLS, and fault-injected cleartext and TLS write errors pass worker-loop probes. Other callback phases and timeout policies remain open. |
 | Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, same-origin ordinary HTTPS on a multi retaining a connect-only tunnel, early response during paused HTTP/1.1 and HTTP/2 uploads, Linux Kore worker-loop connect-only/tunnel handoff, worker-shared HTTP/1.1 multi with overlapping SSE/upload and retained WebSocket tunnel, one completed HTTP/2 SSE download and sixteen concurrently paused and resumed HTTP/2 SSE downloads in that worker multi, 1 MiB coupled cleartext and double-TLS relays, a fixed split-header WebSocket `403` with a 1 MiB body, and standalone four- and sixteen-connection paused/resumed HTTPS HTTP/2 probes pass. A downstream reset of a live HTTP/2 stream sends `RST_STREAM`; a second SSE response completes on that same TLS connection in the worker loop. Sixteen paused HTTP/2 transfers on separate TLS connections also cancel with one `RST_STREAM` each under the default reuse policy. With close-on-cancel, all sixteen cancel by `RST_STREAM` or TCP closure, a seventeenth exchange receives `503` before curl admission, and same-origin and fresh-origin follow-on requests succeed. Separate protocol pools in Kore, general HTTP framing, other WebSocket rejection cases, other target bundles, multiplexed HTTP/2 cancellation, reuse under load after normal completion, and a production HTTP/2 memory allowance remain open. |
 
-## Minimum executable proof before architecture commitment
+## Implementation verification gates
 
 1. **Handoff and replay:** Add only the optional pre-body callback and a
    disposable proxy echo sink in an isolated spike. Send header plus body,
@@ -1188,7 +1197,7 @@ harness and production proxy cancellation paths still need their own proof.
    prove paused upload with concurrent download, connect-only TLS socket
    handoff, and a stable HTTP/2 memory envelope under slow downstream readers.
 
-Until these proofs pass, the pre-body takeover should remain a candidate. A
-failure in the first three gates requires revisiting the Kore transport
-boundary; it must not be hidden by full-body buffering, an unbounded queue, or
-a worker thread per stream.
+The architecture decision stands while these checks are implemented. A
+failure that shows the chosen boundary cannot meet the feature contract
+requires revisiting it explicitly; it must not be hidden by full-body
+buffering, an unbounded queue, or a worker thread per stream.
