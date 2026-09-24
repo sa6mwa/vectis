@@ -251,45 +251,103 @@ Do not disable origin checks merely to make the proxy handshake pass.
 
 Implement one explicit proxy mode in Kore's HTTP connection lifecycle. The
 mode owns the accepted request from header admission through normal completion
-or raw upgrade. Ordinary Vectis handlers retain their current complete-body
-contract. Do not add a second inbound HTTP request body parser, route matcher,
-or outbound HTTP/TLS client to Vectis.
+or raw upgrade. Existing non-proxy handlers retain their buffered, spooled, or
+live-upload body contracts. Extend Kore's existing request framing at the
+point where the selected route needs it; keep non-proxy fixed-length body
+delivery and Vectis's existing memory/spool policy. Do not add a second
+general HTTP request parser or outbound HTTP/TLS client to Vectis.
+
+### Audited boundary in the current code
+
+Vectis registers one catch-all Kore route per domain, with
+`vectis_kore_body_chunk` and `vectis_kore_request_free`; actual Vectis route
+selection occurs in the bridge, often after the body is complete. The bridge
+already selects some upload body policy on the first body callback and handles
+WebSocket routes before ordinary dispatch. Header-time proxy admission must
+therefore be a Vectis selector on that catch-all route, not a new independent
+Kore route. Factor one shared selection result for proxy versus ordinary,
+static, upload, and application WebSocket behavior so headers and later
+dispatch cannot select different handlers. Preserve the current precedence
+deliberately, and test it. Keep proxy state separate from the bridge's current
+body-state type because its `on_free` hook assumes that type.
+
+Kore's current request-body behavior is method-based: GET, HEAD, OPTIONS,
+COPY, and MOVE are marked complete at request creation; most other methods
+require `Content-Length`; there is no incoming chunked decoder. Its
+`on_body_chunk` callback has only success/error, with no pause or partial
+consume result. Its response stream helper accepts an already available
+buffer, while Vectis's generated-response bridge can send bounded chunks and
+resume from send-completion callbacks. That bridge's source treats zero bytes
+as EOF, so an idle asynchronous SSE producer needs a new wakeup path, not a
+call into the synchronous source API.
+
+The shared Kore edits are header/body byte ownership, strict framing
+validation, proxy-only chunk decoding and pause/resume, and TLS-aware event
+progress. Proxy routing, curl transfers, response queue policy, and raw tunnel
+state belong in Vectis's proxy bridge. Existing non-proxy routes retain their
+current buffered, spooled, or live-upload body behavior. Shared parser and
+connection edits nevertheless require non-proxy route regression coverage.
 
 ### Header-time admission and framing
 
-After complete request headers, run the same ordered Vectis route selector
-used by ordinary dispatch. It must distinguish a genuine WebSocket upgrade by
-validated `Connection` and `Upgrade` tokens, not by path alone, and preserve
-the established precedence of ordinary, static, and WebSocket routes. Reject
-ambiguous framing, invalid headers, and malformed WebSocket key/version or
-subprotocol offers before an upstream connection or local
-handler starts. Run proxy `auth`/`preflight`/`rewrite` at this boundary; a
-locally rejected request follows a defined drain-or-close policy so unread
-body bytes cannot become the next request.
+After complete request headers, invoke the Vectis selector through the
+catch-all Kore route's `on_headers` hook. It must distinguish a genuine
+WebSocket upgrade by validated `Connection` and `Upgrade` tokens, not by path
+alone, and preserve the established precedence of ordinary, static, upload,
+and application WebSocket routes. Reject ambiguous framing, invalid headers,
+and malformed WebSocket key/version or subprotocol offers before an upstream
+connection or local handler starts. Run proxy `auth`/`preflight`/`rewrite` at
+this boundary; a locally rejected request follows a defined drain-or-close
+policy so unread body bytes cannot become the next request.
 
 Kore currently passes body bytes from the initial socket read to
-`http_body_update()` *before* `on_headers`, and dispatches most handlers only
-after the body is complete. Move initial body delivery after admission and
-retain any bytes beyond that request for the next HTTP/1.x request. Audit the
-fixed-length counter before subtracting bytes: one read containing the end of
-a body and the start of a pipelined request must neither underflow the length
-nor feed the next request to the current sink. This is a required parser fix,
-verified with coalesced-read and pipelining tests.
+`http_body_update()` *before* `on_headers`; a zero-length body returns before
+`on_headers` altogether. `http_header_recv()` also transfers ownership of its
+whole receive buffer to the request. Bytes after a complete header-only
+request are not retained for the next request. For a fixed-length body,
+feeding every remaining byte to `http_body_update()` can exceed the declared
+length and underflow its counter. Correct the shared header boundary so every
+request, including a zero-length one, is admitted before body delivery; retain
+at most the bounded initial read surplus and attribute it to the current body,
+the next pipelined request, or a pre-upgrade tunnel. Never let a rejected or
+unfinished request's bytes become a new request.
 
-One authoritative incremental HTTP/1.x framing parser feeds a selected body
-sink: the existing ordinary buffered/spooled path or the proxy's bounded
-stream sink. The parser recognizes fixed-length and chunked bodies and
-trailers independently of the method; the proxy sink accepts framed bodies
-on any supported method. The sink interface reports `ACCEPT`, `PAUSE`, or
-`ERROR`, including how many bytes were accepted; a partial chunk remains
-owned by the parser until resumed. A proxy pause stops application ingress
-without suppressing write progress, control
-events, or TLS progress that requires opposite-direction readiness. Linux's
-current whole-fd epoll disable is inadequate; implement independent logical
-read/write interest with the corresponding epoll and kqueue behavior. A
-resume on edge-triggered epoll must actively drain already-ready bytes so it
-does not wait for a new edge. Ordinary requests must preserve their existing
-body limits and handler semantics.
+The selector must run before Kore's current method-based completion, `411`
+for missing `Content-Length`, `413` for `http_body_max`, and zero-length early
+return can bypass it. Ordinary routes keep their existing limits and dispatch
+timing after this ordering change.
+
+At that boundary validate all `Content-Length` instances and
+`Transfer-Encoding` combinations strictly before choosing the body path.
+Reject ambiguous or unsupported framing for ordinary routes; do not silently
+enable chunked uploads for them. Preserve the existing ordinary fixed-length
+sink and body limits. For a selected proxy, frame bodies by the validated
+headers independently of method, extending the same receive path with an
+incremental chunked decoder and bounded trailer parser. The proxy sink alone
+has `ACCEPT`, `PAUSE`, and `ERROR` outcomes plus consumed-byte count; retain a
+partial input chunk until resumed. Do not use the existing binary
+`on_body_chunk` callback as a fake pause mechanism or apply Kore's ordinary
+`http_body_max` to an otherwise bounded proxy transfer.
+
+Kore registers accepted sockets with edge-triggered read and write readiness.
+The Linux `kore_platform_disable_read()` deletes the whole epoll registration;
+it cannot be used directly to pause proxy reads while preserving writes. Add
+proxy-specific logical read gating and explicit drain on resume, or change the
+platform registration to independently arm read and write on both epoll and
+kqueue. Either choice must avoid wakeup spin under a paused peer. TLS
+`SSL_read` can need write readiness and `SSL_write` can need read readiness;
+track that cross-direction progress separately from application-body read
+permission. The existing `kore_connection_handle()` drives reads and writes
+only from their corresponding event flags, so this must be proven with
+downstream TLS under backpressure, not inferred from plain TCP behavior.
+
+Keep a proxy request out of Kore's normal complete-body dispatch while the
+exchange is active. Hold its lifetime through streaming and finalize it once
+after completion or cancellation. Kore currently restarts header reads from
+`http_response_normal()` unless `CONN_IS_BUSY`; set and clear that guard around
+the proxy exchange and resume keepalive only after both request consumption
+and response framing are complete. On upgrade, transfer state ownership from
+the request to the connection before freeing the request.
 
 `Expect: 100-continue` is resolved at header admission. Send the local `100`
 after policy accepts, without waiting for upstream connection setup; this
@@ -338,21 +396,21 @@ default short curl transfer timeout.
 
 ### Downstream response writer
 
-Use a proxy-specific asynchronous response writer attached to the Kore
-connection. It owns final/interim header emission, framing, a bounded send
-queue, and completion callbacks. It can flush headers and body chunks without
-waiting for the upstream transfer to finish. Reuse the existing live stream
-bridge's proven send-completion and chunk-framing mechanics where applicable,
-but not its synchronous `lc_source->read()` interface: there `0` means EOF,
-so an empty queue cannot represent an asynchronous wait. Kore's ordinary
-response helper injects connection and content-length behavior and cannot
-transparently emit a `101`; the proxy writer must handle `100`, `103`, final
-responses, trailers, and `101` with explicit framing rules. A response may
+Use a proxy-owned asynchronous response controller attached to the Kore
+connection. Reuse `net_send_stream()` and its send-completion callback, as the
+existing Vectis generated-response stream does, but enqueue only within an
+accounted high-water mark. An empty upstream queue means wait for a producer
+wakeup; it is not EOF. Emit proxy response headers explicitly, including
+interim and WebSocket `101` headers. The ordinary `http_response()` helper
+injects `Content-Length` and connection fields and may synthesize a pretty
+error body for an upstream `4xx` or `5xx`, so it cannot preserve the upstream
+response contract reliably. Explicit emission must preserve Kore's HSTS,
+response count, access logging, and close behavior. The controller handles
+chunk framing, trailers, producer wakeup, and cancellation without requiring
+a new generic Kore response API. A response may
 begin before the request body ends. Once final headers are committed, failures
 abort the downstream stream rather than attempting a second response. Feed
-HTTP bytes through Kore's send queue and completion callbacks, with an explicit
-queue high-water mark; retain its HSTS policy, access logging, response count,
-connection close rules, and request lifetime/accounting. The response hook
+HTTP bytes through Kore's send queue and completion callbacks. The response hook
 cannot set `Content-Length`, `Transfer-Encoding`, `Connection`, or `Trailer`;
 the writer computes them after the hook's status decision. For a body-bearing
 response in the `auto` pool, commit downstream HTTP/1.1 chunked framing even
@@ -424,7 +482,11 @@ checkout is disposable. The relevant current code is
 [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c),
 [`http.c`](../vendor/kore/upstream/src/http.c),
 [`connection.c`](../vendor/kore/upstream/src/connection.c),
+[`net.c`](../vendor/kore/upstream/src/net.c),
 [`linux.c`](../vendor/kore/upstream/src/linux.c),
+[`bsd.c`](../vendor/kore/upstream/src/bsd.c),
+[`tls_openssl.c`](../vendor/kore/upstream/src/tls_openssl.c),
+[`worker.c`](../vendor/kore/upstream/src/worker.c),
 [`curl.c`](../vendor/kore/upstream/src/curl.c), and
 [`websocket.c`](../vendor/kore/upstream/src/websocket.c).
 
@@ -438,22 +500,29 @@ informational responses and trailers, followed by WebSocket tunneling. These
 are implementation milestones, not exemptions from the wire contract above;
 the proxy route is complete only when all required cases pass.
 
-Treat six feasibility checks as decision gates before committing to the
-full implementation: (1) curl multi and the chosen TLS build support
-nonblocking DNS and bounded paused transfers; (2) a retained connect-only
-easy handle supports the intended TLS WebSocket relay and single-owner fd
-watcher handoff under the worker event loop; (3) Kore's Linux and BSD
-readiness paths can pause one direction while
-allowing writes and TLS handshake progress; (4) libcurl sends framed GET,
-OPTIONS, and HEAD uploads while applying the correct response-body rule,
-without blocking or buffering the entire upload; (5) libcurl delivers a
-response body while a request upload is still paused or active, and can stop
-an early-final upload cleanly; (6) the pinned libcurl build sustains HTTP/2
-uploads, downloads, and SSE with multiplexing disabled and a measured stable
-memory envelope under paused slow-consumer load. A failed gate requires
-revisiting the transport design or dependency, not substituting a worker
-thread per stream, full-body
-buffer, or hidden spool file.
+Treat these as feasibility gates before committing to the full implementation:
+
+1. The catch-all route's header-time selector preserves ordinary, static,
+   upload, and application WebSocket precedence for bodyless, zero-length,
+   and body-bearing requests.
+2. Kore's initial receive buffer can be split without losing pipelined or
+   early-upgrade bytes; proxy pause and resume preserve downstream TLS
+   progress on Linux and BSD.
+3. Curl multi and the chosen TLS build provide nonblocking DNS and bounded
+   paused transfers.
+4. A retained connect-only easy handle supports the TLS WebSocket relay and
+   single-owner fd watcher handoff under the worker event loop.
+5. Libcurl sends framed GET, OPTIONS, and HEAD uploads while applying correct
+   response-body rules, without blocking or buffering the entire upload.
+6. Libcurl delivers a response body while request upload is paused or active
+   and can stop an early-final upload cleanly.
+7. The pinned libcurl build sustains HTTP/2 uploads, downloads, and SSE with
+   multiplexing disabled and a measured stable memory envelope under paused
+   slow-consumer load.
+
+A failed gate requires revisiting the transport design or dependency, not
+substituting a worker thread per stream, full-body buffer, or hidden spool
+file.
 
 ## Security and operational policy
 
@@ -485,14 +554,14 @@ evidence is integration and end-to-end behavior.
 
 | Layer | Required cases and assertions |
 | --- | --- |
-| Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed framing and handshake rejection; proxy and ordinary route precedence. |
-| Parser and readiness integration | Initial read containing headers plus body, exactly at and beyond declared length; pipelined next request in the same read; split and malformed chunk boundaries; conflicting lengths; trailers; pausing midway through a chunk; resume without a new epoll edge and with pending writes; TLS `WANT_READ`/`WANT_WRITE` progress on Linux and BSD. Assert byte ownership and no desynchronization or spin. |
-| HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; declared request trailers, rejection of undeclared request trailers, and relay of permitted undeclared response trailers, verifying upload EOF and final-chunk ordering; exactly one local `100` even when upstream also sends `100`, bounded upload while upstream connects, `100` followed by `502` on connection failure, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Assert upstream receives the expected bytes and metadata. |
+| Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed framing and handshake rejection; one header-time Vectis selection result agreeing with later dispatch and preserving ordinary, static, upload, and application WebSocket precedence. |
+| Parser and readiness integration | Initial read containing headers plus body, bodyless or `Content-Length: 0` request followed by another request, exactly and beyond declared length, and an early WebSocket frame; split and malformed chunk boundaries; duplicate/conflicting lengths and `Content-Length`/`Transfer-Encoding` ambiguity; ordinary route rejecting unsupported chunked upload while retaining its current fixed-length body policy; trailers; pausing midway through a chunk; resume without a new epoll edge and with pending writes; downstream TLS `WANT_READ`/`WANT_WRITE` progress on Linux and BSD. Assert byte ownership, one ordinary handler dispatch, and no desynchronization, spin, or premature next-request read. |
+| HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; declared request trailers, rejection of undeclared request trailers, and relay of permitted undeclared response trailers, verifying upload EOF and final-chunk ordering; exactly one local `100` even when upstream also sends `100`, bounded upload while upstream connects, `100` followed by `502` on connection failure, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; exact upstream `4xx`/`5xx` status, headers, and body with Kore pretty errors enabled; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Assert upstream receives the expected bytes and metadata. |
 | HTTP/2 upstream integration | A local HTTPS upstream offers `h2` and `http/1.1`, then `h2` only: ordinary HTTP and SSE negotiate `h2`, while forced-HTTP/1.1 routes and WebSocket handshakes stay on HTTP/1.1 and fail with `502` against an `h2`-only peer. Verify HTTP/1.1 fallback still produces downstream chunked framing in the auto pool, TLS 1.2 minimum, no h2c, no concurrent streams per connection, server push refusal, `:path`/`:authority` rewrites, known/unknown upload length, early response, HEAD, and selected HTTP/1.1 pool for request trailers. Verify an HTTP/2 response with both `Content-Length` and undeclared trailers is sent downstream with chunked framing, intact trailer fields, and declared-length validation. Under many slow downstream readers and concurrent long-lived SSE streams, assert both the per-transfer application queue limit and the separately budgeted libcurl/TLS worker-memory envelope. Repeat with much larger response sizes and durations; memory must not track payload size. |
 | Streaming integration | Upstream emits the first chunk, then waits before finishing; client must receive that chunk before upstream completion. Request chunks must arrive upstream before client EOF. Repeat with slow upstream, slow downstream, simultaneous upload/download, and a response that starts while upload is active. Assert bounded application and libcurl queue depths, active backpressure, and no spool files or full-body allocations. Use multi-gigabyte logical generators in the opt-in stress run. |
 | SSE integration | Headers and first event arrive before upstream completion; periodic comments and events arrive at their production cadence; idle timeout behavior is explicit; downstream disconnect cancels upstream promptly. |
 | WebSocket integration | Successful HTTP/1.1 `ws`/`wss`, selected subprotocol, offered extension pass-through, fragmented messages larger than Kore's normal frame limit, interleaved ping/pong, close code/reason, non-`101` rejection with a streamed body, and client/server disconnect. Assert `modify_response` is bypassed for `101` and applied to non-`101` rejection. Include handshake and first frame in one read on either leg; reject upgrade requests with framed bodies; exceed the bounded pre-upgrade buffer with a paused client; reject `Upgrade: h2c`; test TLS upstream that offers HTTP/2 and verify HTTP/1.1 selection; verify exact byte relay after the handshake, including masking. Test TLS `CURLE_AGAIN` without socket-watcher spin, one readiness owner after connect-only completion, and non-`101` chunked responses with trailers. Run a Go `net/http` upgrader fixture with public `Origin`/rewritten `Host`, subprotocol negotiation, and sustained bidirectional traffic. |
-| Failure and lifecycle | DNS/connect/TLS failure, upstream reset before and after headers, malformed upstream headers, slowloris, callback rejection, partial request body, downstream disconnect, worker shutdown, app stop, and connection limits. Assert no orphan transfer, retained curl handle, leaked fd, hanging test process, or accidentally reusable connection with unread request bytes. |
+| Failure and lifecycle | DNS/connect/TLS failure, upstream reset before and after headers, malformed upstream headers, slowloris, callback rejection, partial request body, downstream disconnect, worker shutdown, app stop, and connection limits. Assert exactly one request/connection teardown, no orphan transfer, retained curl handle, leaked fd, hanging test process, or accidentally reusable connection with unread request bytes. |
 | Sanitizers and fuzzing | ASan/UBSan integration runs; bounded fuzz targets for URL/header rewrite, chunk parser, trailer parser, and upgrade response validation. |
 
 Use local fixtures rather than a public network service. Every test fixture
