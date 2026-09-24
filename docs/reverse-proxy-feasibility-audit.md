@@ -9,11 +9,11 @@ probes do not implement an upstream proxy. The intended feature contract is in
 
 The candidate reduces changes to Kore's ordinary body path by letting Kore
 parse the request line and headers, then handing only selected proxy requests
-to a proxy-owned connection handler. It is plausible, but **not yet proven
-feasible** for bounded full-duplex TLS traffic. The TLS retry signal, buffered
-byte replay, EOF policy, and cleanup ordering require an executable spike
-before committing to this architecture. Source inspection is insufficient for
-those behaviors.
+to a proxy-owned connection handler. Live probes now establish handoff,
+bounded downstream TLS relay, queued-response ordering, libcurl HTTP/1.1
+upload/download overlap, and verified HTTPS connect-only transport. It is
+**not yet a proven complete proxy architecture**: the transport coupling,
+framing, all cleanup paths, and HTTP/2 memory envelope remain open.
 
 The alternative shared-framing approach avoids duplicating a fixed-length
 body counter but touches more of Kore's normal request path. The pre-body
@@ -42,8 +42,27 @@ uses the pinned debug libcurl build with a local TCP echo server. It keeps a
 completed connect-only easy handle attached to a multi handle, obtains its
 active socket, exchanges bytes with `curl_easy_send` and `curl_easy_recv`, and
 checks that raw sending stops working after removing the easy handle. This
-confirms the basic handle lifetime contract in the local build. It does not
-yet prove HTTPS/WSS, socket-watcher transfer, or bounded relay behavior.
+confirms the basic handle lifetime contract in the local build. A separate
+[HTTPS connect-only test](../tests/unit/test_proxy_curl_connect_only_tls.c)
+creates a local TLS server with a trusted in-memory certificate, disables
+ALPN as required for the raw HTTP/1.1 WebSocket handshake, completes the
+connection in libcurl multi, then sends and receives bytes through the
+still-attached easy handle and its active socket. This passes with certificate
+and hostname verification enabled. It proves the TLS transport mechanism, not
+a WebSocket handshake or coupled bounded tunnel. [Libcurl documents that a
+connect-only multi easy must remain attached](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html)
+and that `curl_easy_recv()` must be drained before waiting for another socket
+edge because TLS data can remain inside libcurl
+([receive API](https://curl.se/libcurl/c/curl_easy_recv.html)).
+
+The [HTTP/1.1 duplex test](../tests/unit/test_proxy_curl_duplex.c) pauses the
+upload callback after its first four bytes. A local server sends a final
+chunked response and its first body chunk while the upload is paused, then
+reads the remaining upload bytes and sends the final response chunk. The
+pinned debug libcurl 8.22.0 delivered `pong` before upload resume and
+completed `pongdone` after it. This proves response progress during a paused
+HTTP/1.1 upload in this build; it does not prove the event-loop integration,
+HTTP/2 duplex, or cancellation behavior.
 
 ## Executable finding: pre-body handoff and replay
 
@@ -116,16 +135,22 @@ nonblocking TLS closure for this exchange. Explicitly sending the server
 client observe `SSL_ERROR_ZERO_RETURN`. This closure is part of the proxy
 transport. The probe uses `SSL_get_error()` for retry direction and holds the
 write buffer unchanged across a retry. Five serial repetitions of the
-TLS-inclusive test passed.
+TLS-inclusive test passed. The probe now precedes the taken-over request with
+an ordinary 128 KiB response in the same client write. Both cleartext and TLS
+runs observe Kore's earlier send queue still populated at takeover, drain it,
+and only then emit the direct response. The client verifies the entire earlier
+body and subsequent takeover header in order. This exercises the queue-drain
+barrier without another Kore patch; both modes reported one queued predecessor
+and one drain event in the final run.
 
 The full candidate is **not proved**. Kqueue still needs an equivalent
 interest helper and test. The TLS probe covers normal `WANT_READ` and
 `WANT_WRITE` from read and write respectively; it has not forced either
 cross-direction retry. Its per-event work budget also has not exercised the
-continuation path for OpenSSL-held bytes. Earlier Kore-queued responses need
-a drain barrier before direct output begins. Those ownership transitions,
-worker-shutdown cancellation, and an upstream full-duplex transfer must pass
-executable tests before preferring this path over Kore's send queue.
+continuation path for OpenSSL-held bytes. The queue-drain probe exercises an
+earlier buffered response, but not a preceding stream completion callback or
+the queue's rare TLS cross-direction retry. Worker-shutdown cancellation and
+an end-to-end coupled upstream transfer remain unproved.
 
 ## Findings from the current source
 
@@ -137,10 +162,10 @@ executable tests before preferring this path over Kore's send queue.
 | Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, and Kore's TLS wrappers collapse `WANT_READ` and `WANT_WRITE`. The Linux probe bypasses both for taken-over exchanges, uses direct OpenSSL I/O and an 8 KiB queue, and arms only the needed epoll direction. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Normal TLS read/write retries, slow readers, and bounded application output pass on Linux. Forced cross-direction retries, kqueue, and upstream coupling remain open. |
 | TLS buffered data | [OpenSSL documents](https://docs.openssl.org/3.0/man3/SSL_pending/) processed and unprocessed records that can remain after the socket stops reporting readable. An edge-triggered handler must drain buffered application data when capacity resumes, but it must not spin on a record that cannot yet produce application bytes. | Requires a bounded work budget and explicit continuation scheduling, not readiness alone. |
 | EOF and half-close | [`net_read()`](../vendor/kore/upstream/src/net.c) disconnects the whole connection on a zero-byte read; `kore_tls_read()` treats `SSL_ERROR_ZERO_RETURN` as an error. The direct-I/O probe keeps writing after TCP EOF and after a TLS client `close_notify`. | One cleartext and one TLS half-close exchange pass. Early upstream final responses, resets, and close deadlines remain open. |
-| Response output | Vectis uses [`net_send_stream()`](../vendor/kore/upstream/src/net.c) for generated responses, but Kore invokes stream callbacks during connection removal after freeing `hdlr_extra`. The direct-I/O probe owns its output queue and teardown. | Direct output passes slow-peer tests without send callbacks; preserving order behind an earlier Kore-queued response remains unproved. |
+| Response output | Vectis uses [`net_send_stream()`](../vendor/kore/upstream/src/net.c) for generated responses, but Kore invokes stream callbacks during connection removal after freeing `hdlr_extra`. The direct-I/O probe owns its output queue and teardown. | Direct output passes slow-peer tests without send callbacks. A 128 KiB earlier Kore response drains before takeover output on cleartext and TLS; a preceding streaming response remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) skips the normal idle check while a request remains attached and can enforce ordinary send timeouts on queued output. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). | Proxy timers and one owner for cancellation are required. Cancel curl handles and timers before connection/request teardown, including worker stop. |
-| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Local plain-TCP connect-only lifetime passes. HTTPS/WSS, multi socket handoff, full duplex, release-bundle features, and HTTP/2 memory remain open. |
+| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, plus paused-upload/concurrent-download HTTP/1.1, pass. Complete WebSocket handshake/tunnel, event-loop socket ownership, release-bundle features, and HTTP/2 memory remain open. |
 
 ## Minimum executable proof before architecture commitment
 

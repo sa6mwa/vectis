@@ -21,6 +21,9 @@
 #define DIRECT_BUFFER_SIZE 8192
 #define DIRECT_PAYLOAD_SIZE (1024 * 1024)
 #define TLS_PAYLOAD_SIZE (256 * 1024)
+#define PRIOR_PAYLOAD_SIZE (128 * 1024)
+
+static unsigned char prior_payload[PRIOR_PAYLOAD_SIZE];
 
 struct direct_metrics {
   unsigned events;
@@ -32,6 +35,8 @@ struct direct_metrics {
   unsigned tls_write_want_read;
   unsigned tls_read_want_read;
   unsigned tls_write_want_write;
+  unsigned prior_queue_seen;
+  unsigned prior_queue_drained;
   size_t max_queued;
 };
 
@@ -67,7 +72,10 @@ direct_interest(struct connection *c, struct direct_state *state)
   int ssl_error;
 
   events = 0;
-  if (state->length > state->offset) {
+  if (!TAILQ_EMPTY(&c->send_queue)) {
+    events = c->tls != NULL && SSL_want(c->tls) == SSL_READING
+        ? EPOLLIN : EPOLLOUT;
+  } else if (state->length > state->offset) {
     if (state->write_wait == KORE_EVENT_READ)
       events |= EPOLLIN;
     else
@@ -135,6 +143,22 @@ direct_pump(struct connection *c)
 
   state = (struct direct_state *)c->hdlr_extra;
   assert(state != NULL);
+  if (!TAILQ_EMPTY(&c->send_queue)) {
+    if ((c->evt.flags & KORE_EVENT_WRITE) ||
+        ((c->evt.flags & KORE_EVENT_READ) && c->tls != NULL &&
+        SSL_want(c->tls) == SSL_READING)) {
+      c->evt.flags |= KORE_EVENT_WRITE;
+      if (!net_send_flush(c)) {
+        kore_connection_disconnect(c);
+        return;
+      }
+    }
+    if (!TAILQ_EMPTY(&c->send_queue)) {
+      direct_interest(c, state);
+      return;
+    }
+    metrics->prior_queue_drained++;
+  }
   for (step = 0; step < 64; step++) {
     if (state->length > state->offset) {
       if (c->tls != NULL) {
@@ -243,9 +267,9 @@ direct_event(void *arg, int error)
 
   c = (struct connection *)arg;
   metrics->events++;
-  c->evt.flags = 0;
   (void)error;
   direct_pump(c);
+  c->evt.flags = 0;
 }
 
 static int
@@ -262,7 +286,8 @@ direct_prebody(struct http_request *req, const void *data, size_t len)
     return KORE_RESULT_OK;
   assert(len <= DIRECT_BUFFER_SIZE - (sizeof(header) - 1));
   c = req->owner;
-  assert(TAILQ_EMPTY(&c->send_queue));
+  if (!TAILQ_EMPTY(&c->send_queue))
+    metrics->prior_queue_seen++;
   sndbuf = 4096;
   assert(setsockopt(c->fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0);
   state = kore_calloc(1, sizeof(*state));
@@ -347,16 +372,22 @@ static vectis_status
 health(vectis_app *app, vectis_request *request, vectis_response *response,
     void *userdata, vectis_error *error)
 {
+  vectis_bytes body;
+
   (void)app;
   (void)request;
   (void)userdata;
-  return vectis_response_text(response, 200, "text/plain", "ok", error);
+  body.data = prior_payload;
+  body.size = sizeof(prior_payload);
+  return vectis_response_bytes(response, 200, "application/octet-stream",
+      body, error);
 }
 
 static void
 check_tls_relay(unsigned short port, const unsigned char *payload)
 {
   static const char request[] =
+      "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"
       "GET /direct HTTP/1.1\r\nHost: localhost\r\n"
       "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
   SSL_CTX *ctx;
@@ -370,9 +401,14 @@ check_tls_relay(unsigned short port, const unsigned char *payload)
   int fd;
   int amount;
   int sndbuf;
+  int rcvbuf;
+  size_t prior_read;
   struct timeval timeout;
 
   fd = connect_local(port);
+  rcvbuf = 32768;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf,
+      sizeof(rcvbuf)) == 0);
   sndbuf = 1024 * 1024;
   assert(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0);
   timeout.tv_sec = 5;
@@ -389,6 +425,24 @@ check_tls_relay(unsigned short port, const unsigned char *payload)
   assert(SSL_connect(ssl) == 1);
   assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
       (int)(sizeof(request) - 1));
+  header_used = 0;
+  response_header[0] = '\0';
+  while (strstr(response_header, "\r\n\r\n") == NULL) {
+    assert(header_used < sizeof(response_header) - 1);
+    assert(SSL_read(ssl, response_header + header_used, 1) == 1);
+    response_header[++header_used] = '\0';
+  }
+  assert(strstr(response_header, " 200 ") != NULL);
+  assert(strstr(response_header, "content-length: 131072") != NULL);
+  prior_read = 0;
+  while (prior_read < PRIOR_PAYLOAD_SIZE) {
+    amount = SSL_read(ssl, recvbuf, sizeof(recvbuf));
+    assert(amount > 0);
+    assert((size_t)amount <= PRIOR_PAYLOAD_SIZE - prior_read);
+    assert(memcmp(recvbuf, prior_payload + prior_read,
+        (size_t)amount) == 0);
+    prior_read += (size_t)amount;
+  }
   header_used = 0;
   response_header[0] = '\0';
   while (strstr(response_header, "\r\n\r\n") == NULL) {
@@ -427,6 +481,7 @@ int
 main(void)
 {
   static const char request[] =
+      "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"
       "GET /direct HTTP/1.1\r\nHost: localhost\r\n"
       "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
   vectis_app_config config;
@@ -446,9 +501,11 @@ main(void)
   ssize_t got;
   int fd;
   size_t header_used;
+  size_t prior_read;
   char ch;
   char cert_path[128];
   char key_path[128];
+  int rcvbuf;
 
   metrics = mmap(NULL, sizeof(*metrics), PROT_READ | PROT_WRITE,
       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -456,6 +513,7 @@ main(void)
   memset(metrics, 0, sizeof(*metrics));
   payload = malloc(DIRECT_PAYLOAD_SIZE);
   assert(payload != NULL);
+  memset(prior_payload, 'p', sizeof(prior_payload));
   for (i = 0; i < DIRECT_PAYLOAD_SIZE; i++)
     payload[i] = (unsigned char)(i % 251);
   port = available_port();
@@ -471,11 +529,33 @@ main(void)
   assert(app->start(app, &error) == VECTIS_OK);
 
   fd = connect_local(port);
+  rcvbuf = 32768;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf,
+      sizeof(rcvbuf)) == 0);
   assert(send(fd, request, sizeof(request) - 1, 0) ==
       (ssize_t)(sizeof(request) - 1));
   watch.fd = fd;
   watch.events = POLLIN;
   received = 0;
+  header_used = 0;
+  response_header[0] = '\0';
+  while (strstr(response_header, "\r\n\r\n") == NULL) {
+    assert(header_used < sizeof(response_header) - 1);
+    assert(poll(&watch, 1, 5000) > 0);
+    assert(recv(fd, &ch, 1, 0) == 1);
+    response_header[header_used++] = ch;
+    response_header[header_used] = '\0';
+  }
+  assert(strstr(response_header, " 200 ") != NULL);
+  assert(strstr(response_header, "content-length: 131072") != NULL);
+  prior_read = 0;
+  while (prior_read < PRIOR_PAYLOAD_SIZE) {
+    got = recv(fd, recvbuf, sizeof(recvbuf), 0);
+    assert(got > 0);
+    assert((size_t)got <= PRIOR_PAYLOAD_SIZE - prior_read);
+    assert(memcmp(recvbuf, prior_payload + prior_read, (size_t)got) == 0);
+    prior_read += (size_t)got;
+  }
   header_used = 0;
   response_header[0] = '\0';
   while (strstr(response_header, "\r\n\r\n") == NULL) {
@@ -507,14 +587,17 @@ main(void)
   app->close(app);
   fprintf(stderr,
       "direct io: events=%u continuations=%u pauses=%u eof=%u "
-      "disconnects=%u max_queue=%zu\n",
+      "disconnects=%u max_queue=%zu prior_seen=%u prior_drained=%u\n",
       metrics->events, metrics->continuations, metrics->write_pauses,
-      metrics->read_eofs, metrics->disconnects, metrics->max_queued);
+      metrics->read_eofs, metrics->disconnects, metrics->max_queued,
+      metrics->prior_queue_seen, metrics->prior_queue_drained);
   assert(metrics->events < 10000);
   assert(metrics->write_pauses > 0);
   assert(metrics->read_eofs == 1);
   assert(metrics->disconnects == 1);
   assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
+  assert(metrics->prior_queue_seen == 1);
+  assert(metrics->prior_queue_drained == 1);
 
   memset(metrics, 0, sizeof(*metrics));
   assert(snprintf(cert_path, sizeof(cert_path),
@@ -552,17 +635,21 @@ main(void)
   fprintf(stderr,
       "direct TLS io: events=%u continuations=%u pauses=%u eof=%u "
       "disconnects=%u max_queue=%zu read_want_read=%u "
-      "write_want_write=%u cross_read=%u cross_write=%u\n",
+      "write_want_write=%u cross_read=%u cross_write=%u "
+      "prior_seen=%u prior_drained=%u\n",
       metrics->events, metrics->continuations, metrics->write_pauses,
       metrics->read_eofs, metrics->disconnects, metrics->max_queued,
       metrics->tls_read_want_read, metrics->tls_write_want_write,
-      metrics->tls_read_want_write, metrics->tls_write_want_read);
+      metrics->tls_read_want_write, metrics->tls_write_want_read,
+      metrics->prior_queue_seen, metrics->prior_queue_drained);
   assert(metrics->write_pauses > 0);
   assert(metrics->tls_read_want_read > 0);
   assert(metrics->tls_write_want_write > 0);
   assert(metrics->read_eofs == 1);
   assert(metrics->disconnects == 1);
   assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
+  assert(metrics->prior_queue_seen == 1);
+  assert(metrics->prior_queue_drained == 1);
   assert(munmap(metrics, sizeof(*metrics)) == 0);
   free(payload);
   return 0;
