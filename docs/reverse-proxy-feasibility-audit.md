@@ -86,9 +86,18 @@ and leaves the completed easy attached until the tunnel closes. An earlier
 single-watcher attempt spun, showing that this ownership rule is necessary.
 The test also had to start its local upstream server thread after Vectis's
 single-threaded startup declaration phase. This proves the worker-loop API
-composition for a small plain-TCP exchange; sustained streaming, TLS
-downstream/upstream, cancellation during setup, and complete WebSocket
-handshake are still open.
+composition for a small plain-TCP exchange. The probe now also opens a second
+taken-over request whose upstream accepts TCP but stalls the TLS handshake.
+When Vectis stops the worker, the registered worker teardown callback cancels
+that active libcurl multi/easy, removes its Kore socket watchers, and cancels
+its timer before Kore closes the event loop and later removes the downstream
+connection. The client connection and stalled upstream server both close, and
+the test records one worker cancellation, two active libcurl watchers and one
+armed deadline timer at teardown, and two total downstream disconnects.
+Five serial repetitions pass. This confirms the shutdown ordering and exposes
+the required per-worker active-exchange registry; sustained streaming, TLS
+downstream/upstream tunneling, cancellation during every callback phase, and
+complete WebSocket handshake are still open.
 
 The [libcurl pause contract](https://curl.se/libcurl/c/curl_easy_pause.html)
 allows up to an HTTP/2 stream flow-control window of internal receive caching
@@ -229,7 +238,7 @@ an end-to-end coupled upstream transfer remain unproved.
 | EOF and half-close | [`net_read()`](../vendor/kore/upstream/src/net.c) disconnects the whole connection on a zero-byte read; `kore_tls_read()` treats `SSL_ERROR_ZERO_RETURN` as an error. The direct-I/O probe keeps writing after TCP EOF and after a TLS client `close_notify`. | One cleartext and one TLS half-close exchange pass. Early upstream final responses, resets, and close deadlines remain open. |
 | Response output | Vectis uses [`net_send_stream()`](../vendor/kore/upstream/src/net.c) for generated responses, but Kore invokes stream callbacks during connection removal after freeing `hdlr_extra`. The direct-I/O probe owns its output queue and teardown. | Direct output passes slow-peer tests without send callbacks. A 128 KiB earlier Kore response drains before takeover output on cleartext and TLS; a preceding streaming response remains open. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
-| Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) skips the normal idle check while a request remains attached and can enforce ordinary send timeouts on queued output. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis now exposes the worker teardown hook through its static-runtime symbol table. | Active downstream connection observed at teardown, then disconnected once by Kore cleanup. Curl handle, watcher, and timer cancellation are still untested. |
+| Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) skips the normal idle check while a request remains attached and can enforce ordinary send timeouts on queued output. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis now exposes the worker teardown hook through its static-runtime symbol table. | Active downstream connection observed at teardown, then disconnected once by Kore cleanup. A stalled upstream TLS handshake is cancelled with its curl handle, Kore socket watchers, and timer before event-loop cleanup. Other callback phases and timeout policies remain open. |
 | Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, paused-upload/concurrent-download HTTP/1.1, Linux Kore worker-loop connect-only/tunnel handoff, and a stable single-stream HTTPS HTTP/2 pause pass. Complete WebSocket handshake/tunnel, sustained coupled streaming, release-bundle features, and concurrent HTTP/2 memory remain open. |
 
 ## Minimum executable proof before architecture commitment

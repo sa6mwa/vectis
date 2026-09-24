@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -31,6 +32,11 @@ struct loop_metrics {
   unsigned downstream_done;
   unsigned disconnects;
   unsigned max_curl_watchers;
+  unsigned pending_started;
+  unsigned stall_accepted;
+  unsigned worker_cancelled;
+  unsigned active_watchers_at_teardown;
+  unsigned timers_at_teardown;
 };
 
 struct proxy_state;
@@ -45,6 +51,7 @@ struct proxy_state {
   struct kore_event tunnel_event;
   struct connection *downstream;
   struct kore_timer *timer;
+  struct kore_timer *deadline_timer;
   CURLM *multi;
   CURL *easy;
   curl_socket_t upstream_fd;
@@ -57,12 +64,15 @@ struct proxy_state {
 
 static struct loop_metrics *metrics;
 static unsigned short upstream_port;
+static unsigned short stalled_port;
 
 extern void vectis_kore_set_prebody_probe(
     int (*probe)(struct http_request *, const void *, size_t));
+extern void vectis_kore_set_worker_teardown_probe(void (*probe)(void));
 
 static void drive_curl(struct proxy_state *state, curl_socket_t fd, int flags);
 static void curl_event(void *arg, int error);
+static void downstream_event(void *arg, int error);
 
 static void *
 echo_main(void *arg)
@@ -77,6 +87,27 @@ echo_main(void *arg)
   assert(recv(fd, input, sizeof(input), MSG_WAITALL) == 4);
   assert(memcmp(input, "ping", 4) == 0);
   assert(send(fd, "pong", 4, MSG_NOSIGNAL) == 4);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void *
+stall_main(void *arg)
+{
+  struct echo_server *server;
+  struct pollfd watch;
+  char bytes[4096];
+  int fd;
+
+  server = (struct echo_server *)arg;
+  watch.fd = server->listener;
+  watch.events = POLLIN;
+  assert(poll(&watch, 1, 5000) > 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  metrics->stall_accepted++;
+  while (recv(fd, bytes, sizeof(bytes), 0) > 0) {
+  }
   assert(close(fd) == 0);
   return NULL;
 }
@@ -168,6 +199,14 @@ timeout_event(void *arg, u_int64_t now)
   drive_curl(state, CURL_SOCKET_TIMEOUT, 0);
 }
 
+static void
+deadline_expired(void *arg, u_int64_t now)
+{
+  (void)arg;
+  (void)now;
+  assert(0 && "probe deadline fired before worker cancellation");
+}
+
 static int
 timer_change(CURLM *multi, long timeout_ms, void *arg)
 {
@@ -178,6 +217,10 @@ timer_change(CURLM *multi, long timeout_ms, void *arg)
   if (state->timer != NULL) {
     kore_timer_remove(state->timer);
     state->timer = NULL;
+  }
+  if (state->deadline_timer != NULL) {
+    kore_timer_remove(state->deadline_timer);
+    state->deadline_timer = NULL;
   }
   if (timeout_ms >= 0)
     state->timer = kore_timer_add(timeout_event,
@@ -267,26 +310,58 @@ curl_event(void *arg, int error)
 }
 
 static void
+proxy_cancel(struct proxy_state *state)
+{
+  if (state->timer != NULL) {
+    kore_timer_remove(state->timer);
+    state->timer = NULL;
+  }
+  if (state->tunnel_watched) {
+    kore_platform_disable_read((int)state->upstream_fd);
+    state->tunnel_watched = 0;
+  }
+  if (state->easy != NULL) {
+    assert(curl_multi_remove_handle(state->multi,
+        state->easy) == CURLM_OK);
+    curl_easy_cleanup(state->easy);
+    state->easy = NULL;
+  }
+  assert(state->curl_watch_count == 0);
+  if (state->multi != NULL) {
+    assert(curl_multi_cleanup(state->multi) == CURLM_OK);
+    state->multi = NULL;
+  }
+}
+
+static void
 downstream_disconnect(struct connection *connection)
 {
   struct proxy_state *state;
 
   state = (struct proxy_state *)connection->hdlr_extra;
   metrics->disconnects++;
-  if (state == NULL)
-    return;
-  if (state->timer != NULL)
-    kore_timer_remove(state->timer);
-  if (state->tunnel_watched)
-    kore_platform_disable_read((int)state->upstream_fd);
-  if (state->easy != NULL) {
-    assert(curl_multi_remove_handle(state->multi,
-        state->easy) == CURLM_OK);
-    curl_easy_cleanup(state->easy);
+  if (state != NULL)
+    proxy_cancel(state);
+}
+
+static void
+worker_cancel(void)
+{
+  struct connection *connection;
+  struct proxy_state *state;
+
+  TAILQ_FOREACH(connection, &connections, list) {
+    if (connection->evt.handle != downstream_event)
+      continue;
+    state = (struct proxy_state *)connection->hdlr_extra;
+    if (state != NULL && state->multi != NULL) {
+      metrics->active_watchers_at_teardown += state->curl_watch_count;
+      if (state->timer != NULL || state->deadline_timer != NULL)
+        metrics->timers_at_teardown++;
+      proxy_cancel(state);
+      metrics->worker_cancelled++;
+    }
   }
-  assert(state->curl_watch_count == 0);
-  if (state->multi != NULL)
-    assert(curl_multi_cleanup(state->multi) == CURLM_OK);
 }
 
 static void
@@ -326,7 +401,8 @@ takeover(struct http_request *req, const void *data, size_t len)
   char url[128];
 
   (void)data;
-  if (strcmp(req->path, "/curl") != 0)
+  if (strcmp(req->path, "/curl") != 0 &&
+      strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
   assert(len == 0);
   state = kore_calloc(1, sizeof(*state));
@@ -350,14 +426,21 @@ takeover(struct http_request *req, const void *data, size_t len)
       timer_change) == CURLM_OK);
   assert(curl_multi_setopt(state->multi, CURLMOPT_TIMERDATA,
       state) == CURLM_OK);
-  assert(snprintf(url, sizeof(url), "http://127.0.0.1:%u/",
-      (unsigned)upstream_port) > 0);
+  assert(snprintf(url, sizeof(url), "%s://127.0.0.1:%u/",
+      strcmp(req->path, "/pending") == 0 ? "https" : "http",
+      (unsigned)(strcmp(req->path, "/pending") == 0
+          ? stalled_port : upstream_port)) > 0);
   assert(curl_easy_setopt(state->easy, CURLOPT_URL, url) == CURLE_OK);
   assert(curl_easy_setopt(state->easy, CURLOPT_CONNECT_ONLY, 1L) == CURLE_OK);
   assert(curl_easy_setopt(state->easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   assert(curl_multi_add_handle(state->multi, state->easy) == CURLM_OK);
   state->running = 1;
   drive_curl(state, CURL_SOCKET_TIMEOUT, 0);
+  if (strcmp(req->path, "/pending") == 0) {
+    state->deadline_timer = kore_timer_add(deadline_expired, 10000,
+        state, KORE_TIMER_ONESHOT);
+    metrics->pending_started++;
+  }
   return KORE_RESULT_RETRY;
 }
 
@@ -378,7 +461,10 @@ main(void)
       "GET /curl HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char expected[] =
       "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\npong";
+  static const char pending_request[] =
+      "GET /pending HTTP/1.1\r\nHost: localhost\r\n\r\n";
   struct echo_server upstream;
+  struct echo_server stalled;
   struct sockaddr_in addr;
   struct timeval timeout;
   vectis_app_config config;
@@ -398,9 +484,12 @@ main(void)
   memset(metrics, 0, sizeof(*metrics));
   assert(curl_global_init(CURL_GLOBAL_ALL) == CURLE_OK);
   prepare_echo(&upstream);
+  prepare_echo(&stalled);
   upstream_port = upstream.port;
+  stalled_port = stalled.port;
   port = available_port();
   vectis_kore_set_prebody_probe(takeover);
+  vectis_kore_set_worker_teardown_probe(worker_cancel);
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -445,20 +534,43 @@ main(void)
   assert(used == sizeof(expected) - 1);
   assert(memcmp(received, expected, used) == 0);
   assert(close(fd) == 0);
-  assert(vectis_stop(app, &error) == VECTIS_OK);
-  app->close(app);
-  vectis_kore_set_prebody_probe(NULL);
   assert(pthread_join(upstream.thread, NULL) == 0);
   assert(close(upstream.listener) == 0);
+
+  assert(pthread_create(&stalled.thread, NULL, stall_main, &stalled) == 0);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  assert(send(fd, pending_request, sizeof(pending_request) - 1,
+      MSG_NOSIGNAL) == (ssize_t)(sizeof(pending_request) - 1));
+  for (attempt = 0; attempt < 500 &&
+      (metrics->pending_started == 0 || metrics->stall_accepted == 0);
+      attempt++)
+    usleep(10000u);
+  assert(metrics->pending_started == 1);
+  assert(metrics->stall_accepted == 1);
+  assert(vectis_stop(app, &error) == VECTIS_OK);
+  assert(close(fd) == 0);
+  app->close(app);
+  vectis_kore_set_prebody_probe(NULL);
+  vectis_kore_set_worker_teardown_probe(NULL);
+  assert(pthread_join(stalled.thread, NULL) == 0);
+  assert(close(stalled.listener) == 0);
   curl_global_cleanup();
   assert(metrics->connect_done == 1);
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 1);
+  assert(metrics->disconnects == 2);
+  assert(metrics->worker_cancelled == 1);
+  assert(metrics->active_watchers_at_teardown > 0);
+  assert(metrics->timers_at_teardown == 1);
   assert(metrics->max_curl_watchers > 0);
-  fprintf(stderr, "Kore curl loop: max_watchers=%u removed=%u\n",
-      metrics->max_curl_watchers, metrics->curl_watch_removed);
+  fprintf(stderr, "Kore curl loop: max_watchers=%u removed=%u "
+      "active_at_teardown=%u timers_at_teardown=%u\n",
+      metrics->max_curl_watchers, metrics->curl_watch_removed,
+      metrics->active_watchers_at_teardown,
+      metrics->timers_at_teardown);
   assert(munmap(metrics, sizeof(*metrics)) == 0);
   return 0;
 }
