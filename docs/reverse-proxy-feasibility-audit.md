@@ -70,19 +70,24 @@ completed `pongdone` after it. This proves response progress during a paused
 HTTP/1.1 upload in this build; it does not prove coupled event-loop integration
 or cancellation behavior.
 
-The [HTTP/2 duplex probe](../tests/unit/test_proxy_curl_http2_duplex.c) uses
+The [HTTP/2 duplex probes](../tests/unit/test_proxy_curl_http2_duplex.c) use
 an h2-only local nghttp2 server over certificate- and hostname-verified TLS.
-The client sends a known-length POST from a read callback and pauses after
-`ping`. The server waits until it has received those four request bytes before
-producing `pong`. Before the upload resumes, libcurl delivers that
-response DATA frame to its write callback while the transfer remains active.
-After resume, the server receives `rest`, observes request end-of-stream, and
-finishes the response with `done`. The client verifies HTTP/2 negotiation,
-status 200, the full `pongdone` response, and successful completion. This
-passed twenty serial repetitions and proves a small known-length HTTP/2 upload
-can overlap an early response in the pinned bundle. Unknown-length uploads,
-large concurrent duplex streams, HTTP/2 trailers, cancellation, and the
-coupled Kore worker loop remain open.
+The client sends an eight-byte body from a read callback in four variants:
+POST and body-bearing GET, each with a known or unknown body length. GET uses
+`CURLOPT_UPLOAD` plus `CURLOPT_CUSTOMREQUEST`. It pauses after `ping`. The
+server verifies `:method` and `:path`, waits until it has received those four
+request bytes, and produces `pong`. Before the upload resumes, libcurl
+delivers that response DATA frame to its write callback while the transfer
+remains active. After resume, the server receives `rest`, observes request
+end-of-stream, and finishes the response with `done`. Both known-length
+requests have `Content-Length: 8`; both unknown-length requests have no
+`Content-Length`. None carries `Transfer-Encoding` on the HTTP/2 leg.
+The client verifies HTTP/2 negotiation, status 200, the full `pongdone`
+response, and successful completion. All four variants passed twenty serial
+repetitions. This proves small known- and unknown-length HTTP/2 uploads,
+including a body-bearing GET, can overlap an early response in the pinned
+bundle. Large concurrent duplex streams, HTTP/2 trailers, cancellation, and
+the coupled Kore worker loop remain open.
 
 The [HTTP/1.1 chunked-trailer probe](../tests/unit/test_proxy_curl_chunked_trailers.c)
 sets an unknown upload size, pauses after its first chunk, and uses libcurl's

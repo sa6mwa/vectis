@@ -27,6 +27,10 @@ struct h2_server {
   int saw_first_upload;
   int saw_early_response;
   int upload_complete;
+  int saw_requested_method;
+  int saw_duplex_path;
+  int saw_content_length;
+  int saw_transfer_encoding;
   char upload[8];
   size_t upload_size;
 };
@@ -205,6 +209,40 @@ on_data(nghttp2_session *session, uint8_t flags, int32_t stream_id,
 }
 
 static int
+on_header(nghttp2_session *session, const nghttp2_frame *frame,
+    const uint8_t *name, size_t namelen, const uint8_t *value,
+    size_t valuelen, uint8_t flags, void *arg)
+{
+  struct h2_connection *connection;
+  struct h2_server *server;
+
+  (void)session;
+  (void)flags;
+  if (frame->hd.type != NGHTTP2_HEADERS ||
+      frame->headers.cat != NGHTTP2_HCAT_REQUEST)
+    return 0;
+  connection = (struct h2_connection *)arg;
+  server = connection->server;
+  if (namelen == 7 && memcmp(name, ":method", 7) == 0) {
+#ifdef VECTIS_HTTP2_FRAMED_GET
+    server->saw_requested_method = valuelen == 3 &&
+        memcmp(value, "GET", 3) == 0;
+#else
+    server->saw_requested_method = valuelen == 4 &&
+        memcmp(value, "POST", 4) == 0;
+#endif
+  }
+  if (namelen == 5 && memcmp(name, ":path", 5) == 0)
+    server->saw_duplex_path = valuelen == 7 &&
+        memcmp(value, "/duplex", 7) == 0;
+  if (namelen == 14 && memcmp(name, "content-length", 14) == 0)
+    server->saw_content_length = valuelen == 1 && value[0] == '8';
+  if (namelen == 17 && memcmp(name, "transfer-encoding", 17) == 0)
+    server->saw_transfer_encoding = 1;
+  return 0;
+}
+
+static int
 on_frame(nghttp2_session *session, const nghttp2_frame *frame, void *arg)
 {
   static uint8_t status_name[] = ":status";
@@ -270,6 +308,7 @@ server_main(void *arg)
   assert(nghttp2_session_callbacks_new(&callbacks) == 0);
   nghttp2_session_callbacks_set_send_callback(callbacks, send_data);
   nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, on_frame);
+  nghttp2_session_callbacks_set_on_header_callback(callbacks, on_header);
   nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
       on_data);
   assert(nghttp2_session_server_new(&session, callbacks, &connection) == 0);
@@ -341,6 +380,8 @@ read_upload(char *data, size_t size, size_t count, void *arg)
 
   state = (struct client_state *)arg;
   assert(size * count >= 4);
+  if (state->upload_size == 8)
+    return 0;
   if (state->upload_size == 0) {
     memcpy(data, "ping", 4);
     state->upload_size = 4;
@@ -421,9 +462,26 @@ main(void)
   assert(curl_easy_setopt(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
       CURL_HTTP_VERSION_2TLS) == CURLE_OK);
+#ifdef VECTIS_HTTP2_FRAMED_GET
+  assert(curl_easy_setopt(easy, CURLOPT_UPLOAD, 1L) == CURLE_OK);
+#ifdef VECTIS_HTTP2_UNKNOWN_LENGTH
+  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE,
+      (curl_off_t)-1) == CURLE_OK);
+#else
+  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE,
+      (curl_off_t)8) == CURLE_OK);
+#endif
+  assert(curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, "GET") == CURLE_OK);
+#else
   assert(curl_easy_setopt(easy, CURLOPT_POST, 1L) == CURLE_OK);
+#ifdef VECTIS_HTTP2_UNKNOWN_LENGTH
+  assert(curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE,
+      (curl_off_t)-1) == CURLE_OK);
+#else
   assert(curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE,
       (curl_off_t)8) == CURLE_OK);
+#endif
+#endif
   assert(curl_easy_setopt(easy, CURLOPT_READFUNCTION,
       read_upload) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_READDATA, &state) == CURLE_OK);
@@ -475,6 +533,14 @@ main(void)
   assert(pthread_join(server.thread, NULL) == 0);
   assert(server.negotiated_h2 == 1);
   assert(server.saw_request == 1);
+  assert(server.saw_requested_method == 1);
+  assert(server.saw_duplex_path == 1);
+#ifdef VECTIS_HTTP2_UNKNOWN_LENGTH
+  assert(server.saw_content_length == 0);
+#else
+  assert(server.saw_content_length == 1);
+#endif
+  assert(server.saw_transfer_encoding == 0);
   assert(server.upload_complete == 1);
   assert(server.upload_size == 8);
   assert(memcmp(server.upload, "pingrest", 8) == 0);
