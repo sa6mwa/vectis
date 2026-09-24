@@ -88,6 +88,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
     target_compile_options(vectis_unit_kore_proxy_direct_io PRIVATE -std=c99)
     vectis_add_unit_test(vectis_unit_proxy_curl_socket_handoff
       test_proxy_curl_socket_handoff.c)
+    vectis_add_unit_test(vectis_unit_proxy_curl_http2_pause
+      test_proxy_curl_http2_pause.c)
   endif()
   vectis_add_unit_test(vectis_unit_kore_prebody_handoff
     test_kore_prebody_handoff.c)
