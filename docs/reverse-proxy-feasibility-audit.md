@@ -11,11 +11,12 @@ The candidate reduces changes to Kore's ordinary body path by letting Kore
 parse the request line and headers, then handing only selected proxy requests
 to a proxy-owned connection handler. Live probes now establish handoff,
 queued-response ordering, bounded 1 MiB cleartext and double-TLS relays,
-libcurl HTTP/1.1 upload/download overlap, and verified HTTPS connect-only
-transport. The leading output choice uses one bounded Kore send netbuf at a
-time. It is **not yet a proven complete proxy architecture**: framed
-HTTP/SSE, WebSocket handshakes, all cleanup paths, and the HTTP/2 memory
-envelope remain open.
+libcurl HTTP/1.1 upload/download overlap, SSE delivery, and a coupled
+HTTP/1.1 WebSocket upgrade over verified upstream TLS. The leading output
+choice uses one bounded Kore send netbuf at a time. It is **not yet a proven
+complete proxy architecture**: general HTTP framing and header translation,
+WebSocket rejection and long-lived close behavior, all cleanup paths, and the
+release HTTP/2 memory envelope remain open.
 
 The alternative shared-framing approach avoids duplicating a fixed-length
 body counter but touches more of Kore's normal request path. The pre-body
@@ -48,11 +49,14 @@ confirms the basic handle lifetime contract in the local build. A separate
 [HTTPS connect-only test](../tests/unit/test_proxy_curl_connect_only_tls.c)
 creates a local TLS server with a trusted in-memory certificate, disables
 ALPN as required for the raw HTTP/1.1 WebSocket handshake, completes the
-connection in libcurl multi, then sends and receives bytes through the
-still-attached easy handle and its active socket. This passes with certificate
-and hostname verification enabled. It proves the TLS transport mechanism, not
-a WebSocket handshake or coupled bounded tunnel. [Libcurl documents that a
-connect-only multi easy must remain attached](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html)
+connection in libcurl multi, then sends an HTTP/1.1 WebSocket upgrade request
+and masked frame through the still-attached easy handle. The local server
+receives both exactly and returns a valid `101` plus an immediate frame in one
+TLS write; the client receives both exactly. This passes with certificate and
+hostname verification enabled. It proves the upstream TLS and raw-byte
+transport mechanism, not full proxy handshake validation. [Libcurl documents
+that a connect-only multi easy must remain
+attached](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html)
 and that `curl_easy_recv()` must be drained before waiting for another socket
 edge because TLS data can remain inside libcurl
 ([receive API](https://curl.se/libcurl/c/curl_easy_recv.html)).
@@ -114,6 +118,19 @@ remove a watcher entirely when neither direction needs readiness, otherwise
 level-triggered HUP or writable readiness can spin. It also exposed an
 independent-timer ownership error: a libcurl timer update must not cancel the
 exchange deadline, while exchange cancellation must cancel both timers.
+
+An additional repeated run exposed a takeover assumption: Vectis configures
+Kore's header receive buffer to 64 KiB by default, so bytes already read after
+the request headers can exceed the 8 KiB relay queue. The probe now borrows
+that live Kore request buffer and feeds it upstream in 8 KiB pieces before
+reading more from the downstream socket. The test sends a 32 KiB initial
+payload with the request headers; repeated runs observed more than 8 KiB and
+up to 32 KiB at handoff, and passed with an 8 KiB relay queue high-water. The
+source buffer is retained by the sleeping request until the tunnel consumes
+it. The 64 KiB Kore receive allocation belongs in the per-exchange memory
+budget even though the relay makes no second full-size copy. This does not
+yet prove general HTTP body framing or pipelined suffix handling.
+
 The probe now also connects to a certificate-verified HTTPS upstream through
 the same worker-loop libcurl multi, first with a cleartext client and then
 with a certificate-verified downstream TLS client. In each case an incremental
@@ -142,6 +159,24 @@ body delivery, pause/resume, and a bounded application queue for this
 cleartext HTTP/1.1 SSE fixture. It does not establish general header/status
 translation, trailers, request upload framing, TLS on this HTTP transfer,
 long-lived idle SSE behavior, or client-disconnect cancellation.
+
+The worker-loop probe also runs a WebSocket-style HTTP/1.1 upgrade across a
+cleartext downstream and certificate-verified HTTPS upstream. The takeover
+captures a masked client frame in the initial post-header bytes and holds it
+while sending a rewritten opening handshake. The upstream fixture checks that
+no frame is available before it sends `101` and an immediate server frame in
+one TLS write. The probe validates the complete upstream `101`, upgrade and
+accept headers, and selected subprotocol before forwarding any response
+bytes; it then relays both early frames and a later frame in each direction
+through the same bounded Kore/libcurl tunnel. The client verifies all bytes
+and EOF, and the worker reports one successful upgrade and tunnel cleanup.
+This proves the event-loop composition and boundary-byte ownership for this
+fixed handshake. The probe deliberately uses fixed handshake fields and
+assertions: it does not prove a production parser, rewrite policy, rejection
+response, extension negotiation, large-fragment backpressure, long-lived
+idle/close semantics, or downstream TLS for the upgrade route. The early
+client frame is an adversarial handoff fixture; production clients should
+wait for `101` before sending frames.
 
 This output choice came from a failed direct-TLS experiment in the same
 worker loop. Level-triggered writable interest generated more than 150,000

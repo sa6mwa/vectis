@@ -24,12 +24,38 @@
 
 #define RELAY_BUFFER_SIZE 8192
 #define RELAY_PAYLOAD_SIZE (1024 * 1024)
+#define RELAY_INITIAL_BYTES 32768
 #define SSE_CHUNK_SIZE 4096
 #define SSE_BODY_SIZE (1024 * 1024)
 #define HTTP_BODY_BUFFER_SIZE 16384
 
 static const char relay_response[] =
     "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n";
+static const char ws_upstream_request[] =
+    "GET /chat HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const char ws_client_request[] =
+    "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const char ws_response[] =
+    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+    "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const unsigned char ws_client_early[] = {
+    0x81, 0x84, 0x11, 0x22, 0x33, 0x44, 'p' ^ 0x11, 'i' ^ 0x22,
+    'n' ^ 0x33, 'g' ^ 0x44};
+static const unsigned char ws_client_later[] = {
+    0x81, 0x84, 0x55, 0x66, 0x77, 0x88, 'm' ^ 0x55, 'o' ^ 0x66,
+    'r' ^ 0x77, 'e' ^ 0x88};
+static const unsigned char ws_server_early[] = {0x81, 0x04, 'p', 'o', 'n', 'g'};
+static const unsigned char ws_server_later[] = {0x81, 0x04, 'd', 'o', 'n', 'e'};
 
 struct echo_server {
   int listener;
@@ -70,8 +96,10 @@ struct loop_metrics {
   unsigned relay_continuations;
   size_t relay_max_queued;
   size_t relay_max_kore_queued;
+  size_t relay_max_initial_bytes;
   unsigned relay_max_kore_buffers;
   unsigned http_done;
+  unsigned ws_upgraded;
   unsigned http_body_pauses;
   unsigned http_chunks;
   unsigned http_headers_ready;
@@ -106,6 +134,8 @@ struct proxy_state {
   size_t response_sent;
   int relay_mode;
   int relay_tls;
+  int ws_mode;
+  int ws_upgraded;
   int http_mode;
   int http_status_seen;
   int http_headers_ready;
@@ -117,6 +147,9 @@ struct proxy_state {
   unsigned char http_body[HTTP_BODY_BUFFER_SIZE];
   unsigned char http_frame[HTTP_BODY_BUFFER_SIZE + 32];
   unsigned char to_upstream[RELAY_BUFFER_SIZE];
+  const unsigned char *initial_data;
+  size_t initial_length;
+  size_t initial_offset;
   size_t to_upstream_offset;
   size_t to_upstream_length;
   unsigned char to_downstream[RELAY_BUFFER_SIZE];
@@ -135,6 +168,7 @@ static unsigned short upstream_port;
 static unsigned short stalled_port;
 static unsigned short relay_port;
 static unsigned short relay_tls_port;
+static unsigned short ws_port;
 static unsigned short sse_port;
 static char tls_cert_path[128];
 static char tls_key_path[128];
@@ -253,8 +287,75 @@ relay_tls_main(void *arg)
   return NULL;
 }
 
+static void *
+ws_tls_main(void *arg)
+{
+  struct echo_server *server;
+  unsigned char request[sizeof(ws_upstream_request) - 1 +
+      sizeof(ws_client_early)];
+  unsigned char response[sizeof(ws_response) - 1 +
+      sizeof(ws_server_early)];
+  SSL *ssl;
+  struct pollfd watcher;
+  size_t used;
+  int fd;
+  int got;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  ssl = SSL_new(server->tls_ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_accept(ssl) == 1);
+  used = 0;
+  while (used < sizeof(ws_upstream_request) - 1) {
+    got = SSL_read(ssl, request + used,
+        (int)(sizeof(ws_upstream_request) - 1 - used));
+    assert(got > 0);
+    used += (size_t)got;
+  }
+  assert(memcmp(request, ws_upstream_request,
+      sizeof(ws_upstream_request) - 1) == 0);
+  watcher.fd = fd;
+  watcher.events = POLLIN;
+  watcher.revents = 0;
+  assert(SSL_pending(ssl) == 0);
+  assert(poll(&watcher, 1, 50) == 0);
+  memcpy(response, ws_response, sizeof(ws_response) - 1);
+  memcpy(response + sizeof(ws_response) - 1,
+      ws_server_early, sizeof(ws_server_early));
+  assert(SSL_write(ssl, response, sizeof(response)) ==
+      (int)sizeof(response));
+  used = 0;
+  while (used < sizeof(ws_client_early)) {
+    got = SSL_read(ssl, request + used,
+        (int)(sizeof(ws_client_early) - used));
+    assert(got > 0);
+    used += (size_t)got;
+  }
+  assert(memcmp(request, ws_client_early,
+      sizeof(ws_client_early)) == 0);
+  used = 0;
+  while (used < sizeof(ws_client_later)) {
+    got = SSL_read(ssl, request + used,
+        (int)(sizeof(ws_client_later) - used));
+    assert(got > 0);
+    used += (size_t)got;
+  }
+  assert(memcmp(request, ws_client_later,
+      sizeof(ws_client_later)) == 0);
+  assert(SSL_write(ssl, ws_server_later, sizeof(ws_server_later)) ==
+      (int)sizeof(ws_server_later));
+  assert(SSL_shutdown(ssl) >= 0);
+  SSL_free(ssl);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
 struct relay_sender {
   int fd;
+  size_t start;
 };
 
 static unsigned char
@@ -273,7 +374,7 @@ relay_send_main(void *arg)
   ssize_t amount;
 
   sender = (struct relay_sender *)arg;
-  offset = 0;
+  offset = sender->start;
   while (offset < RELAY_PAYLOAD_SIZE) {
     for (used = 0; used < sizeof(bytes); used++)
       bytes[used] = relay_byte(offset + used);
@@ -513,6 +614,7 @@ relay_pump(struct proxy_state *state)
 {
   struct connection *downstream;
   size_t amount;
+  size_t send_limit;
   ssize_t sent;
   CURLcode code;
   int step;
@@ -531,10 +633,15 @@ relay_pump(struct proxy_state *state)
     goto finish;
   for (step = 0; step < 64; step++) {
     progress = 0;
-    if (state->to_upstream_offset < state->to_upstream_length) {
+    if (state->to_upstream_offset < state->to_upstream_length &&
+        (!state->ws_mode || state->ws_upgraded ||
+            state->to_upstream_offset < sizeof(ws_upstream_request) - 1)) {
+      send_limit = state->to_upstream_length;
+      if (state->ws_mode && !state->ws_upgraded)
+        send_limit = sizeof(ws_upstream_request) - 1;
       code = curl_easy_send(state->easy,
           state->to_upstream + state->to_upstream_offset,
-          state->to_upstream_length - state->to_upstream_offset, &amount);
+          send_limit - state->to_upstream_offset, &amount);
       assert(code == CURLE_OK || code == CURLE_AGAIN);
       if (code == CURLE_OK && amount > 0) {
         state->to_upstream_offset += amount;
@@ -550,7 +657,8 @@ relay_pump(struct proxy_state *state)
       }
     }
     if (TAILQ_EMPTY(&downstream->send_queue) &&
-        state->to_downstream_length != 0) {
+        state->to_downstream_length != 0 &&
+        (!state->ws_mode || state->ws_upgraded)) {
       struct netbuf *buffer;
       size_t queued;
       unsigned count;
@@ -583,7 +691,19 @@ relay_pump(struct proxy_state *state)
       progress = 1;
     }
     if (state->to_upstream_length == 0 && !state->downstream_eof) {
-      if (downstream->tls != NULL) {
+      if (state->initial_offset < state->initial_length) {
+        amount = state->initial_length - state->initial_offset;
+        if (amount > sizeof(state->to_upstream))
+          amount = sizeof(state->to_upstream);
+        memcpy(state->to_upstream,
+            state->initial_data + state->initial_offset, amount);
+        state->initial_offset += amount;
+        state->to_upstream_length = amount;
+        progress = 1;
+        if (amount > metrics->relay_max_queued)
+          metrics->relay_max_queued = amount;
+        continue;
+      } else if (downstream->tls != NULL) {
         ERR_clear_error();
         sent = SSL_read(downstream->tls, state->to_upstream,
             (int)sizeof(state->to_upstream));
@@ -629,20 +749,36 @@ relay_pump(struct proxy_state *state)
       state->upstream_write_closed = 1;
       progress = 1;
     }
-    if (state->to_downstream_length == 0 &&
+    if ((state->to_downstream_length == 0 ||
+        (state->ws_mode && !state->ws_upgraded)) &&
         TAILQ_EMPTY(&downstream->send_queue) && !state->upstream_eof) {
-      code = curl_easy_recv(state->easy, state->to_downstream,
-          sizeof(state->to_downstream), &amount);
+      assert(state->to_downstream_length < sizeof(state->to_downstream));
+      code = curl_easy_recv(state->easy,
+          state->to_downstream + state->to_downstream_length,
+          sizeof(state->to_downstream) - state->to_downstream_length,
+          &amount);
       if (code != CURLE_OK && code != CURLE_AGAIN)
         fprintf(stderr, "relay recv failed: %d %s phase=%d eof=%d\n",
             (int)code, curl_easy_strerror(code), state->phase,
             state->downstream_eof);
       assert(code == CURLE_OK || code == CURLE_AGAIN);
       if (code == CURLE_OK && amount > 0) {
-        state->to_downstream_length = amount;
+        state->to_downstream_length += amount;
         progress = 1;
         if (amount > metrics->relay_max_queued)
           metrics->relay_max_queued = amount;
+        if (state->ws_mode && !state->ws_upgraded) {
+          size_t prefix;
+
+          prefix = state->to_downstream_length;
+          if (prefix > sizeof(ws_response) - 1)
+            prefix = sizeof(ws_response) - 1;
+          assert(memcmp(state->to_downstream, ws_response, prefix) == 0);
+          if (state->to_downstream_length >= sizeof(ws_response) - 1) {
+            state->ws_upgraded = 1;
+            metrics->ws_upgraded++;
+          }
+        }
       } else if (code == CURLE_OK) {
         state->upstream_eof = 1;
         progress = 1;
@@ -706,15 +842,20 @@ schedule:
       down_events |= EPOLLOUT;
       metrics->tls_down_write_want_write++;
     }
-  } else if (state->to_downstream_length != 0) {
+  } else if (state->to_downstream_length != 0 &&
+      (!state->ws_mode || state->ws_upgraded)) {
     down_events |= EPOLLOUT;
   }
-  if (state->to_upstream_length == 0 && !state->downstream_eof)
+  if (state->to_upstream_length == 0 && !state->downstream_eof &&
+      state->initial_offset == state->initial_length)
     down_events |= state->down_read_wait != 0
         ? state->down_read_wait : (int)(EPOLLIN | EPOLLRDHUP);
-  if (state->to_upstream_length != 0)
+  if (state->to_upstream_length != 0 &&
+      (!state->ws_mode || state->ws_upgraded ||
+          state->to_upstream_offset < sizeof(ws_upstream_request) - 1))
     up_events |= EPOLLOUT;
-  if (state->to_downstream_length == 0 &&
+  if ((state->to_downstream_length == 0 ||
+      (state->ws_mode && !state->ws_upgraded)) &&
       TAILQ_EMPTY(&downstream->send_queue) && !state->upstream_eof)
     up_events |= EPOLLIN;
   assert(down_events != 0 || up_events != 0);
@@ -1083,32 +1224,48 @@ static int
 takeover(struct http_request *req, const void *data, size_t len)
 {
   struct proxy_state *state;
+  unsigned short target_port;
   char url[128];
 
-  (void)data;
   if (strcmp(req->path, "/curl") != 0 &&
       strcmp(req->path, "/relay") != 0 &&
       strcmp(req->path, "/relay-tls") != 0 &&
+      strcmp(req->path, "/ws") != 0 &&
       strcmp(req->path, "/sse") != 0 &&
       strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
   assert(len == 0 || strcmp(req->path, "/relay") == 0 ||
-      strcmp(req->path, "/relay-tls") == 0);
+      strcmp(req->path, "/relay-tls") == 0 ||
+      strcmp(req->path, "/ws") == 0);
   state = kore_calloc(1, sizeof(*state));
   state->relay_mode = strcmp(req->path, "/relay") == 0 ||
-      strcmp(req->path, "/relay-tls") == 0;
-  state->relay_tls = strcmp(req->path, "/relay-tls") == 0;
+      strcmp(req->path, "/relay-tls") == 0 ||
+      strcmp(req->path, "/ws") == 0;
+  state->ws_mode = strcmp(req->path, "/ws") == 0;
+  state->relay_tls = strcmp(req->path, "/relay-tls") == 0 ||
+      state->ws_mode;
   state->http_mode = strcmp(req->path, "/sse") == 0;
   if (state->relay_mode) {
     int sndbuf;
 
-    assert(len <= sizeof(state->to_upstream));
-    if (len > 0)
-      memcpy(state->to_upstream, data, len);
-    state->to_upstream_length = len;
-    memcpy(state->to_downstream, relay_response,
-        sizeof(relay_response) - 1);
-    state->to_downstream_length = sizeof(relay_response) - 1;
+    if (state->ws_mode) {
+      assert(len == sizeof(ws_client_early));
+      assert(memcmp(data, ws_client_early, len) == 0);
+      memcpy(state->to_upstream, ws_upstream_request,
+          sizeof(ws_upstream_request) - 1);
+      memcpy(state->to_upstream + sizeof(ws_upstream_request) - 1,
+          data, len);
+      state->to_upstream_length = sizeof(ws_upstream_request) - 1 + len;
+    } else {
+      assert(len <= http_header_max);
+      state->initial_data = (const unsigned char *)data;
+      state->initial_length = len;
+      if (len > metrics->relay_max_initial_bytes)
+        metrics->relay_max_initial_bytes = len;
+      memcpy(state->to_downstream, relay_response,
+          sizeof(relay_response) - 1);
+      state->to_downstream_length = sizeof(relay_response) - 1;
+    }
     sndbuf = 4096;
     assert(setsockopt(req->owner->fd, SOL_SOCKET, SO_SNDBUF,
         &sndbuf, sizeof(sndbuf)) == 0);
@@ -1135,15 +1292,22 @@ takeover(struct http_request *req, const void *data, size_t len)
       timer_change) == CURLM_OK);
   assert(curl_multi_setopt(state->multi, CURLMOPT_TIMERDATA,
       state) == CURLM_OK);
+  target_port = upstream_port;
+  if (strcmp(req->path, "/pending") == 0)
+    target_port = stalled_port;
+  else if (state->ws_mode)
+    target_port = ws_port;
+  else if (strcmp(req->path, "/relay-tls") == 0)
+    target_port = relay_tls_port;
+  else if (state->http_mode)
+    target_port = sse_port;
+  else if (state->relay_mode)
+    target_port = relay_port;
   assert(snprintf(url, sizeof(url), "%s://%s:%u/",
       strcmp(req->path, "/pending") == 0 || state->relay_tls
           ? "https" : "http",
       state->relay_tls ? "localhost" : "127.0.0.1",
-      (unsigned)(strcmp(req->path, "/pending") == 0
-          ? stalled_port : (state->relay_tls ? relay_tls_port :
-              (state->http_mode ? sse_port :
-                  (state->relay_mode ? relay_port : upstream_port)))))
-      > 0);
+      (unsigned)target_port) > 0);
   assert(curl_easy_setopt(state->easy, CURLOPT_URL, url) == CURLE_OK);
   if (!state->http_mode)
     assert(curl_easy_setopt(state->easy, CURLOPT_CONNECT_ONLY,
@@ -1309,6 +1473,43 @@ check_sse(unsigned short port, struct echo_server *server)
 }
 
 static void
+check_ws(unsigned short port)
+{
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  unsigned char initial[sizeof(ws_client_request) - 1 +
+      sizeof(ws_client_early)];
+  unsigned char bytes[sizeof(ws_response) - 1 + sizeof(ws_server_early)];
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  memcpy(initial, ws_client_request, sizeof(ws_client_request) - 1);
+  memcpy(initial + sizeof(ws_client_request) - 1,
+      ws_client_early, sizeof(ws_client_early));
+  send_all(fd, initial, sizeof(initial));
+  sse_read_exact(fd, bytes, sizeof(bytes));
+  assert(memcmp(bytes, ws_response, sizeof(ws_response) - 1) == 0);
+  assert(memcmp(bytes + sizeof(ws_response) - 1,
+      ws_server_early, sizeof(ws_server_early)) == 0);
+  send_all(fd, ws_client_later, sizeof(ws_client_later));
+  sse_read_exact(fd, bytes, sizeof(ws_server_later));
+  assert(memcmp(bytes, ws_server_later,
+      sizeof(ws_server_later)) == 0);
+  assert(recv(fd, bytes, sizeof(bytes), 0) == 0);
+  assert(close(fd) == 0);
+}
+
+static void
 check_relay(unsigned short port, const char *path)
 {
   struct sockaddr_in addr;
@@ -1316,6 +1517,7 @@ check_relay(unsigned short port, const char *path)
   struct relay_sender sender;
   pthread_t thread;
   unsigned char bytes[4096];
+  unsigned char initial[128 + RELAY_INITIAL_BYTES];
   char request[128];
   size_t total;
   size_t index;
@@ -1338,8 +1540,12 @@ check_relay(unsigned short port, const char *path)
   amount = snprintf(request, sizeof(request),
       "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n", path);
   assert(amount > 0 && (size_t)amount < sizeof(request));
-  assert(send(fd, request, (size_t)amount, MSG_NOSIGNAL) == amount);
+  memcpy(initial, request, (size_t)amount);
+  for (index = 0; index < RELAY_INITIAL_BYTES; index++)
+    initial[(size_t)amount + index] = relay_byte(index);
+  send_all(fd, initial, (size_t)amount + RELAY_INITIAL_BYTES);
   sender.fd = fd;
+  sender.start = RELAY_INITIAL_BYTES;
   assert(pthread_create(&thread, NULL, relay_send_main, &sender) == 0);
   total = 0;
   for (;;) {
@@ -1505,6 +1711,7 @@ main(void)
   struct echo_server upstream;
   struct echo_server relay;
   struct echo_server relay_tls;
+  struct echo_server ws;
   struct echo_server sse;
   struct echo_server stalled;
   struct sockaddr_in addr;
@@ -1529,11 +1736,13 @@ main(void)
   prepare_echo(&upstream);
   prepare_echo(&relay);
   prepare_echo(&relay_tls);
+  prepare_echo(&ws);
   prepare_echo(&sse);
   prepare_echo(&stalled);
   upstream_port = upstream.port;
   relay_port = relay.port;
   relay_tls_port = relay_tls.port;
+  ws_port = ws.port;
   sse_port = sse.port;
   stalled_port = stalled.port;
   assert(snprintf(tls_cert_path, sizeof(tls_cert_path),
@@ -1555,6 +1764,7 @@ main(void)
   assert(SSL_CTX_use_PrivateKey_file(relay_tls.tls_ctx,
       tls_key_path, SSL_FILETYPE_PEM) == 1);
   assert(SSL_CTX_check_private_key(relay_tls.tls_ctx) == 1);
+  ws.tls_ctx = relay_tls.tls_ctx;
   port = available_port();
   vectis_kore_set_prebody_probe(takeover);
   vectis_kore_set_worker_teardown_probe(worker_cancel);
@@ -1620,6 +1830,11 @@ main(void)
   check_relay(port, "/relay-tls");
   assert(pthread_join(relay_tls.thread, NULL) == 0);
   assert(close(relay_tls.listener) == 0);
+
+  assert(pthread_create(&ws.thread, NULL, ws_tls_main, &ws) == 0);
+  check_ws(port);
+  assert(pthread_join(ws.thread, NULL) == 0);
+  assert(close(ws.listener) == 0);
   SSL_CTX_free(relay_tls.tls_ctx);
 
   assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
@@ -1684,9 +1899,10 @@ main(void)
   curl_global_cleanup();
   assert(remove(tls_cert_path) == 0);
   assert(remove(tls_key_path) == 0);
-  fprintf(stderr, "relay metrics: done=%u max=%zu read_pauses=%u "
-      "write_pauses=%u pump_calls=%u disconnects=%u\n", metrics->relay_done,
-      metrics->relay_max_queued, metrics->relay_read_pauses,
+  fprintf(stderr, "relay metrics: done=%u max=%zu initial=%zu "
+      "read_pauses=%u write_pauses=%u pump_calls=%u disconnects=%u\n",
+      metrics->relay_done, metrics->relay_max_queued,
+      metrics->relay_max_initial_bytes, metrics->relay_read_pauses,
       metrics->relay_write_pauses, metrics->relay_pump_calls,
       metrics->disconnects);
   fprintf(stderr, "TLS loop: pump=%u tunnel_events=%u downstream_events=%u "
@@ -1699,13 +1915,14 @@ main(void)
       metrics->tls_down_write_want_write,
       metrics->tls_down_read_want_read,
       metrics->downstream_tls_read_want_write);
-  assert(metrics->connect_done == 4);
-  assert(metrics->tls_connect_done == 2);
+  assert(metrics->connect_done == 5);
+  assert(metrics->tls_connect_done == 3);
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 6);
-  assert(metrics->relay_done == 3);
+  assert(metrics->disconnects == 7);
+  assert(metrics->relay_done == 4);
+  assert(metrics->ws_upgraded == 1);
   assert(metrics->http_done == 1);
   assert(metrics->http_headers_ready == 1);
   assert(metrics->http_chunks > 0);
@@ -1720,6 +1937,7 @@ main(void)
   assert(metrics->downstream_tls_close_notify == 1);
   assert(metrics->downstream_tls_write_pauses > 0);
   assert(metrics->relay_max_queued <= RELAY_BUFFER_SIZE);
+  assert(metrics->relay_max_initial_bytes > RELAY_BUFFER_SIZE);
   assert(metrics->relay_max_kore_queued <= RELAY_BUFFER_SIZE);
   assert(metrics->relay_max_kore_buffers == 1);
   assert(metrics->relay_pump_calls < 5000);

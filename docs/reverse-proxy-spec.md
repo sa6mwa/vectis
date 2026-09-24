@@ -225,6 +225,10 @@ the ordinary HTTP response contract and may have a streamed body.
 After `101`, switch Kore's accepted connection from HTTP parsing to a raw
 bidirectional relay. Send the upstream's selected handshake headers downstream
 and copy subsequent bytes through a fixed-size buffer in each direction.
+Keep any bytes received after the client's request headers in a bounded
+takeover buffer until the upstream `101` passes validation, then relay them
+unchanged. Keep any bytes received after the upstream `101` header boundary
+in the bounded upstream buffer and relay them after the response headers.
 Preserve masked frames, fragmentation, control frames, close codes,
 subprotocols, and negotiated extensions as wire bytes. The proxy does not
 reframe messages, answer pings, or inspect message payloads. A close or error
@@ -328,6 +332,11 @@ borrowed view of bytes already read beyond the headers, bounded by
 callback or discard them. The proxy consumes them in order, retaining any
 surplus for a pipelined request or early WebSocket frame. `REJECT` sends a
 local reply and closes or drains unconsumed input safely.
+Keep the request that owns the borrowed receive buffer alive until all of
+those bytes have been consumed or copied into bounded transport chunks. The
+configured `http_header_max` allocation is part of each admitted exchange's
+memory budget; the initial surplus may exceed an 8 KiB proxy queue and must
+never be copied wholesale into that queue.
 
 The shared header reader must also preserve bytes after a complete ordinary
 header-only request, and the ordinary fixed-length path must consume no more

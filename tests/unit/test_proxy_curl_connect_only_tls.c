@@ -23,6 +23,25 @@ struct tls_server {
   int no_alpn;
 };
 
+static const char ws_request[] =
+    "GET /chat HTTP/1.1\r\n"
+    "Host: localhost\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const char ws_response[] =
+    "HTTP/1.1 101 Switching Protocols\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+    "Sec-WebSocket-Protocol: chat\r\n\r\n";
+static const unsigned char client_frame[] = {
+    0x81, 0x84, 0x11, 0x22, 0x33, 0x44, 'p' ^ 0x11, 'i' ^ 0x22,
+    'n' ^ 0x33, 'g' ^ 0x44};
+static const unsigned char server_frame[] = {0x81, 0x04, 'p', 'o', 'n', 'g'};
+
 static EVP_PKEY *
 make_key(void)
 {
@@ -73,10 +92,12 @@ static void *
 tls_main(void *arg)
 {
   struct tls_server *server;
-  unsigned char bytes[4];
+  unsigned char request[sizeof(ws_request) - 1 + sizeof(client_frame)];
+  unsigned char response[sizeof(ws_response) - 1 + sizeof(server_frame)];
   SSL *ssl;
   int fd;
   int got;
+  size_t received;
 
   server = (struct tls_server *)arg;
   fd = accept(server->listener, NULL, NULL);
@@ -85,10 +106,19 @@ tls_main(void *arg)
   assert(ssl != NULL);
   assert(SSL_set_fd(ssl, fd) == 1);
   assert(SSL_accept(ssl) == 1);
-  got = SSL_read(ssl, bytes, sizeof(bytes));
-  assert(got == 4);
-  assert(memcmp(bytes, "ping", 4) == 0);
-  assert(SSL_write(ssl, "pong", 4) == 4);
+  received = 0;
+  while (received < sizeof(request)) {
+    got = SSL_read(ssl, request + received, (int)(sizeof(request) - received));
+    assert(got > 0);
+    received += (size_t)got;
+  }
+  assert(memcmp(request, ws_request, sizeof(ws_request) - 1) == 0);
+  assert(memcmp(request + sizeof(ws_request) - 1, client_frame,
+      sizeof(client_frame)) == 0);
+  memcpy(response, ws_response, sizeof(ws_response) - 1);
+  memcpy(response + sizeof(ws_response) - 1, server_frame,
+      sizeof(server_frame));
+  assert(SSL_write(ssl, response, sizeof(response)) == (int)sizeof(response));
   assert(SSL_shutdown(ssl) >= 0);
   SSL_free(ssl);
   assert(close(fd) == 0);
@@ -160,7 +190,8 @@ main(void)
   curl_socket_t fd;
   CURLcode code;
   char url[128];
-  char reply[4];
+  unsigned char request[sizeof(ws_request) - 1 + sizeof(client_frame)];
+  unsigned char reply[sizeof(ws_response) - 1 + sizeof(server_frame)];
   int running;
   int pending;
   int numfds;
@@ -207,13 +238,23 @@ main(void)
   assert(curl_easy_getinfo(easy, CURLINFO_ACTIVESOCKET, &fd) == CURLE_OK);
   assert(fd != CURL_SOCKET_BAD);
 
-  do {
-    sent = 0;
-    code = curl_easy_send(easy, "ping", 4, &sent);
-    if (code == CURLE_AGAIN)
+  memcpy(request, ws_request, sizeof(ws_request) - 1);
+  memcpy(request + sizeof(ws_request) - 1, client_frame,
+      sizeof(client_frame));
+  sent = 0;
+  while (sent < sizeof(request)) {
+    size_t amount;
+
+    amount = 0;
+    code = curl_easy_send(easy, request + sent, sizeof(request) - sent,
+        &amount);
+    if (code == CURLE_AGAIN) {
       wait_socket(fd, POLLOUT);
-  } while (code == CURLE_AGAIN);
-  assert(code == CURLE_OK && sent == 4);
+      continue;
+    }
+    assert(code == CURLE_OK && amount > 0);
+    sent += amount;
+  }
   received = 0;
   while (received < sizeof(reply)) {
     size_t amount;
@@ -228,7 +269,9 @@ main(void)
     assert(code == CURLE_OK && amount > 0);
     received += amount;
   }
-  assert(memcmp(reply, "pong", 4) == 0);
+  assert(memcmp(reply, ws_response, sizeof(ws_response) - 1) == 0);
+  assert(memcmp(reply + sizeof(ws_response) - 1, server_frame,
+      sizeof(server_frame)) == 0);
   assert(curl_multi_remove_handle(multi, easy) == CURLM_OK);
   curl_easy_cleanup(easy);
   assert(curl_multi_cleanup(multi) == CURLM_OK);
