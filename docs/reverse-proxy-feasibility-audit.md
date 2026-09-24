@@ -473,14 +473,26 @@ reports `WANT_READ`; its receive path likewise returns `CURLE_AGAIN` when
 `SSL_read()` reports `WANT_WRITE`. The public
 [`curl_easy_send()`](https://curl.se/libcurl/c/curl_easy_send.html) and
 [`curl_easy_recv()`](https://curl.se/libcurl/c/curl_easy_recv.html) interfaces
-do not expose that internal direction. The fixed small-frame tunnel exchange
-does not force either case. A raw watcher therefore needs combined socket
-interest while an operation is pending, no repeated edge registration for an
-unchanged interest mask, and a cancellable delayed retry after a no-progress
-callback. Otherwise a TLS-only retry can stall or spin on a writable fd. The
-retry gate still needs a forced worker-loop test with a callback-count bound;
-this is an unresolved feasibility risk, not a proven property of the current
-tunnel probe.
+do not expose that internal direction. A raw watcher therefore needs combined
+socket interest while an operation is pending, no repeated edge registration
+for an unchanged interest mask, and a cancellable delayed retry after a
+no-progress callback. Otherwise a TLS-only retry can stall or spin on a
+writable fd.
+
+The disposable worker-loop probe now injects one `CURLE_AGAIN` at each public
+send/receive call boundary of a verified-TLS WebSocket tunnel. It withholds
+send progress until a fresh upstream read event and receive progress until a
+fresh upstream write event. A peer releases one extra WebSocket frame only
+after the send retry is armed. Both per-exchange and worker-shared curl modes
+observe the two wakeups, preserve exact frame bytes and ordering, finish the
+tunnel, and keep the retry tunnel below 100 upstream callbacks. Three serial
+runs of each mode pass. This tests the scheduler against the **observable
+public libcurl outcome**; it does not force OpenSSL itself to return
+cross-direction retries. A test-only query for `CURLINFO_TLS_SSL_PTR` after
+connect-only completion returned a null internal pointer in both modes, so
+direct BIO injection at that point is unavailable through that public
+handle. Long-lived idle behavior and the delayed no-progress retry remain
+unproved.
 
 The worker-loop probe also sends that early client frame to a WebSocket route
 whose verified HTTPS upstream returns `403` and a 1 MiB body. The upstream
