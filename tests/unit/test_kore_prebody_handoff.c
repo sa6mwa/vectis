@@ -61,6 +61,7 @@ static const char ws_upgrade_headers[] =
     "Sec-WebSocket-Version: 13\r\n"
     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
 static vectis_app *probe_app;
+static int probe_proxy_first;
 
 static vectis_status proxy_marker_reply(vectis_app *app,
     vectis_request *request, vectis_response *response, void *userdata,
@@ -290,6 +291,7 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     char *decoded;
     int denied;
     int raw_fallback_eligible;
+    int live_upload;
 
     if (req->method != HTTP_METHOD_GET && req->method != HTTP_METHOD_POST)
       return KORE_RESULT_OK;
@@ -299,6 +301,7 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     selected = NULL;
     decoded = NULL;
     denied = 0;
+    live_upload = 0;
     raw_fallback_eligible = 0;
     allow = NULL;
     route_method = req->method == HTTP_METHOD_POST ? VECTIS_HTTP_POST :
@@ -335,7 +338,7 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
           &probe_error);
       if (status == VECTIS_OK && !denied)
         status = vectis_internal_route_body_policy(
-            probe_app, route_method, decoded, &policy, NULL, &selected,
+            probe_app, route_method, decoded, &policy, &live_upload, &selected,
             NULL, probe_request, &probe_error);
     } else if (status == VECTIS_ERR_INVALID) {
       raw_fallback_eligible = 1;
@@ -347,6 +350,14 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
       if (status == VECTIS_OK)
         selected = proxy_marker_reply;
     }
+    if (route_method == VECTIS_HTTP_POST &&
+        strcmp(req->path, "/proxy-select/upload/a") == 0 &&
+        status == VECTIS_OK)
+      assert(live_upload == !probe_proxy_first);
+    if (route_method == VECTIS_HTTP_POST &&
+        strcmp(req->path, "/proxy-select/upload-reverse/a") == 0 &&
+        status == VECTIS_OK)
+      assert(live_upload == probe_proxy_first);
     if (status == VECTIS_OK && !denied &&
         selected == proxy_marker_reply) {
       static const char marker[] = "proxy-prebody-selected";
@@ -543,6 +554,83 @@ selection_ws_message(vectis_app *app, vectis_websocket *websocket,
   (void)userdata;
 }
 
+struct selection_upload_state {
+  size_t size;
+};
+
+static vectis_status
+selection_upload_open(vectis_app *app, vectis_request *request,
+    void *userdata, void **state, vectis_error *error)
+{
+  struct selection_upload_state *upload;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  upload = calloc(1, sizeof(*upload));
+  if (upload == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "upload state allocation failed");
+    return VECTIS_ERR_NOMEM;
+  }
+  *state = upload;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+selection_upload_write(vectis_app *app, vectis_request *request,
+    const void *data, size_t size, void *state, void *userdata,
+    vectis_error *error)
+{
+  struct selection_upload_state *upload;
+  vectis_bytes body;
+
+  (void)app;
+  (void)userdata;
+  upload = (struct selection_upload_state *)state;
+  if (upload == NULL || data == NULL ||
+      size > (sizeof("data") - 1u) - upload->size ||
+      memcmp(data, "data" + upload->size, size) != 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "upload chunk is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_body_bytes(request, &body, error) != VECTIS_ERR_INVALID) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "upload was materialized");
+    return VECTIS_ERR_STATE;
+  }
+  upload->size += size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+selection_upload_finish(vectis_app *app, vectis_request *request,
+    vectis_response *response, void *state, void *userdata,
+    vectis_error *error)
+{
+  struct selection_upload_state *upload;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  upload = (struct selection_upload_state *)state;
+  if (upload == NULL || upload->size != sizeof("data") - 1u)
+    return vectis_response_text(response, 422, "text/plain",
+        "wrong live upload body", error);
+  return vectis_response_text(response, 200, "text/plain",
+      "live-upload-winner", error);
+}
+
+static void
+selection_upload_close(vectis_app *app, vectis_request *request,
+    void *state, void *userdata)
+{
+  (void)app;
+  (void)request;
+  (void)userdata;
+  free(state);
+}
+
 static void
 register_proxy_selection_routes(vectis_app *app, int proxy_first,
     vectis_error *error)
@@ -550,8 +638,13 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
   vectis_route_config ordinary;
   vectis_route_config proxy;
   vectis_route_config static_overlap_proxy;
+  vectis_route_config upload_proxy;
+  vectis_route_config reverse_upload_proxy;
+  vectis_upload_route_config upload;
+  vectis_upload_route_config reverse_upload;
   vectis_websocket_route_config websocket;
 
+  probe_proxy_first = proxy_first;
   ordinary = vectis_route(VECTIS_HTTP_GET, "^/proxy-select/.*$", reply, NULL);
   ordinary.path_kind = VECTIS_ROUTE_PATH_REGEX;
   proxy = vectis_route(VECTIS_HTTP_GET, "/proxy-select/:id",
@@ -569,6 +662,38 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
       NULL);
   static_overlap_proxy.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &static_overlap_proxy, error) == VECTIS_OK);
+  upload_proxy = vectis_route(VECTIS_HTTP_POST,
+      "^/proxy-select/upload/.*$", proxy_marker_reply, NULL);
+  upload_proxy.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  upload = vectis_stream_upload_route(VECTIS_HTTP_POST,
+      "/proxy-select/upload/a", selection_upload_open,
+      selection_upload_write, selection_upload_finish,
+      selection_upload_close, NULL);
+  upload.body.max_bytes = 4u;
+  if (proxy_first) {
+    assert(vectis_register_route(app, &upload_proxy, error) == VECTIS_OK);
+    assert(app->upload_stream(app, &upload, error) == VECTIS_OK);
+  } else {
+    assert(app->upload_stream(app, &upload, error) == VECTIS_OK);
+    assert(vectis_register_route(app, &upload_proxy, error) == VECTIS_OK);
+  }
+  reverse_upload_proxy = vectis_route(VECTIS_HTTP_POST,
+      "^/proxy-select/upload-reverse/.*$", proxy_marker_reply, NULL);
+  reverse_upload_proxy.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  reverse_upload = vectis_stream_upload_route(VECTIS_HTTP_POST,
+      "/proxy-select/upload-reverse/a", selection_upload_open,
+      selection_upload_write, selection_upload_finish,
+      selection_upload_close, NULL);
+  reverse_upload.body.max_bytes = 4u;
+  if (proxy_first) {
+    assert(app->upload_stream(app, &reverse_upload, error) == VECTIS_OK);
+    assert(vectis_register_route(app, &reverse_upload_proxy, error) ==
+        VECTIS_OK);
+  } else {
+    assert(vectis_register_route(app, &reverse_upload_proxy, error) ==
+        VECTIS_OK);
+    assert(app->upload_stream(app, &reverse_upload, error) == VECTIS_OK);
+  }
   websocket = vectis_websocket_route(
       "/proxy-select/ws", selection_ws_message, NULL);
   assert(app->websocket(app, &websocket, error) == VECTIS_OK);
@@ -1033,9 +1158,9 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
 }
 
 static int
-check_prebody_method_result(unsigned short port, const char *method,
+check_prebody_method_body_result(unsigned short port, const char *method,
     const char *path, const char *version, const char *headers, int tls,
-    int status, const char *marker)
+    const char *body, int status, const char *marker)
 {
   SSL_CTX *ctx;
   SSL *ssl;
@@ -1050,8 +1175,8 @@ check_prebody_method_result(unsigned short port, const char *method,
   char status_text[16];
 
   length = snprintf(wire, sizeof(wire),
-      "%s %s HTTP/%s\r\nHost: localhost\r\n%s\r\n",
-      method, path, version, headers);
+      "%s %s HTTP/%s\r\nHost: localhost\r\n%s\r\n%s",
+      method, path, version, headers, body == NULL ? "" : body);
   assert(length > 0 && (size_t)length < sizeof(wire));
   fd = connect_local(port);
   ctx = NULL;
@@ -1102,6 +1227,15 @@ check_prebody_method_result(unsigned short port, const char *method,
     SSL_CTX_free(ctx);
   assert(close(fd) == 0);
   return ok;
+}
+
+static int
+check_prebody_method_result(unsigned short port, const char *method,
+    const char *path, const char *version, const char *headers, int tls,
+    int status, const char *marker)
+{
+  return check_prebody_method_body_result(port, method, path, version,
+      headers, tls, NULL, status, marker);
 }
 
 static int
@@ -1305,6 +1439,15 @@ main(void)
   assert(check_prebody_header_result(port,
       "/proxy-select/static/a%2Fb", "1.1", "", 0, 200,
       "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(port, "POST",
+      "/proxy-select/upload/a", "1.1", "Content-Length: 4\r\n",
+      0, "data", 200, "live-upload-winner"));
+  assert(check_prebody_method_body_result(port, "POST",
+      "/proxy-select/upload/a%2Fb", "1.1", "Content-Length: 4\r\n",
+      0, "data", 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(port, "POST",
+      "/proxy-select/upload-reverse/a", "1.1", "Content-Length: 4\r\n",
+      0, "data", 200, "proxy-prebody-selected"));
   reject_passed = check_local_rejection(port, "/reject", 400);
   reject_passed &= check_local_rejection(port, "/forbidden", 403);
   assert(vectis_stop(app, &error) == VECTIS_OK);
@@ -1399,6 +1542,15 @@ main(void)
   assert(check_prebody_header_result(port,
       "/proxy-select/static/a%2Fb", "1.1", "", 1, 200,
       "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(port, "POST",
+      "/proxy-select/upload/a", "1.1", "Content-Length: 4\r\n",
+      1, "data", 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(port, "POST",
+      "/proxy-select/upload/a%2Fb", "1.1", "Content-Length: 4\r\n",
+      1, "data", 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(port, "POST",
+      "/proxy-select/upload-reverse/a", "1.1", "Content-Length: 4\r\n",
+      1, "data", 200, "live-upload-winner"));
   tls_raw_passed = check_raw_handoff(port, 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);

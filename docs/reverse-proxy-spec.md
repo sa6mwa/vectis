@@ -361,14 +361,15 @@ must retain that configuration until the exchange is destroyed, including
 worker shutdown. The raw fallback validates the raw path and filters the same
 registry to marker routes, using its existing method, parameter, and regex
 matcher, and returns the matched userdata. The bridge already consumes a
-selected live-upload route
-before ordinary handler dispatch. Live tests cover
+selected live-upload route before ordinary handler dispatch. Live tests cover
 both registration orders for overlapping buffered and live-upload routes,
 plus application WebSocket priority over an earlier ordinary handler. A live
 marker probe covers ordinary regex overlap in both registration orders and
-escaped-path fallback over cleartext and TLS. Production admission still
-needs the composed WebSocket, static, live-upload, and framing cases. This adds
-no further Kore transport surface.
+escaped-path fallback over cleartext and TLS. It also covers WebSocket
+priority, static file and `405` behavior, and both registration orders for
+proxy-marker versus live-upload POST routes with a live body callback. The
+test-only selector needs production integration and complete header framing.
+This adds no further Kore transport surface.
 
 Kore's current request-body behavior is method-based: GET, HEAD, OPTIONS,
 COPY, and MOVE are marked complete at request creation; most other methods
