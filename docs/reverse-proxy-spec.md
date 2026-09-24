@@ -37,7 +37,7 @@ intended contract:
 | `upstream_http_version` | `auto` by default: prefer HTTP/2 over HTTPS for ordinary HTTP/SSE, with HTTP/1.1 fallback; use HTTP/1.1 for cleartext HTTP and every WebSocket upgrade. `http1` forces HTTP/1.1 for the whole route. Neither mode uses h2c. |
 | `auth` or `preflight(in)` | Optional admission decision at headers time. It may proxy or send a local response before any upstream transfer. It sees headers and route metadata only; it cannot consume the body. |
 | `rewrite(in, out)` | Optional synchronous, borrowed callback. `in` is immutable inbound metadata; `out` is sanitized mutable outbound metadata. It may select an explicitly configured target, change method/path/query/Host and edit end-to-end headers. |
-| `modify_response(response)` | Optional status/header decision after final upstream headers and before downstream headers are committed. It does not receive a materialized body. The transport owns framing fields and validates bodyless final statuses. |
+| `modify_response(response)` | Optional status/header decision after final upstream headers and before downstream headers are committed, for ordinary HTTP/SSE and non-`101` WebSocket rejections. A successful WebSocket `101` bypasses this hook so the validated handshake cannot be altered. The hook does not receive a materialized body. The transport owns framing fields and validates bodyless final statuses. |
 | `on_error(error)` | Optional local error response while headers are uncommitted. Later errors abort the stream and are logged. |
 | `connect_timeout`, `idle_timeout`, `total_timeout`, `buffer_limit` | Explicit per-route resource policy. Total timeout defaults to disabled for an established SSE or WebSocket stream; connect and idle limits remain active. |
 
@@ -138,22 +138,33 @@ available.
   `CURLOPT_CUSTOMREQUEST` changes only the wire method string. A framed GET or
   OPTIONS body must therefore have an upload callback, while HEAD must still
   suppress a response body.
-- Forward a known `Content-Length` when the body length remains known and
-  unchanged and no trailers are present. Otherwise use chunked framing on
-  HTTP/1.1; on HTTP/2, stream DATA to end-of-stream without forwarding
-  `Transfer-Encoding`. Never send a body for HEAD responses or status codes
-  that forbid one. Preserve a valid upstream representation `Content-Length`
-  on HEAD or `304` when HTTP permits it, without treating that value as bytes
-  to send; omit forbidden framing on `1xx` and `204`. If a length mismatch
-  occurs after headers, abort the downstream connection.
+- On the upstream leg, forward a known, unchanged request `Content-Length`;
+  otherwise use chunked framing on HTTP/1.1 or DATA to end-of-stream on
+  HTTP/2, without forwarding `Transfer-Encoding` on that leg. On the
+  downstream HTTP/1.1 leg, use chunked framing for every body-bearing response
+  in the `auto` pool, even when its connection fell back to HTTP/1.1. This
+  keeps the response framing decision independent of a protocol query during
+  header callbacks and permits later HTTP/2 trailers after an upstream
+  `Content-Length`, even without a `Trailer` declaration. In the forced-HTTP/1.1
+  pool, preserve a fixed response `Content-Length` only when upstream framing
+  is fixed; otherwise use chunked framing. Never send a body for HEAD
+  responses or status codes that forbid one. Preserve a valid upstream
+  representation `Content-Length` on HEAD or `304` when HTTP permits it,
+  without treating that value as bytes to send; omit forbidden framing on
+  `1xx` and `204`.
+  Validate any upstream declared length against body bytes even when
+  downstream framing is chunked; a mismatch after headers aborts the
+  downstream connection.
 - Handle `Expect: 100-continue` without buffering the upload. Admit only that
   expectation, remove it on the upstream leg, and suppress libcurl's implicit
-  `Expect` header. Emit one local `100` after upstream connection setup and
-  before waiting for client body bytes; omit it if body bytes already arrived.
-  Do not send `100` after a final reply has arrived. Propagate other
-  informational responses such as `103`. If the upstream sends a final
-  response before the upload finishes, stop forwarding the upload and close
-  the downstream connection after that response unless unread request bytes
+  `Expect` header. Emit one local `100` immediately after local
+  `auth`/`preflight`/rewrite admission, before connecting upstream; omit it if
+  body bytes already arrived. The bounded upload queue applies during upstream
+  connection setup. Suppress any later upstream `100`, so the client receives
+  at most one. Propagate other informational responses such as `103`. If the
+  upstream sends a final response before the upload finishes, stop forwarding
+  the upload and close the downstream connection after that response unless
+  unread request bytes
   have been safely drained within a fixed bound.
 - Support HTTP/1.1 chunked client uploads and request/response trailers.
   Decode inbound chunk framing before forwarding body bytes; send declared
@@ -175,7 +186,9 @@ available.
   trailers.
 - Preserve downstream connection reuse only when framing and body completion
   are unambiguous. An aborted stream or partially consumed request closes its
-  downstream connection.
+  downstream connection. An upstream `101` is valid only for an admitted
+  WebSocket upgrade; an unsolicited `101` on an ordinary HTTP/SSE transfer is
+  a `502` before downstream commitment.
 
 The proxy route accepts downstream HTTP/1.1 only. Reject HTTP/1.0 at header
 admission with `400` and an explanation that HTTP/1.1 is required: HTTP/1.0
@@ -196,13 +209,15 @@ ordinary bytes. A client disconnect cancels the upstream transfer.
 
 ### WebSocket upgrade
 
-For an upgrade request, forward the sanitized opening handshake to the
-configured upstream over HTTP or HTTPS using HTTP/1.1. For a connect-only TLS
-handle, disable ALPN so another application protocol cannot be negotiated;
-validate an HTTP/1.1 response status line before upgrading. Preserve the
-client's WebSocket key, offered subprotocols, and offered extensions; validate
-the upstream's `101` status, upgrade tokens, accept value, and negotiated
-selections before committing the downstream `101`. Non-`101` responses follow
+For an upgrade request, reject a framed request body at header admission,
+then forward the sanitized opening handshake to the configured upstream over
+HTTP or HTTPS using HTTP/1.1. For a connect-only TLS handle, disable ALPN so
+another application protocol cannot be negotiated; validate an HTTP/1.1
+response status line before upgrading. Preserve the client's WebSocket key,
+offered subprotocols, and offered extensions; validate the upstream's `101`
+status, upgrade tokens, accept value, and negotiated
+selections before committing the downstream `101`. Revalidate GET and the
+opening handshake after `rewrite`. Non-`101` responses follow
 the ordinary HTTP response contract and may have a streamed body.
 
 After `101`, switch Kore's accepted connection from HTTP parsing to a raw
@@ -237,8 +252,8 @@ Do not disable origin checks merely to make the proxy handshake pass.
 Implement one explicit proxy mode in Kore's HTTP connection lifecycle. The
 mode owns the accepted request from header admission through normal completion
 or raw upgrade. Ordinary Vectis handlers retain their current complete-body
-contract. Do not add a second HTTP body parser, route matcher, or outbound
-HTTP/TLS client to Vectis.
+contract. Do not add a second inbound HTTP request body parser, route matcher,
+or outbound HTTP/TLS client to Vectis.
 
 ### Header-time admission and framing
 
@@ -246,7 +261,8 @@ After complete request headers, run the same ordered Vectis route selector
 used by ordinary dispatch. It must distinguish a genuine WebSocket upgrade by
 validated `Connection` and `Upgrade` tokens, not by path alone, and preserve
 the established precedence of ordinary, static, and WebSocket routes. Reject
-ambiguous framing and invalid headers before an upstream connection or local
+ambiguous framing, invalid headers, and malformed WebSocket key/version or
+subprotocol offers before an upstream connection or local
 handler starts. Run proxy `auth`/`preflight`/`rewrite` at this boundary; a
 locally rejected request follows a defined drain-or-close policy so unread
 body bytes cannot become the next request.
@@ -275,11 +291,13 @@ resume on edge-triggered epoll must actively drain already-ready bytes so it
 does not wait for a new edge. Ordinary requests must preserve their existing
 body limits and handler semantics.
 
-`Expect: 100-continue` is resolved at header admission. Do not wait for body
-bytes before connecting upstream. The proxy owns the single local `100`; it
-does not forward `Expect` or let libcurl's default expect timer decide when
-the client may send. An early final response suppresses the upload and
-applies the drain-or-close rule.
+`Expect: 100-continue` is resolved at header admission. Send the local `100`
+after policy accepts, without waiting for upstream connection setup; this
+avoids depending on a libcurl connection callback and lets the bounded upload
+queue absorb initial body chunks. Do not wait for body bytes before connecting
+upstream. The proxy suppresses upstream `100` and libcurl's default expect
+timer. An early final response suppresses the upload and applies the
+drain-or-close rule.
 
 ### Proxy-owned outbound HTTP transport
 
@@ -336,11 +354,15 @@ HTTP bytes through Kore's send queue and completion callbacks, with an explicit
 queue high-water mark; retain its HSTS policy, access logging, response count,
 connection close rules, and request lifetime/accounting. The response hook
 cannot set `Content-Length`, `Transfer-Encoding`, `Connection`, or `Trailer`;
-the writer computes them after the hook's status decision. A bodyless final
-status cancels or drains the upstream body within a fixed bound. The writer
-holds the terminating chunk until all upstream trailers arrive; an active SSE
-stream uses proxy write-progress limits rather than Kore's ordinary whole
-response write deadline.
+the writer computes them after the hook's status decision. For a body-bearing
+response in the `auto` pool, commit downstream HTTP/1.1 chunked framing even
+when the upstream advertises `Content-Length`, since the upstream may be
+HTTP/2 with trailers at end-of-stream. The writer must still validate the
+upstream length. A bodyless final status cancels or drains the upstream body
+within a fixed bound. The writer holds the terminating chunk until all
+upstream trailers arrive; an active SSE stream uses proxy write-progress
+limits rather than
+Kore's ordinary whole response write deadline.
 
 ### Raw WebSocket handoff
 
@@ -352,14 +374,18 @@ response line; `CURLINFO_HTTP_VERSION` does not establish the protocol of a
 connect-only transfer. Write and parse the bounded HTTP/1.1 upgrade exchange
 explicitly, validate the upstream selection, then hand the accepted Kore
 connection to a raw relay after the downstream `101`. A non-`101` reply uses
-bounded upstream HTTP/1.1 response framing, including chunked bodies, to
-feed the same downstream response writer; it is not treated as tunnel bytes.
-Preserve bytes prefetched beyond either handshake under an explicit handoff
-buffer limit; pause client reads if an early frame reaches that limit. After
-connect-only completion, register a raw upstream readiness watcher in the
-Kore worker; libcurl's completed transfer no longer drives the tunnel. Drain
-`curl_easy_recv` and `curl_easy_send` within per-event work budgets until
-`CURLE_AGAIN` or queue limits, including bytes already decrypted inside TLS.
+an upstream-only incremental HTTP/1.1 response parser, including chunked
+bodies, trailers, and interim `1xx` blocks, to feed the same downstream
+response writer; it is not treated as tunnel bytes. Preserve bytes prefetched
+beyond either handshake under an explicit handoff buffer limit; pause client
+reads if an early frame reaches that limit. After
+connect-only completion, transfer the upstream fd's readiness ownership from
+the libcurl multi socket watcher to a raw watcher; the easy handle remains
+attached to the multi for the whole tunnel. Drain `curl_easy_recv` and
+`curl_easy_send` within per-event work budgets until `CURLE_AGAIN` or queue
+limits, including bytes already decrypted inside TLS.
+Arm the raw watcher for pending reads and writes without leaving a writable
+fd spinning after a TLS-only `CURLE_AGAIN` with no application-byte progress.
 The relay copies bounded byte chunks in both directions with independent
 ingress pause/resume. Kore's WebSocket message API remains for application
 WebSockets and is not used by transparent proxy tunnels.
@@ -415,8 +441,9 @@ the proxy route is complete only when all required cases pass.
 Treat six feasibility checks as decision gates before committing to the
 full implementation: (1) curl multi and the chosen TLS build support
 nonblocking DNS and bounded paused transfers; (2) a retained connect-only
-easy handle supports the intended TLS WebSocket relay under the worker event
-loop; (3) Kore's Linux and BSD readiness paths can pause one direction while
+easy handle supports the intended TLS WebSocket relay and single-owner fd
+watcher handoff under the worker event loop; (3) Kore's Linux and BSD
+readiness paths can pause one direction while
 allowing writes and TLS handshake progress; (4) libcurl sends framed GET,
 OPTIONS, and HEAD uploads while applying the correct response-body rule,
 without blocking or buffering the entire upload; (5) libcurl delivers a
@@ -432,7 +459,9 @@ buffer, or hidden spool file.
 
 - Verify upstream TLS certificates and hostnames by default. Use the URL host
   for SNI; allow an explicit CA bundle and client certificate. Never convert
-  `https` to `http` after a connection failure.
+  `https` to `http` after a connection failure. Require TLS 1.2 or newer on
+  the HTTP/2-capable upstream pool; libcurl's HTTP/2 version preference alone
+  does not enforce the protocol's TLS minimum.
 - Resolve only configured upstream authorities. Rewrites cannot use arbitrary
   URLs, local files, Unix sockets, or curl proxy environment variables. Apply
   connection limits and DNS/connect deadlines to every attempt.
@@ -458,11 +487,11 @@ evidence is integration and end-to-end behavior.
 | --- | --- |
 | Policy unit tests | Target/raw-path/raw-query joining and escaping, including dot segments and repeated query fields; origin-form validation for `CURLOPT_REQUEST_TARGET`; Host and forwarding policy; hop-by-hop token removal; duplicate headers; allowed-target selection; malformed framing and handshake rejection; proxy and ordinary route precedence. |
 | Parser and readiness integration | Initial read containing headers plus body, exactly at and beyond declared length; pipelined next request in the same read; split and malformed chunk boundaries; conflicting lengths; trailers; pausing midway through a chunk; resume without a new epoll edge and with pending writes; TLS `WANT_READ`/`WANT_WRITE` progress on Linux and BSD. Assert byte ownership and no desynchronization or spin. |
-| HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; trailers with declared and undeclared fields, verifying upload EOF and final-chunk ordering; exactly one local `100`, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Assert upstream receives the expected bytes and metadata. |
-| HTTP/2 upstream integration | A local HTTPS upstream offers `h2` and `http/1.1`, then `h2` only: ordinary HTTP and SSE negotiate `h2`, while forced-HTTP/1.1 routes and WebSocket handshakes stay on HTTP/1.1 and fail with `502` against an `h2`-only peer. Verify HTTP/1.1 fallback, no h2c, no concurrent streams per connection, server push refusal, `:path`/`:authority` rewrites, known/unknown upload length, early response, HEAD, response trailers, and selected HTTP/1.1 pool for request trailers. Under many slow downstream readers and concurrent long-lived SSE streams, assert both the per-transfer application queue limit and the separately budgeted libcurl/TLS worker-memory envelope. Repeat with much larger response sizes and durations; memory must not track payload size. |
+| HTTP integration | GET, HEAD, OPTIONS, POST, PUT, PATCH and error statuses, including framed bodies on normally bodyless methods and a `400` for downstream HTTP/1.0; fixed-length and chunked uploads; chunked and fixed-length responses; HEAD/`304` representation length without body bytes; declared request trailers, rejection of undeclared request trailers, and relay of permitted undeclared response trailers, verifying upload EOF and final-chunk ordering; exactly one local `100` even when upstream also sends `100`, bounded upload while upstream connects, `100` followed by `502` on connection failure, upstream `103`, and early-final replies; response hook status/bodyless/framing decisions; redirects and repeated `Set-Cookie`; TLS termination to both HTTP and verified HTTPS upstreams. Assert upstream receives the expected bytes and metadata. |
+| HTTP/2 upstream integration | A local HTTPS upstream offers `h2` and `http/1.1`, then `h2` only: ordinary HTTP and SSE negotiate `h2`, while forced-HTTP/1.1 routes and WebSocket handshakes stay on HTTP/1.1 and fail with `502` against an `h2`-only peer. Verify HTTP/1.1 fallback still produces downstream chunked framing in the auto pool, TLS 1.2 minimum, no h2c, no concurrent streams per connection, server push refusal, `:path`/`:authority` rewrites, known/unknown upload length, early response, HEAD, and selected HTTP/1.1 pool for request trailers. Verify an HTTP/2 response with both `Content-Length` and undeclared trailers is sent downstream with chunked framing, intact trailer fields, and declared-length validation. Under many slow downstream readers and concurrent long-lived SSE streams, assert both the per-transfer application queue limit and the separately budgeted libcurl/TLS worker-memory envelope. Repeat with much larger response sizes and durations; memory must not track payload size. |
 | Streaming integration | Upstream emits the first chunk, then waits before finishing; client must receive that chunk before upstream completion. Request chunks must arrive upstream before client EOF. Repeat with slow upstream, slow downstream, simultaneous upload/download, and a response that starts while upload is active. Assert bounded application and libcurl queue depths, active backpressure, and no spool files or full-body allocations. Use multi-gigabyte logical generators in the opt-in stress run. |
 | SSE integration | Headers and first event arrive before upstream completion; periodic comments and events arrive at their production cadence; idle timeout behavior is explicit; downstream disconnect cancels upstream promptly. |
-| WebSocket integration | Successful HTTP/1.1 `ws`/`wss`, selected subprotocol, offered extension pass-through, fragmented messages larger than Kore's normal frame limit, interleaved ping/pong, close code/reason, non-`101` rejection with a streamed body, and client/server disconnect. Include handshake and first frame in one read on either leg; exceed the bounded pre-upgrade buffer with a paused client; reject `Upgrade: h2c`; test TLS upstream that offers HTTP/2 and verify HTTP/1.1 selection; verify exact byte relay after the handshake, including masking. Run a Go `net/http` upgrader fixture with public `Origin`/rewritten `Host`, subprotocol negotiation, and sustained bidirectional traffic. |
+| WebSocket integration | Successful HTTP/1.1 `ws`/`wss`, selected subprotocol, offered extension pass-through, fragmented messages larger than Kore's normal frame limit, interleaved ping/pong, close code/reason, non-`101` rejection with a streamed body, and client/server disconnect. Assert `modify_response` is bypassed for `101` and applied to non-`101` rejection. Include handshake and first frame in one read on either leg; reject upgrade requests with framed bodies; exceed the bounded pre-upgrade buffer with a paused client; reject `Upgrade: h2c`; test TLS upstream that offers HTTP/2 and verify HTTP/1.1 selection; verify exact byte relay after the handshake, including masking. Test TLS `CURLE_AGAIN` without socket-watcher spin, one readiness owner after connect-only completion, and non-`101` chunked responses with trailers. Run a Go `net/http` upgrader fixture with public `Origin`/rewritten `Host`, subprotocol negotiation, and sustained bidirectional traffic. |
 | Failure and lifecycle | DNS/connect/TLS failure, upstream reset before and after headers, malformed upstream headers, slowloris, callback rejection, partial request body, downstream disconnect, worker shutdown, app stop, and connection limits. Assert no orphan transfer, retained curl handle, leaked fd, hanging test process, or accidentally reusable connection with unread request bytes. |
 | Sanitizers and fuzzing | ASan/UBSan integration runs; bounded fuzz targets for URL/header rewrite, chunk parser, trailer parser, and upgrade response validation. |
 
@@ -542,6 +571,10 @@ reports response header blocks, including interim responses, and trailers;
 sends request trailers; and
 [`CURLOPT_CONNECT_ONLY`](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html)
 requires a multi-owned handle to remain attached while raw send/receive runs.
+[`curl_easy_recv`](https://curl.se/libcurl/c/curl_easy_recv.html) can return
+cached TLS bytes without new socket readiness; and
+[`curl_easy_send`](https://curl.se/libcurl/c/curl_easy_send.html) can return
+`CURLE_AGAIN` after making only internal TLS progress.
 [`CURLOPT_HTTP_VERSION`](https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html)
 does not by itself guarantee that a reused connection uses that version;
 [`CURLOPT_CUSTOMREQUEST`](https://curl.se/libcurl/c/CURLOPT_CUSTOMREQUEST.html)
@@ -570,4 +603,6 @@ HTTP/1.x and HTTP/2 response-writer distinction. The
 illustrates the HTTP/1.1 handshake and its default origin check.
 The downstream bodyless-response and representation-length rules follow
 [HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html) and
-[HTTP/1.1 framing](https://www.rfc-editor.org/rfc/rfc9112.html).
+[HTTP/1.1 framing](https://www.rfc-editor.org/rfc/rfc9112.html). The
+[HTTP/2 message format](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.8)
+allows a content length and later trailer fields on the same response.
