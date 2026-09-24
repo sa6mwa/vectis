@@ -147,6 +147,13 @@ struct loop_metrics {
   unsigned http_write_failures;
   unsigned http_write_fail_cancelled;
   unsigned http_write_fail_pending_at_disconnect;
+  unsigned tls_write_call_failures;
+  unsigned tls_read_want_write_injected;
+  unsigned tls_read_want_write_observed;
+  unsigned tls_read_write_wakeups;
+  unsigned tls_write_want_read_injected;
+  unsigned tls_write_want_read_observed;
+  unsigned tls_write_read_wakeups;
   unsigned upload_done;
   unsigned chunked_upload_done;
   unsigned chunked_trailer_called;
@@ -250,6 +257,13 @@ struct proxy_state {
   int http_queue_held;
   int http_write_fail_mode;
   int http_body_queued;
+  int tls_write_error_once;
+  int tls_retry_read_mode;
+  int tls_retry_write_mode;
+  int tls_retry_read_once;
+  int tls_retry_write_once;
+  BIO *tls_retry_rbio;
+  BIO *tls_retry_wbio;
   int downstream_half_closed;
   int upload_mode;
   int chunked_upload_mode;
@@ -315,6 +329,7 @@ static struct worker_curl_loop worker_curl;
 #endif
 
 static struct loop_metrics *metrics;
+static BIO_METHOD *tls_retry_bio_method;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
 static volatile int h2_scale_release;
 static volatile int h2_cancel_release;
@@ -365,14 +380,141 @@ probe_downstream_write(struct connection *connection, size_t length,
   struct proxy_state *state;
 
   state = (struct proxy_state *)connection->hdlr_extra;
-  if (state->http_write_fail_mode && state->http_body_queued) {
+  if (state->http_write_fail_mode && state->http_body_queued &&
+      connection->tls == NULL) {
     metrics->http_write_failures++;
     errno = EPIPE;
     return KORE_RESULT_ERROR;
   }
-  if (connection->tls != NULL)
-    return kore_tls_write(connection, length, written);
+  if (connection->tls != NULL) {
+    int result;
+
+    result = kore_tls_write(connection, length, written);
+    if (state->http_write_fail_mode && result == KORE_RESULT_ERROR)
+      metrics->tls_write_call_failures++;
+    return result;
+  }
   return net_write(connection, length, written);
+}
+
+static int
+retry_bio_create(BIO *bio)
+{
+  BIO_set_init(bio, 1);
+  BIO_set_data(bio, NULL);
+  return 1;
+}
+
+static int
+retry_bio_destroy(BIO *bio)
+{
+  BIO_set_data(bio, NULL);
+  BIO_set_init(bio, 0);
+  return 1;
+}
+
+static int
+retry_bio_read(BIO *bio, char *data, size_t length, size_t *read)
+{
+  struct proxy_state *state;
+  int result;
+
+  state = (struct proxy_state *)BIO_get_data(bio);
+  *read = 0;
+  BIO_clear_retry_flags(bio);
+  if (state != NULL && state->tls_retry_read_once) {
+    state->tls_retry_read_once = 0;
+    metrics->tls_read_want_write_injected++;
+    BIO_set_retry_write(bio);
+    return 0;
+  }
+  result = BIO_read_ex(BIO_next(bio), data, length, read);
+  if (!result)
+    BIO_copy_next_retry(bio);
+  return result;
+}
+
+static int
+retry_bio_write(BIO *bio, const char *data, size_t length,
+    size_t *written)
+{
+  struct proxy_state *state;
+  int result;
+
+  state = (struct proxy_state *)BIO_get_data(bio);
+  *written = 0;
+  BIO_clear_retry_flags(bio);
+  if (state != NULL && state->tls_write_error_once &&
+      state->http_body_queued) {
+    state->tls_write_error_once = 0;
+    metrics->http_write_failures++;
+    errno = EIO;
+    return 0;
+  }
+  if (state != NULL && state->tls_retry_write_once &&
+      state->http_body_queued) {
+    state->tls_retry_write_once = 0;
+    metrics->tls_write_want_read_injected++;
+    BIO_set_retry_read(bio);
+    return 0;
+  }
+  result = BIO_write_ex(BIO_next(bio), data, length, written);
+  if (!result)
+    BIO_copy_next_retry(bio);
+  return result;
+}
+
+static long
+retry_bio_ctrl(BIO *bio, int command, long number, void *pointer)
+{
+  return BIO_ctrl(BIO_next(bio), command, number, pointer);
+}
+
+static void
+install_tls_retry_bios(struct proxy_state *state)
+{
+  BIO *read_socket;
+  BIO *write_socket;
+  BIO *read_filter;
+  BIO *write_filter;
+
+  assert(state->downstream->tls != NULL);
+  assert(tls_retry_bio_method != NULL);
+  read_socket = BIO_new_socket(state->downstream->fd, BIO_NOCLOSE);
+  write_socket = BIO_new_socket(state->downstream->fd, BIO_NOCLOSE);
+  read_filter = BIO_new(tls_retry_bio_method);
+  write_filter = BIO_new(tls_retry_bio_method);
+  assert(read_socket != NULL && write_socket != NULL);
+  assert(read_filter != NULL && write_filter != NULL);
+  BIO_set_data(read_filter, state);
+  BIO_set_data(write_filter, state);
+  assert(BIO_push(read_filter, read_socket) == read_filter);
+  assert(BIO_push(write_filter, write_socket) == write_filter);
+  SSL_set_bio(state->downstream->tls, read_filter, write_filter);
+  state->tls_retry_rbio = read_filter;
+  state->tls_retry_wbio = write_filter;
+}
+
+static void
+init_tls_retry_bio_method(void)
+{
+  int type;
+
+  type = BIO_get_new_index();
+  assert(type >= 0);
+  tls_retry_bio_method = BIO_meth_new(type | BIO_TYPE_FILTER,
+      "vectis proxy TLS retry probe");
+  assert(tls_retry_bio_method != NULL);
+  assert(BIO_meth_set_create(tls_retry_bio_method,
+      retry_bio_create) == 1);
+  assert(BIO_meth_set_destroy(tls_retry_bio_method,
+      retry_bio_destroy) == 1);
+  assert(BIO_meth_set_read_ex(tls_retry_bio_method,
+      retry_bio_read) == 1);
+  assert(BIO_meth_set_write_ex(tls_retry_bio_method,
+      retry_bio_write) == 1);
+  assert(BIO_meth_set_ctrl(tls_retry_bio_method,
+      retry_bio_ctrl) == 1);
 }
 
 static void
@@ -709,7 +851,9 @@ upload_main(void *arg)
     input[used] = '\0';
     body = (unsigned char *)strstr((char *)input, "\r\n\r\n");
   }
-  assert(strstr((char *)input, "POST /upload HTTP/1.1\r\n") != NULL);
+  assert(strstr((char *)input, "POST /upload HTTP/1.1\r\n") != NULL ||
+      strstr((char *)input,
+      "POST /upload-tls-retry HTTP/1.1\r\n") != NULL);
   assert(strstr((char *)input, "Content-Length: 1048576\r\n") != NULL);
   body += 4;
   received = 0;
@@ -1954,10 +2098,13 @@ http_schedule(struct proxy_state *state)
     events = EPOLLRDHUP | EPOLLET;
   } else if (!TAILQ_EMPTY(&state->downstream->send_queue)) {
     if (state->downstream->tls != NULL &&
-        SSL_want(state->downstream->tls) == SSL_READING)
+        SSL_want(state->downstream->tls) == SSL_READING) {
+      if (state->tls_retry_write_mode)
+        metrics->tls_write_want_read_observed++;
       events |= EPOLLIN;
-    else
+    } else {
       events |= EPOLLOUT;
+    }
   }
   if (!state->http_queue_held &&
       TAILQ_EMPTY(&state->downstream->send_queue) &&
@@ -2443,6 +2590,9 @@ http_input_pump(struct proxy_state *state)
     ssl_error = SSL_get_error(downstream->tls, (int)got);
     assert(ssl_error == SSL_ERROR_WANT_READ ||
         ssl_error == SSL_ERROR_WANT_WRITE);
+    if (state->tls_retry_read_mode &&
+        ssl_error == SSL_ERROR_WANT_WRITE)
+      metrics->tls_read_want_write_observed++;
     state->upload_read_wait = ssl_error == SSL_ERROR_WANT_READ
         ? EPOLLIN : EPOLLOUT;
   } else if (got == 0) {
@@ -2689,6 +2839,10 @@ downstream_disconnect(struct connection *connection)
   state = (struct proxy_state *)connection->hdlr_extra;
   metrics->disconnects++;
   if (state != NULL) {
+    if (state->tls_retry_rbio != NULL)
+      BIO_set_data(state->tls_retry_rbio, NULL);
+    if (state->tls_retry_wbio != NULL)
+      BIO_set_data(state->tls_retry_wbio, NULL);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
     if (state->h2_abort_mode && !state->http_transfer_done)
       metrics->h2_abort_cancelled++;
@@ -2765,14 +2919,25 @@ downstream_event(void *arg, int error)
   struct proxy_state *state;
   ssize_t sent;
   int socket_error;
+  u_int32_t ready_flags;
   socklen_t error_length;
 
   connection = (struct connection *)arg;
   if (connection->state == CONN_STATE_DISCONNECTING)
     return;
   state = (struct proxy_state *)connection->hdlr_extra;
+  ready_flags = connection->evt.flags;
   connection->evt.flags = 0;
   if (state->http_mode) {
+    if (state->tls_retry_read_mode &&
+        state->upload_read_wait == EPOLLOUT &&
+        (ready_flags & KORE_EVENT_WRITE))
+      metrics->tls_read_write_wakeups++;
+    if (state->tls_retry_write_mode &&
+        !TAILQ_EMPTY(&connection->send_queue) &&
+        SSL_want(connection->tls) == SSL_READING &&
+        (ready_flags & KORE_EVENT_READ))
+      metrics->tls_write_read_wakeups++;
     if (error) {
       error_length = sizeof(socket_error);
       assert(getsockopt(connection->fd, SOL_SOCKET, SO_ERROR,
@@ -2845,6 +3010,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/sse-reset") != 0 &&
       strcmp(req->path, "/sse-reset-before") != 0 &&
       strcmp(req->path, "/upload") != 0 &&
+      strcmp(req->path, "/upload-tls-retry") != 0 &&
       strcmp(req->path, "/upload-chunked") != 0 &&
       strcmp(req->path, "/upload-chunked-keepalive") != 0 &&
       strcmp(req->path, "/pending") != 0)
@@ -2854,6 +3020,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/ws") == 0 ||
       strcmp(req->path, "/ws-reject") == 0 ||
       strcmp(req->path, "/upload") == 0 ||
+      strcmp(req->path, "/upload-tls-retry") == 0 ||
       strcmp(req->path, "/upload-chunked") == 0 ||
       strcmp(req->path, "/upload-chunked-keepalive") == 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
@@ -2883,7 +3050,13 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/upload-chunked") == 0 ||
       state->chunked_keepalive_mode;
   state->upload_mode = strcmp(req->path, "/upload") == 0 ||
+      strcmp(req->path, "/upload-tls-retry") == 0 ||
       state->chunked_upload_mode;
+  state->tls_retry_read_mode =
+      strcmp(req->path, "/upload-tls-retry") == 0;
+  state->tls_retry_write_mode = state->tls_retry_read_mode;
+  state->tls_retry_read_once = state->tls_retry_read_mode;
+  state->tls_retry_write_once = state->tls_retry_write_mode;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   state->h2_scale_mode = strcmp(req->path, "/sse-h2-scale") == 0;
   state->h2_abort_mode = strcmp(req->path, "/sse-h2-abort") == 0;
@@ -2913,6 +3086,8 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/sse-queue-abort") == 0;
   state->http_write_fail_mode =
       strcmp(req->path, "/sse-write-fail") == 0;
+  state->tls_write_error_once = state->http_write_fail_mode &&
+      req->owner->tls != NULL;
   state->http_mode = strcmp(req->path, "/sse") == 0 ||
       state->h2_mode ||
       strcmp(req->path, "/sse-reset") == 0 ||
@@ -2957,6 +3132,8 @@ takeover(struct http_request *req, const void *data, size_t len)
         &sndbuf, sizeof(sndbuf)) == 0);
   }
   state->downstream = req->owner;
+  if (state->tls_retry_read_mode || state->tls_write_error_once)
+    install_tls_retry_bios(state);
   state->downstream_watched = 1;
   state->downstream->http_timeout = 0;
   state->upstream_fd = CURL_SOCKET_BAD;
@@ -4191,10 +4368,14 @@ check_chunked_keepalive(unsigned short port,
 }
 
 static void
-check_tls_upload(unsigned short port, struct echo_server *server)
+check_tls_upload(unsigned short port, struct echo_server *server,
+    int inject_retry)
 {
   static const char request[] =
       "POST /upload HTTP/1.1\r\nHost: localhost\r\n"
+      "Content-Length: 1048576\r\n\r\n";
+  static const char retry_request[] =
+      "POST /upload-tls-retry HTTP/1.1\r\nHost: localhost\r\n"
       "Content-Length: 1048576\r\n\r\n";
   struct sockaddr_in addr;
   struct pollfd watch;
@@ -4237,8 +4418,14 @@ check_tls_upload(unsigned short port, struct echo_server *server)
   assert(SSL_set1_host(ssl, "localhost") == 1);
   assert(SSL_connect(ssl) == 1);
   assert(SSL_get_verify_result(ssl) == X509_V_OK);
-  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
-      (int)(sizeof(request) - 1));
+  if (inject_retry) {
+    assert(SSL_write(ssl, retry_request,
+        (int)(sizeof(retry_request) - 1)) ==
+        (int)(sizeof(retry_request) - 1));
+  } else {
+    assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+        (int)(sizeof(request) - 1));
+  }
   flags = fcntl(fd, F_GETFL, 0);
   assert(flags >= 0);
   assert(fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
@@ -4795,6 +4982,7 @@ main(void)
   assert(metrics != MAP_FAILED);
   memset(metrics, 0, sizeof(*metrics));
   assert(curl_global_init(CURL_GLOBAL_ALL) == CURLE_OK);
+  init_tls_retry_bio_method();
   prepare_echo(&upstream);
   prepare_echo(&relay);
   prepare_echo(&relay_tls);
@@ -5307,8 +5495,19 @@ main(void)
   assert(close(relay_tls.listener) == 0);
   assert(pthread_create(&upload_tls.thread, NULL,
       upload_main, &upload_tls) == 0);
-  check_tls_upload(port, &upload_tls);
+  check_tls_upload(port, &upload_tls, 0);
   assert(pthread_join(upload_tls.thread, NULL) == 0);
+  __sync_lock_test_and_set(&upload_tls.allow_body, 0);
+  assert(pthread_create(&upload_tls.thread, NULL,
+      upload_main, &upload_tls) == 0);
+  check_tls_upload(port, &upload_tls, 1);
+  assert(pthread_join(upload_tls.thread, NULL) == 0);
+  assert(metrics->tls_read_want_write_injected == 1);
+  assert(metrics->tls_read_want_write_observed == 1);
+  assert(metrics->tls_read_write_wakeups > 0);
+  assert(metrics->tls_write_want_read_injected == 1);
+  assert(metrics->tls_write_want_read_observed > 0);
+  assert(metrics->tls_write_read_wakeups > 0);
   assert(close(upload_tls.listener) == 0);
   chunked_pauses_before = metrics->chunked_upload_pauses;
   assert(pthread_create(&upload_chunked_tls.thread, NULL,
@@ -5346,6 +5545,7 @@ main(void)
   assert(pthread_join(sse_write_fail.thread, NULL) == 0);
   assert(close(sse_write_fail.listener) == 0);
   assert(metrics->http_write_failures == 2);
+  assert(metrics->tls_write_call_failures == 1);
   assert(metrics->http_write_fail_cancelled == 2);
   assert(metrics->http_write_fail_pending_at_disconnect == 2);
   assert(metrics->http_abort_upstream_closed == 3);
@@ -5386,24 +5586,24 @@ main(void)
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->disconnects == 27 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->disconnects == 28 + 2 * H2_SCALE_CONNECTIONS);
 #else
-  assert(metrics->disconnects == 20);
+  assert(metrics->disconnects == 21);
 #endif
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
 #if defined(VECTIS_PROXY_SHARED_MULTI)
-  assert(metrics->http_done == 14 + H2_SCALE_CONNECTIONS);
-  assert(metrics->http_headers_ready == 23 + 2 * H2_SCALE_CONNECTIONS);
+  assert(metrics->http_done == 15 + H2_SCALE_CONNECTIONS);
+  assert(metrics->http_headers_ready == 24 + 2 * H2_SCALE_CONNECTIONS);
   assert(metrics->h2_down_received == SSE_BODY_SIZE);
   assert(metrics->h2_down_done == 1);
 #else
-  assert(metrics->http_done == 10);
-  assert(metrics->http_headers_ready == 16);
+  assert(metrics->http_done == 11);
+  assert(metrics->http_headers_ready == 17);
 #endif
-  assert(metrics->upload_done == 2);
+  assert(metrics->upload_done == 3);
   assert(metrics->chunked_upload_done == 6);
   assert(metrics->chunked_trailer_called == 6);
   assert(metrics->chunked_upload_pauses > 0);
@@ -5448,5 +5648,7 @@ main(void)
       metrics->active_watchers_at_teardown,
       metrics->timers_at_teardown);
   assert(munmap(metrics, sizeof(*metrics)) == 0);
+  BIO_meth_free(tls_retry_bio_method);
+  tls_retry_bio_method = NULL;
   return 0;
 }
