@@ -109,6 +109,9 @@ struct loop_metrics {
   size_t relay_max_initial_bytes;
   unsigned relay_max_kore_buffers;
   unsigned http_done;
+  unsigned http_abort_cancelled;
+  unsigned http_abort_upstream_closed;
+  unsigned http_half_closed;
   unsigned upload_done;
   unsigned upload_pauses;
   unsigned upload_tls_pending_resumes;
@@ -156,6 +159,8 @@ struct proxy_state {
   int ws_reject_mode;
   int ws_rejected;
   int http_mode;
+  int http_abort_mode;
+  int downstream_half_closed;
   int upload_mode;
   int upload_paused;
   int upload_read_wait;
@@ -198,6 +203,7 @@ static unsigned short relay_tls_port;
 static unsigned short ws_port;
 static unsigned short ws_reject_port;
 static unsigned short sse_port;
+static unsigned short sse_abort_port;
 static unsigned short upload_port;
 static char tls_cert_path[128];
 static char tls_key_path[128];
@@ -647,6 +653,46 @@ sse_main(void *arg)
     send_all(fd, "\r\n", 2);
   }
   send_all(fd, "0\r\n\r\n", 5);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void *
+sse_abort_main(void *arg)
+{
+  static const char header[] =
+      "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+      "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+  struct echo_server *server;
+  struct timeval timeout;
+  char request[1024];
+  char byte;
+  size_t used;
+  ssize_t got;
+  int fd;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0;
+  request[0] = '\0';
+  while (strstr(request, "\r\n\r\n") == NULL) {
+    assert(used < sizeof(request) - 1);
+    got = recv(fd, request + used, sizeof(request) - 1 - used, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  }
+  assert(strstr(request, "GET / HTTP/1.1\r\n") == request);
+  send_all(fd, header, sizeof(header) - 1);
+  send_all(fd, "4\r\npong\r\n", 9);
+  timeout.tv_sec = 3;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  got = recv(fd, &byte, 1, 0);
+  if (got == 0 || (got < 0 && errno == ECONNRESET))
+    metrics->http_abort_upstream_closed++;
   assert(close(fd) == 0);
   return NULL;
 }
@@ -1150,14 +1196,17 @@ http_schedule(struct proxy_state *state)
       state->upload_length == 0 && state->upload_remaining != 0)
     events |= state->upload_read_wait != 0
         ? state->upload_read_wait : (int)(EPOLLIN | EPOLLRDHUP);
-  if (events != 0) {
+  if (events == 0)
+    events = EPOLLRDHUP | EPOLLET;
+  else if (!state->downstream_half_closed)
+    events |= EPOLLRDHUP;
+  if (!(events & EPOLLET) || !state->downstream_watched ||
+      state->downstream_interest != events) {
     kore_platform_event_schedule(state->downstream->fd,
         events, 0, state->downstream);
-    state->downstream_watched = 1;
-  } else if (state->downstream_watched) {
-    kore_platform_disable_read(state->downstream->fd);
-    state->downstream_watched = 0;
   }
+  state->downstream_watched = 1;
+  state->downstream_interest = events;
 }
 
 static size_t
@@ -1266,7 +1315,10 @@ http_pump(struct proxy_state *state)
   metrics->http_pump_calls++;
   if (!TAILQ_EMPTY(&downstream->send_queue)) {
     downstream->evt.flags |= KORE_EVENT_WRITE;
-    assert(net_send_flush(downstream) == KORE_RESULT_OK);
+    if (net_send_flush(downstream) != KORE_RESULT_OK) {
+      kore_connection_disconnect(downstream);
+      return;
+    }
     if (!TAILQ_EMPTY(&downstream->send_queue)) {
       http_schedule(state);
       return;
@@ -1481,8 +1533,11 @@ downstream_disconnect(struct connection *connection)
 
   state = (struct proxy_state *)connection->hdlr_extra;
   metrics->disconnects++;
-  if (state != NULL)
+  if (state != NULL) {
+    if (state->http_abort_mode && state->multi != NULL)
+      metrics->http_abort_cancelled++;
     proxy_cancel(state);
+  }
 }
 
 static void
@@ -1514,18 +1569,29 @@ downstream_event(void *arg, int error)
   struct connection *connection;
   struct proxy_state *state;
   ssize_t sent;
+  int socket_error;
+  socklen_t error_length;
 
   connection = (struct connection *)arg;
   state = (struct proxy_state *)connection->hdlr_extra;
   connection->evt.flags = 0;
   if (state->http_mode) {
-    if (error && !state->upload_mode)
-      kore_connection_disconnect(connection);
-    else {
-      http_pump(state);
-      if (state->upload_mode && !state->http_transfer_done)
-        http_input_pump(state);
+    if (error) {
+      error_length = sizeof(socket_error);
+      assert(getsockopt(connection->fd, SOL_SOCKET, SO_ERROR,
+          &socket_error, &error_length) == 0);
+      if (socket_error != 0) {
+        kore_connection_disconnect(connection);
+        return;
+      }
+      if (!state->downstream_half_closed) {
+        state->downstream_half_closed = 1;
+        metrics->http_half_closed++;
+      }
     }
+    http_pump(state);
+    if (state->upload_mode && !state->http_transfer_done)
+      http_input_pump(state);
     return;
   }
   if (state->relay_mode) {
@@ -1568,6 +1634,7 @@ takeover(struct http_request *req, const void *data, size_t len)
       strcmp(req->path, "/ws") != 0 &&
       strcmp(req->path, "/ws-reject") != 0 &&
       strcmp(req->path, "/sse") != 0 &&
+      strcmp(req->path, "/sse-abort") != 0 &&
       strcmp(req->path, "/upload") != 0 &&
       strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
@@ -1587,7 +1654,9 @@ takeover(struct http_request *req, const void *data, size_t len)
   state->relay_tls = strcmp(req->path, "/relay-tls") == 0 ||
       state->ws_mode;
   state->upload_mode = strcmp(req->path, "/upload") == 0;
+  state->http_abort_mode = strcmp(req->path, "/sse-abort") == 0;
   state->http_mode = strcmp(req->path, "/sse") == 0 ||
+      state->http_abort_mode ||
       state->upload_mode;
   if (state->upload_mode) {
     assert(req->method == HTTP_METHOD_POST);
@@ -1651,7 +1720,8 @@ takeover(struct http_request *req, const void *data, size_t len)
   else if (strcmp(req->path, "/relay-tls") == 0)
     target_port = relay_tls_port;
   else if (state->http_mode)
-    target_port = state->upload_mode ? upload_port : sse_port;
+    target_port = state->upload_mode ? upload_port :
+        (state->http_abort_mode ? sse_abort_port : sse_port);
   else if (state->relay_mode)
     target_port = relay_port;
   assert(snprintf(url, sizeof(url), "%s://%s:%u/",
@@ -1714,8 +1784,7 @@ takeover(struct http_request *req, const void *data, size_t len)
   assert(curl_multi_add_handle(state->multi, state->easy) == CURLM_OK);
   state->running = 1;
   if (state->http_mode && !state->upload_mode) {
-    kore_platform_disable_read(state->downstream->fd);
-    state->downstream_watched = 0;
+    http_schedule(state);
   } else if (state->upload_mode) {
     http_schedule(state);
   }
@@ -1818,6 +1887,7 @@ check_sse(unsigned short port, struct echo_server *server)
       saw_chunked = 1;
   }
   assert(saw_type && saw_chunked);
+  assert(shutdown(fd, SHUT_WR) == 0);
   __sync_lock_test_and_set(&server->allow_body, 1);
   received = 0;
   for (;;) {
@@ -1839,6 +1909,51 @@ check_sse(unsigned short port, struct echo_server *server)
   sse_read_line(fd, line, sizeof(line));
   assert(strcmp(line, "\r\n") == 0);
   assert(recv(fd, ending, sizeof(ending), 0) == 0);
+  assert(close(fd) == 0);
+}
+
+static void
+check_sse_abort(unsigned short port)
+{
+  static const char request[] =
+      "GET /sse-abort HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  struct linger reset;
+  char line[256];
+  char body[4];
+  char ending[2];
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  send_all(fd, request, sizeof(request) - 1);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  for (;;) {
+    sse_read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+  }
+  sse_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "4\r\n") == 0);
+  sse_read_exact(fd, body, sizeof(body));
+  assert(memcmp(body, "pong", sizeof(body)) == 0);
+  sse_read_exact(fd, ending, sizeof(ending));
+  assert(memcmp(ending, "\r\n", sizeof(ending)) == 0);
+  reset.l_onoff = 1;
+  reset.l_linger = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_LINGER,
+      &reset, sizeof(reset)) == 0);
   assert(close(fd) == 0);
 }
 
@@ -2320,6 +2435,7 @@ main(void)
   struct echo_server ws;
   struct echo_server ws_reject;
   struct echo_server sse;
+  struct echo_server sse_abort;
   struct echo_server upload;
   struct echo_server upload_tls;
   struct echo_server stalled;
@@ -2348,6 +2464,7 @@ main(void)
   prepare_echo(&ws);
   prepare_echo(&ws_reject);
   prepare_echo(&sse);
+  prepare_echo(&sse_abort);
   prepare_echo(&upload);
   prepare_echo(&upload_tls);
   prepare_echo(&stalled);
@@ -2357,6 +2474,7 @@ main(void)
   ws_port = ws.port;
   ws_reject_port = ws_reject.port;
   sse_port = sse.port;
+  sse_abort_port = sse_abort.port;
   upload_port = upload.port;
   stalled_port = stalled.port;
   assert(snprintf(tls_cert_path, sizeof(tls_cert_path),
@@ -2462,6 +2580,15 @@ main(void)
   assert(pthread_join(sse.thread, NULL) == 0);
   assert(close(sse.listener) == 0);
 
+  assert(pthread_create(&sse_abort.thread, NULL,
+      sse_abort_main, &sse_abort) == 0);
+  check_sse_abort(port);
+  assert(pthread_join(sse_abort.thread, NULL) == 0);
+  assert(close(sse_abort.listener) == 0);
+  assert(metrics->http_abort_cancelled == 1);
+  assert(metrics->http_abort_upstream_closed == 1);
+  assert(metrics->http_half_closed > 0);
+
   assert(pthread_create(&upload.thread, NULL,
       upload_main, &upload) == 0);
   check_upload(port, &upload);
@@ -2552,13 +2679,13 @@ main(void)
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 10);
+  assert(metrics->disconnects == 11);
   assert(metrics->relay_done == 5);
   assert(metrics->ws_upgraded == 1);
   assert(metrics->ws_rejected == 1);
   assert(metrics->ws_reject_header_fragments > 0);
   assert(metrics->http_done == 3);
-  assert(metrics->http_headers_ready == 3);
+  assert(metrics->http_headers_ready == 4);
   assert(metrics->upload_done == 2);
   assert(metrics->upload_pauses > 0);
   assert(metrics->upload_max_queued <= RELAY_BUFFER_SIZE);
