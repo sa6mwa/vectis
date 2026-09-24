@@ -153,18 +153,29 @@ different HTTP/2 client transport or a narrower supported contract.
 
 The Linux [HTTPS HTTP/2 pause probe](../tests/unit/test_proxy_curl_http2_pause.c)
 uses a local nghttp2 server over certificate-verified TLS. ALPN selects `h2`;
-the client reports HTTP/2 and disables multiplexing on its multi handle. The
-server generates a 64 MiB response incrementally while libcurl's first body
-callback pauses reception. In one run, the server had generated about 3.9 MiB
-when the test ended, while total process RSS moved from 9.3 MiB before the
-transfer to 10.3 MiB after pause and stayed there for another two seconds.
-The test enforces a 32 MiB RSS-delta ceiling and a 4 MiB post-pause growth
-ceiling; five serial repetitions passed. The server and client share the
-process, so this is a conservative whole-process measurement. It shows a
-stable, bounded paused single-stream case in the pinned debug bundle, not a
-general hard libcurl allocation bound. Several concurrent streams, release
-bundles, large headers, compressed responses, and resume/cancellation still
-need an admission and stress test before the HTTP/2 allowance is final.
+the client reports HTTP/2, disables multiplexing, and limits concurrent
+streams to one per connection. Four transfers to the same origin each open a
+separate TLS connection. Each server response is generated incrementally and
+is 64 MiB long. All four download callbacks pause after their first chunk;
+the local servers generated about 15.8 MiB total while paused. In one run,
+whole-process RSS moved from 9.0 MiB to 11.2 MiB and did not grow over the
+next two seconds. After unpausing, all four clients verified every byte of
+their 64 MiB responses; RSS remained about 11.2 MiB. Five serial repetitions
+of pause and completion passed. The test enforces a 16 MiB whole-process
+RSS-delta ceiling and a 4 MiB post-pause growth ceiling. The server and client
+share the process, so this measurement includes both. It establishes the
+paused/resumed four-connection case in the pinned debug bundle, not a hard
+libcurl allocation bound. Release bundles, larger concurrency, large headers,
+adversarial compression, connection reuse, and cancellation still need an
+admission and stress test before the HTTP/2 allowance is final.
+
+The HTTP/2 probe now also asserts the pinned runtime libcurl reports
+`AsynchDNS`, `HTTP2`, and `SSL`. The host-debug and x86_64 Linux GNU release
+presets in [`scripts/deps.sh`](../scripts/deps.sh) select the same
+`c.pkt.systems-0.10.0-x86_64-linux-gnu` archive by the same SHA-256, so this
+feature check applies to that exact release dependency payload. It does not
+establish the capabilities of the distinct musl, ARM, or Darwin archives;
+those need an explicit release-target check before a proxy route is available.
 
 ## Executable finding: pre-body handoff and replay
 

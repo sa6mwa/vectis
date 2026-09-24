@@ -21,26 +21,31 @@
 #include <unistd.h>
 
 #define RESPONSE_SIZE (64u * 1024u * 1024u)
-#define MAX_RSS_DELTA_KB (32u * 1024u)
+#define CONCURRENT_TRANSFERS 4
+#define MAX_RSS_DELTA_KB (16u * 1024u)
 
 struct h2_server {
   int listener;
   unsigned short port;
   pthread_t thread;
   size_t generated;
-  int saw_request;
+  unsigned accepted;
+  unsigned saw_request;
   SSL_CTX *ctx;
-  int negotiated_h2;
+  unsigned negotiated_h2;
 };
 
 struct h2_connection {
   struct h2_server *server;
   int fd;
   SSL *ssl;
+  size_t generated;
 };
 
 struct client_state {
   int paused;
+  int resume;
+  size_t received;
 };
 
 static ssize_t
@@ -129,7 +134,7 @@ select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
     if (length == 2 && memcmp(in + offset, "h2", 2) == 0) {
       *out = in + offset;
       *outlen = 2;
-      server->negotiated_h2 = 1;
+      __sync_fetch_and_add(&server->negotiated_h2, 1);
       return SSL_TLSEXT_ERR_OK;
     }
     offset += length;
@@ -148,12 +153,13 @@ produce_body(nghttp2_session *session, int32_t stream_id, uint8_t *data,
   (void)stream_id;
   (void)source;
   connection = (struct h2_connection *)arg;
-  remaining = RESPONSE_SIZE - connection->server->generated;
+  remaining = RESPONSE_SIZE - connection->generated;
   if (len > remaining)
     len = remaining;
   memset(data, 'x', len);
-  connection->server->generated += len;
-  if (connection->server->generated == RESPONSE_SIZE)
+  connection->generated += len;
+  __sync_fetch_and_add(&connection->server->generated, len);
+  if (connection->generated == RESPONSE_SIZE)
     *flags |= NGHTTP2_DATA_FLAG_EOF;
   return (ssize_t)len;
 }
@@ -177,7 +183,7 @@ request_received(nghttp2_session *session, const nghttp2_frame *frame,
   if (frame->hd.type != NGHTTP2_HEADERS ||
       frame->headers.cat != NGHTTP2_HCAT_REQUEST)
     return 0;
-  connection->server->saw_request = 1;
+  __sync_fetch_and_add(&connection->server->saw_request, 1);
   memset(&provider, 0, sizeof(provider));
   provider.read_callback = produce_body;
   return nghttp2_submit_response(session, frame->hd.stream_id,
@@ -185,10 +191,9 @@ request_received(nghttp2_session *session, const nghttp2_frame *frame,
 }
 
 static void *
-server_main(void *arg)
+connection_main(void *arg)
 {
-  struct h2_server *server;
-  struct h2_connection connection;
+  struct h2_connection *connection;
   nghttp2_session_callbacks *callbacks;
   nghttp2_session *session;
   struct pollfd item;
@@ -198,45 +203,46 @@ server_main(void *arg)
   int ready;
   int result;
 
-  server = (struct h2_server *)arg;
-  connection.server = server;
-  connection.fd = accept(server->listener, NULL, NULL);
-  assert(connection.fd >= 0);
-  connection.ssl = SSL_new(server->ctx);
-  assert(connection.ssl != NULL);
-  assert(SSL_set_fd(connection.ssl, connection.fd) == 1);
-  assert(SSL_accept(connection.ssl) == 1);
-  flags = fcntl(connection.fd, F_GETFL, 0);
+  connection = (struct h2_connection *)arg;
+  connection->ssl = SSL_new(connection->server->ctx);
+  assert(connection->ssl != NULL);
+  assert(SSL_set_fd(connection->ssl, connection->fd) == 1);
+  assert(SSL_accept(connection->ssl) == 1);
+  flags = fcntl(connection->fd, F_GETFL, 0);
   assert(flags >= 0);
-  assert(fcntl(connection.fd, F_SETFL, flags | O_NONBLOCK) == 0);
-  SSL_set_mode(connection.ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  assert(fcntl(connection->fd, F_SETFL, flags | O_NONBLOCK) == 0);
+  SSL_set_mode(connection->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
   assert(nghttp2_session_callbacks_new(&callbacks) == 0);
   nghttp2_session_callbacks_set_send_callback(callbacks, send_data);
   nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks,
       request_received);
-  assert(nghttp2_session_server_new(&session, callbacks, &connection) == 0);
+  assert(nghttp2_session_server_new(&session, callbacks, connection) == 0);
   nghttp2_session_callbacks_del(callbacks);
   assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE,
       NULL, 0) == 0);
   for (;;) {
-    item.fd = connection.fd;
+    item.fd = connection->fd;
     item.events = POLLIN | (nghttp2_session_want_write(session) ? POLLOUT : 0);
     ready = poll(&item, 1, 1000);
     assert(ready >= 0);
     if (ready == 0)
       continue;
     if (item.revents & POLLIN) {
-      got = SSL_read(connection.ssl, input, sizeof(input));
-      if (got <= 0) {
+      for (;;) {
         int ssl_error;
 
-        ssl_error = SSL_get_error(connection.ssl, (int)got);
+        got = SSL_read(connection->ssl, input, sizeof(input));
+        if (got > 0) {
+          assert(nghttp2_session_mem_recv(session, input,
+              (size_t)got) == got);
+          continue;
+        }
+        ssl_error = SSL_get_error(connection->ssl, (int)got);
         if (ssl_error == SSL_ERROR_WANT_READ ||
             ssl_error == SSL_ERROR_WANT_WRITE)
-          continue;
-        break;
+          break;
+        goto connection_done;
       }
-      assert(nghttp2_session_mem_recv(session, input, (size_t)got) == got);
     }
     if (item.revents & (POLLERR | POLLHUP))
       break;
@@ -244,9 +250,35 @@ server_main(void *arg)
     if (result != 0 && result != NGHTTP2_ERR_WOULDBLOCK)
       break;
   }
+connection_done:
   nghttp2_session_del(session);
-  SSL_free(connection.ssl);
-  assert(close(connection.fd) == 0);
+  SSL_free(connection->ssl);
+  assert(close(connection->fd) == 0);
+  free(connection);
+  return NULL;
+}
+
+static void *
+server_main(void *arg)
+{
+  struct h2_server *server;
+  struct h2_connection *connection;
+  pthread_t threads[CONCURRENT_TRANSFERS];
+  unsigned i;
+
+  server = (struct h2_server *)arg;
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
+    connection = calloc(1, sizeof(*connection));
+    assert(connection != NULL);
+    connection->server = server;
+    connection->fd = accept(server->listener, NULL, NULL);
+    assert(connection->fd >= 0);
+    server->accepted++;
+    assert(pthread_create(&threads[i], NULL, connection_main,
+        connection) == 0);
+  }
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+    assert(pthread_join(threads[i], NULL) == 0);
   return NULL;
 }
 
@@ -268,7 +300,7 @@ start_server(struct h2_server *server, X509 *cert, EVP_PKEY *key)
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   assert(bind(server->listener, (struct sockaddr *)&addr, sizeof(addr)) == 0);
-  assert(listen(server->listener, 1) == 0);
+  assert(listen(server->listener, CONCURRENT_TRANSFERS) == 0);
   size = sizeof(addr);
   assert(getsockname(server->listener, (struct sockaddr *)&addr, &size) == 0);
   server->port = ntohs(addr.sin_port);
@@ -279,13 +311,19 @@ static size_t
 pause_download(char *data, size_t size, size_t count, void *arg)
 {
   struct client_state *state;
+  size_t amount;
+  size_t i;
 
-  (void)data;
-  (void)size;
-  (void)count;
   state = (struct client_state *)arg;
-  state->paused = 1;
-  return CURL_WRITEFUNC_PAUSE;
+  amount = size * count;
+  if (!state->resume) {
+    state->paused = 1;
+    return CURL_WRITEFUNC_PAUSE;
+  }
+  for (i = 0; i < amount; i++)
+    assert(data[i] == 'x');
+  state->received += amount;
+  return amount;
 }
 
 static unsigned long
@@ -311,10 +349,11 @@ int
 main(void)
 {
   struct h2_server server;
-  struct client_state state;
+  struct client_state states[CONCURRENT_TRANSFERS];
   struct curl_blob ca;
+  curl_version_info_data *curl_info;
   CURLM *multi;
-  CURL *easy;
+  CURL *easy[CONCURRENT_TRANSFERS];
   EVP_PKEY *key;
   X509 *cert;
   BIO *pem;
@@ -324,9 +363,14 @@ main(void)
   int running;
   int numfds;
   int attempt;
+  int paused;
+  int i;
   unsigned long baseline;
   unsigned long after_pause;
   unsigned long after_wait;
+  unsigned long after_resume;
+  size_t generated_at_pause;
+  time_t resume_start;
 
   key = make_key();
   cert = make_cert(key);
@@ -339,42 +383,84 @@ main(void)
   ca.len = pem_data->length;
   ca.flags = CURL_BLOB_COPY;
   start_server(&server, cert, key);
-  memset(&state, 0, sizeof(state));
+  memset(states, 0, sizeof(states));
   assert(curl_global_init(CURL_GLOBAL_ALL) == CURLE_OK);
+  curl_info = curl_version_info(CURLVERSION_NOW);
+  assert(curl_info != NULL);
+  assert(curl_info->features & CURL_VERSION_ASYNCHDNS);
+  assert(curl_info->features & CURL_VERSION_HTTP2);
+  assert(curl_info->features & CURL_VERSION_SSL);
   multi = curl_multi_init();
-  easy = curl_easy_init();
-  assert(multi != NULL && easy != NULL);
+  assert(multi != NULL);
   assert(curl_multi_setopt(multi, CURLMOPT_PIPELINING,
       CURLPIPE_NOTHING) == CURLM_OK);
+  assert(curl_multi_setopt(multi, CURLMOPT_MAX_CONCURRENT_STREAMS,
+      1L) == CURLM_OK);
   assert(snprintf(url, sizeof(url), "https://localhost:%u/",
       (unsigned)server.port) > 0);
-  assert(curl_easy_setopt(easy, CURLOPT_URL, url) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_CAINFO_BLOB, &ca) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
-      CURL_HTTP_VERSION_2TLS) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION,
-      pause_download) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_WRITEDATA, &state) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
+    easy[i] = curl_easy_init();
+    assert(easy[i] != NULL);
+    assert(curl_easy_setopt(easy[i], CURLOPT_URL, url) == CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_CAINFO_BLOB, &ca) == CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_NOPROXY, "*") == CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_HTTP_VERSION,
+        CURL_HTTP_VERSION_2TLS) == CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_WRITEFUNCTION,
+        pause_download) == CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_WRITEDATA,
+        &states[i]) == CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
+  }
   baseline = rss_kb();
-  assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+    assert(curl_multi_add_handle(multi, easy[i]) == CURLM_OK);
   assert(curl_multi_perform(multi, &running) == CURLM_OK);
-  for (attempt = 0; attempt < 100 && running && !state.paused; attempt++) {
+  paused = 0;
+  for (attempt = 0; attempt < 200 && running &&
+      paused < CONCURRENT_TRANSFERS; attempt++) {
     assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
+    paused = 0;
+    for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+      paused += states[i].paused;
   }
-  assert(state.paused);
-  assert(curl_easy_getinfo(easy, CURLINFO_HTTP_VERSION, &version) == CURLE_OK);
-  assert(version == CURL_HTTP_VERSION_2_0);
+  assert(paused == CONCURRENT_TRANSFERS);
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
+    assert(curl_easy_getinfo(easy[i], CURLINFO_HTTP_VERSION,
+        &version) == CURLE_OK);
+    assert(version == CURL_HTTP_VERSION_2_0);
+  }
   after_pause = rss_kb();
   for (attempt = 0; attempt < 20 && running; attempt++) {
     assert(curl_multi_poll(multi, NULL, 0, 100, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
   }
   after_wait = rss_kb();
-  assert(curl_multi_remove_handle(multi, easy) == CURLM_OK);
-  curl_easy_cleanup(easy);
+  generated_at_pause = __sync_fetch_and_add(&server.generated, 0);
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
+    states[i].resume = 1;
+    assert(curl_easy_pause(easy[i], CURLPAUSE_CONT) == CURLE_OK);
+  }
+  resume_start = time(NULL);
+  for (attempt = 0; running && time(NULL) - resume_start < 15;
+      attempt++) {
+    assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
+    assert(curl_multi_perform(multi, &running) == CURLM_OK);
+  }
+  fprintf(stderr, "h2 resume: running=%d attempts=%d received=%lu,%lu,%lu,%lu\n",
+      running, attempt, (unsigned long)states[0].received,
+      (unsigned long)states[1].received,
+      (unsigned long)states[2].received,
+      (unsigned long)states[3].received);
+  assert(running == 0);
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++)
+    assert(states[i].received == RESPONSE_SIZE);
+  after_resume = rss_kb();
+  for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
+    assert(curl_multi_remove_handle(multi, easy[i]) == CURLM_OK);
+    curl_easy_cleanup(easy[i]);
+  }
   assert(curl_multi_cleanup(multi) == CURLM_OK);
   curl_global_cleanup();
   assert(pthread_join(server.thread, NULL) == 0);
@@ -384,13 +470,19 @@ main(void)
   X509_free(cert);
   EVP_PKEY_free(key);
   fprintf(stderr, "curl h2 pause: baseline=%luKB paused=%luKB later=%luKB "
-      "server_generated=%lu\n", baseline, after_pause, after_wait,
-      (unsigned long)server.generated);
-  assert(server.saw_request);
-  assert(server.negotiated_h2);
-  assert(server.generated > 65536u);
+      "resumed=%luKB generated_at_pause=%lu server_generated=%lu\n",
+      baseline, after_pause, after_wait, after_resume,
+      (unsigned long)generated_at_pause, (unsigned long)server.generated);
+  assert(server.accepted == CONCURRENT_TRANSFERS);
+  assert(server.saw_request == CONCURRENT_TRANSFERS);
+  assert(server.negotiated_h2 == CONCURRENT_TRANSFERS);
+  assert(generated_at_pause > CONCURRENT_TRANSFERS * 65536u);
+  assert(generated_at_pause < CONCURRENT_TRANSFERS * RESPONSE_SIZE);
+  assert(server.generated == CONCURRENT_TRANSFERS * RESPONSE_SIZE);
   assert(after_wait >= baseline);
   assert(after_wait - baseline <= MAX_RSS_DELTA_KB);
   assert(after_wait <= after_pause + 4096u);
+  assert(after_resume >= baseline);
+  assert(after_resume - baseline <= MAX_RSS_DELTA_KB);
   return 0;
 }
