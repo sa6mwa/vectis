@@ -365,6 +365,26 @@ vectis_proxy_http_response_body(vectis_proxy_http_response *response,
 }
 
 vectis_proxy_header_status
+vectis_proxy_http_response_curl_complete(vectis_proxy_http_response *response,
+                                         vectis_proxy_http_event *event,
+                                         const char **reason) {
+  if (event != NULL)
+    *event = VECTIS_PROXY_HTTP_MORE;
+  if (reason != NULL)
+    *reason = NULL;
+  if (response == NULL || event == NULL) {
+    if (reason != NULL)
+      *reason = "upstream response completion requires parser and event";
+    return VECTIS_PROXY_HEADER_INVALID;
+  }
+  if (response->phase == VECTIS_PROXY_HTTP_READING_TRAILERS) {
+    response->phase = VECTIS_PROXY_HTTP_TRAILERS_DONE;
+    *event = VECTIS_PROXY_HTTP_TRAILERS;
+  }
+  return vectis_proxy_http_response_finish(response, reason);
+}
+
+vectis_proxy_header_status
 vectis_proxy_http_response_finish(const vectis_proxy_http_response *response,
                                   const char **reason) {
   if (reason != NULL) {

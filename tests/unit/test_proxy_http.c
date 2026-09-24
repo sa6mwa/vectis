@@ -104,6 +104,7 @@ static void test_http2_sse_and_trailers(void) {
 
 static void test_chunked_and_head(void) {
   vectis_proxy_http_response response;
+  vectis_proxy_http_event event;
 
   vectis_proxy_http_response_init(&response, 0);
   accept(&response, "HTTP/1.1 200 OK\r\n");
@@ -117,6 +118,18 @@ static void test_chunked_and_head(void) {
   assert(accept(&response, "\r\n") == VECTIS_PROXY_HTTP_TRAILERS);
   assert(vectis_proxy_http_response_finish(&response, NULL) ==
          VECTIS_PROXY_HEADER_OK);
+  vectis_proxy_http_response_cleanup(&response);
+
+  vectis_proxy_http_response_init(&response, 0);
+  accept(&response, "HTTP/1.1 200 OK\r\n");
+  accept(&response, "Transfer-Encoding: chunked\r\n");
+  accept(&response, "\r\n");
+  accept(&response, "X-Trace: done\r\n");
+  assert(vectis_proxy_http_response_finish(&response, NULL) ==
+         VECTIS_PROXY_HEADER_INVALID);
+  assert(vectis_proxy_http_response_curl_complete(&response, &event, NULL) ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(event == VECTIS_PROXY_HTTP_TRAILERS);
   vectis_proxy_http_response_cleanup(&response);
 
   vectis_proxy_http_response_init(&response, 1);

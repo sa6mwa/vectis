@@ -333,7 +333,8 @@ Keep the Vectis implementation split along its ownership boundaries:
 | `vectis_proxy_framing.c` | Bounded incremental body and trailer framing, with explicit consumed-byte and pause results. |
 | `vectis_proxy_curl.c` | Per-worker libcurl multi pools, socket/timer readiness, admission, and easy-handle lifetime. |
 | `vectis_proxy_events.c` | Linux and BSD readiness translation shared by curl sockets and taken-over connections. |
-| `vectis_proxy_http.c` | HTTP upload/download callbacks, response headers and trailers, and stream completion. |
+| `vectis_proxy_http.c` | Incremental upstream response status, header, body-length, and trailer validation. |
+| `vectis_proxy_http_upstream.c` | Libcurl HTTP callbacks, one bounded pending download chunk, and pause/resume flow control. Upload callbacks still need production integration. |
 | `vectis_proxy_ws.c` | HTTP/1.1 WebSocket handshake validation, rejection framing, and opaque duplex relay. |
 | `vectis_kore_proxy.c` | Header-time route selection, accepted-connection takeover, Kore send queue, TLS readiness, and connection restoration. |
 

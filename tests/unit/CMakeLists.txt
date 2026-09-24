@@ -68,6 +68,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_proxy_framing test_proxy_framing.c)
   vectis_add_unit_test(vectis_unit_proxy_headers test_proxy_headers.c)
   vectis_add_unit_test(vectis_unit_proxy_http test_proxy_http.c)
+  vectis_add_unit_test(vectis_unit_proxy_http_upstream
+    test_proxy_http_upstream.c)
   vectis_add_unit_test(vectis_unit_proxy_route_registration
     test_proxy_route_registration.c)
   vectis_add_unit_test(vectis_unit_proxy_select test_proxy_select.c)

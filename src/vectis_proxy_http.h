@@ -43,6 +43,14 @@ vectis_proxy_header_status vectis_proxy_http_response_header(
 vectis_proxy_header_status
 vectis_proxy_http_response_body(vectis_proxy_http_response *response,
                                 size_t length, const char **reason);
+/* libcurl delivers trailer fields but can omit their terminal empty line.
+ * Call only after a successful curl transfer, which has verified wire framing.
+ * A reported TRAILERS event can then be emitted before the downstream final
+ * chunk. Direct parser users still need an explicit terminal empty line. */
+vectis_proxy_header_status
+vectis_proxy_http_response_curl_complete(vectis_proxy_http_response *response,
+                                         vectis_proxy_http_event *event,
+                                         const char **reason);
 vectis_proxy_header_status
 vectis_proxy_http_response_finish(const vectis_proxy_http_response *response,
                                   const char **reason);
