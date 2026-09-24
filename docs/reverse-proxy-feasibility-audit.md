@@ -544,6 +544,19 @@ callback sampling and high-water-delta checks above correct that false
 failure. They do not make the 16 MiB regression ceiling a hard allocation
 bound or prove other target archives.
 
+The distinct pinned x86_64 Linux musl `c.pkt.systems-0.10.0` archive was
+downloaded into the ignored build directory and verified against the SHA-256
+in [`scripts/deps.sh`](../scripts/deps.sh). A static musl build of the same
+isolated sixteen-connection probe passed five separate-server resume runs
+and five cancellation runs. Its client baseline was about 5.7 MiB RSS and
+peak about 9.9 MiB; the pause stayed level, all 256 MiB arrived on resume,
+and cancellation returned the client's descriptor count from six to four.
+The probe executed its runtime asynchronous-DNS, HTTP/2, and TLS feature
+assertions against this musl archive. This is a second release-bundle
+measurement, not a hard libcurl allocation cap or a coupled Kore worker
+allowance. Close-on-cancel in the musl Kore worker and tests of the
+aarch64/armhf and Darwin archives remain open.
+
 The [tagged libcurl 8.22.0 HTTP/2 source](https://github.com/curl/curl/blob/curl-8_22_0/lib/http2.c)
 sets a 64 KiB initial stream window, a 10 MiB maximum stream window, and a
 16 KiB chunk pool with room for up to 10 MiB of network input. It sets the
@@ -560,8 +573,9 @@ The HTTP/2 probe asserts that runtime libcurl reports `AsynchDNS`, `HTTP2`,
 and `SSL`. The host-debug and x86_64 Linux GNU release presets in
 [`scripts/deps.sh`](../scripts/deps.sh) select the same
 `c.pkt.systems-0.10.0-x86_64-linux-gnu` archive by SHA-256; both were
-executed above. The distinct musl, ARM, and Darwin archives still need
-explicit checks before a proxy route is available on those targets.
+executed above. The x86_64 musl archive was executed separately. The
+distinct ARM and Darwin archives still need explicit checks before a proxy
+route is available on those targets.
 
 ## Executable finding: pre-body handoff and replay
 
