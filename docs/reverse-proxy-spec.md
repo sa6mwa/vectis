@@ -292,7 +292,9 @@ winner is a proxy route. An ordinary handler, static handler, or live upload
 winner continues through its existing path. Evaluate proxy WebSocket mode
 only for a validated HTTP/1.1 upgrade; a proxy route may still handle an
 ordinary GET through its HTTP mode. Return path-validation and allocation
-errors locally before contacting upstream.
+errors locally before contacting upstream. Preserve the existing static
+directory 405/`Allow` decision when its all-method route wins an overlap;
+that check runs before ordinary body handling today.
 
 Exact duplicate method/path-kind/path registrations already conflict, but
 literal, parameter, and regex patterns can overlap. Test both registration
