@@ -45,6 +45,8 @@ int vectis_kore_route(struct http_request *req);
 int vectis_kore_http_redirect_route(struct http_request *req);
 int vectis_kore_body_chunk(struct http_request *req, const void *data,
                            size_t len);
+static int vectis_kore_prebody(struct http_request *req, const void *data,
+                              size_t len);
 void vectis_kore_request_free(struct http_request *req);
 void vectis_kore_ws_connect(struct connection *connection);
 void vectis_kore_ws_message(struct connection *connection, u_int8_t opcode,
@@ -105,6 +107,21 @@ static int vectis_kore_curl_defaults_set = 0;
 static u_int16_t vectis_kore_curl_timeout_default = 0u;
 static u_int64_t vectis_kore_curl_recv_max_default = 0u;
 static vectis_kore_runtime_config vectis_kore_current;
+static int (*vectis_kore_prebody_probe)(struct http_request *, const void *,
+                                       size_t);
+
+void vectis_kore_set_prebody_probe(int (*probe)(struct http_request *,
+                                                const void *, size_t)) {
+  vectis_kore_prebody_probe = probe;
+}
+
+static int vectis_kore_prebody(struct http_request *req, const void *data,
+                              size_t len) {
+  if (vectis_kore_prebody_probe == NULL) {
+    return KORE_RESULT_OK;
+  }
+  return vectis_kore_prebody_probe(req, data, len);
+}
 static char *vectis_kore_keymgr_root = NULL;
 static char *vectis_kore_acme_root = NULL;
 static char *vectis_kore_body_disk_path = NULL;
@@ -3711,6 +3728,7 @@ void kore_parent_configure(int argc, char **argv) {
       fatal("failed to create Vectis Kore route");
     }
     kore_route_callback(route, "vectis_kore_route");
+    route->on_prebody = vectis_kore_prebody;
     route->on_body_chunk = kore_runtime_getcall("vectis_kore_body_chunk");
     if (route->on_body_chunk == NULL) {
       fatal("failed to resolve Vectis Kore body chunk callback");

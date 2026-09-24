@@ -1,9 +1,9 @@
 # Reverse proxy transport feasibility audit
 
-Status: source audit plus a live Kore pipelining test, 2026-09-24. The pre-body
-takeover is a candidate, not a proven implementation choice. No proxy
-transport code or prototype is included in this audit. The intended feature
-contract is in [reverse-proxy-spec.md](reverse-proxy-spec.md).
+Status: source audit plus targeted live transport probes, 2026-09-24. The
+pre-body takeover is a candidate, not a complete implementation choice. The
+probes do not implement an upstream proxy. The intended feature contract is in
+[reverse-proxy-spec.md](reverse-proxy-spec.md).
 
 ## Decision
 
@@ -45,14 +45,40 @@ checks that raw sending stops working after removing the easy handle. This
 confirms the basic handle lifetime contract in the local build. It does not
 yet prove HTTPS/WSS, socket-watcher transfer, or bounded relay behavior.
 
+## Executable finding: pre-body handoff and replay
+
+Patch [`0030`](../vendor/kore/patches/0030-kore-prebody-handoff-hook.patch)
+adds a route-local callback after Kore has parsed headers but before its
+method-based body rules or initial body delivery. The
+[handoff probe](../tests/unit/test_kore_prebody_handoff.c) installs a temporary
+connection handler and bounded receive buffer through that callback. On a
+running listener it receives three ordered responses for ordinary GET, taken
+over POST, ordinary GET sent in one TCP write. A split POST body followed by
+an ordinary GET also produces two responses. Both the three-request sequence
+and an upgrade-style request with an early masked WebSocket frame preserve
+the exact initial bytes over cleartext and downstream TLS. The test stops the
+app and its workers after each listener. Header-time rejection returns either
+the default `400` or a callback-supplied `403` before request-body delivery.
+
+The first split-body probe stalled after one response when takeover returned
+from the active receive loop. With edge-triggered epoll, the next request was
+already in the socket and no new edge arrived. Letting that same receive loop
+continue into the newly installed callback resolved the stall. This is a
+required handoff invariant: a takeover must install its receive state
+atomically and drain the current event until the socket would block or a
+bounded queue explicitly pauses it. The probe uses a private test callback
+setter in the Vectis bridge; the eventual route selector must replace it.
+The raw upgrade response is a byte-ownership probe, not a complete WebSocket
+handshake or relay.
+
 ## Findings from the current source
 
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
-| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. A new optional callback can return continue, reject, or takeover there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Source supports a narrow hook; callback ordering and route precedence need integration proof. |
-| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. A takeover can install a proxy handler and receive callback, but the current event invocation must finish safely and any already-read suffix must remain owned. | Plausible with explicit handoff state; unproven under coalesced reads. |
-| Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. `http_header_recv()` gives the whole receive buffer to the request, then can drop bytes after a header-only request. It passes all initial surplus to `http_body_update()`, whose remaining-length subtraction can underflow when the read crosses a fixed body boundary. | Proxy can own its fixed/chunked body framer. Two targeted shared byte-boundary fixes are still required for ordinary-to-proxy pipelining and return to keepalive. |
-| Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome. A proxy handler can gate reads and resume by explicitly draining. Linux [`kore_platform_disable_read()`](../vendor/kore/upstream/src/linux.c) deletes the entire epoll registration, so it cannot be used while writes must progress. [`kore_tls_read()` and `kore_tls_write()`](../vendor/kore/upstream/src/tls_openssl.c) collapse `WANT_READ` and `WANT_WRITE` into the same success result and clear only the operation's event flag. [OpenSSL permits either retry direction](https://docs.openssl.org/3.0/man3/SSL_get_error/) for either operation. | Current API is insufficient for correct cross-direction TLS retries. A targeted retry-direction result, plus tests on Linux and BSD, is required. |
+| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe; actual Vectis proxy route precedence remains untested. |
+| Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. | Coalesced and split input passes on Linux, including downstream TLS; bounded pauses and cleanup races remain open. |
+| Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` and the live test cover ordinary byte boundaries. A proxy-owned fixed/chunked framer and its bounds remain unproved. |
+| Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome. A proxy handler can gate reads and resume by explicitly draining. Linux [`kore_platform_disable_read()`](../vendor/kore/upstream/src/linux.c) deletes the entire epoll registration, so it cannot be used while writes must progress. [`kore_tls_read()` and `kore_tls_write()`](../vendor/kore/upstream/src/tls_openssl.c) collapse `WANT_READ` and `WANT_WRITE` into the same success result and clear only the operation's event flag. [OpenSSL permits either retry direction](https://docs.openssl.org/3.0/man3/SSL_get_error/) for either operation. | Current API is insufficient for correct cross-direction TLS retries. Compare a proxy-only OpenSSL adapter with a targeted Kore TLS result extension, then prove readiness on Linux and BSD. |
 | TLS buffered data | [OpenSSL documents](https://docs.openssl.org/3.0/man3/SSL_pending/) processed and unprocessed records that can remain after the socket stops reporting readable. An edge-triggered handler must drain buffered application data when capacity resumes, but it must not spin on a record that cannot yet produce application bytes. | Requires a bounded work budget and explicit continuation scheduling, not readiness alone. |
 | EOF and half-close | [`net_read()`](../vendor/kore/upstream/src/net.c) disconnects the whole connection on a zero-byte read; `kore_tls_read()` treats `SSL_ERROR_ZERO_RETURN` as an error. A client TCP write-half-close after a complete upload can still expect a response. | Decide and prove the proxy EOF contract. Supporting half-close needs a proxy-specific read result or adapter; treating read EOF as full disconnect is insufficient for that case. |
 | Response output | Vectis already drives bounded generated responses using [`net_send_stream()`](../vendor/kore/upstream/src/net.c) and send-completion callbacks in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c). An asynchronous producer can reuse that queue mechanism with its own wakeup and high-water mark. | Mechanism exists; zero queued bytes must mean wait, and callbacks on cancellation must be tested. |
