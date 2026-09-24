@@ -66,6 +66,10 @@ vectis_add_unit_test(vectis_unit_proxy_route_selection
 if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_proxy_framing test_proxy_framing.c)
   vectis_add_unit_test(vectis_unit_proxy_headers test_proxy_headers.c)
+  vectis_add_unit_test(vectis_unit_proxy_route_registration
+    test_proxy_route_registration.c)
+else()
+  vectis_add_unit_test(vectis_unit_proxy_no_kore test_proxy_no_kore.c)
 endif()
 vectis_add_unit_test(vectis_unit_acme_state test_vectis_acme_state.c)
 vectis_add_unit_test(vectis_unit_cai test_vectis_cai.c)

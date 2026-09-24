@@ -186,7 +186,8 @@ int main(void) {
   assert(config.server.autoblock.enabled == 1);
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  for (i = 0u; i < VECTIS_RECEIVER_RESERVED_SLOTS; ++i) {
+  assert(app->proxy_route != NULL);
+  for (i = 0u; i < sizeof(app->reserved) / sizeof(app->reserved[0]); ++i) {
     assert(app->reserved[i] == NULL);
   }
   app->close(app);

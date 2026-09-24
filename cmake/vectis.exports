@@ -344,6 +344,7 @@ vectis_openapi_response_json
 vectis_openapi_route_doc_cleanup
 vectis_openapi_route_doc_init
 vectis_private_key_config_init
+vectis_proxy_route_config_init
 vectis_qr_encode
 vectis_qr_render_ansi
 vectis_qr_size
@@ -358,6 +359,7 @@ vectis_register_prefixed_json_route
 vectis_register_prefixed_json_typed_route
 vectis_register_prefixed_route
 vectis_register_prefixed_xml_route
+vectis_register_proxy_route
 vectis_register_route
 vectis_register_static_directory
 vectis_register_static_embedded

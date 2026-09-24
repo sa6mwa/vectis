@@ -537,6 +537,7 @@ set(vectis_shared_dependency_links
 
 set(vectis_public_headers
   include/vectis/vectis.h
+  include/vectis/proxy.h
   include/vectis/auth.h
   include/vectis/embedded_fs.h
   include/vectis/totp_qr.h
@@ -549,6 +550,7 @@ set(vectis_sources
   src/vectis_acme_state.c
   src/vectis_auth.c
   src/vectis_embedded_fs.c
+  src/vectis_proxy_route.c
   src/vectis_smith.c
   src/vectis_totp_qr.c
   src/vectis_webdav.c

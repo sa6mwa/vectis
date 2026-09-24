@@ -1,6 +1,7 @@
 #include <cstring>
 
 #include <vectis/auth.h>
+#include <vectis/proxy.h>
 #include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
@@ -8,6 +9,7 @@
 int main() {
   vectis_app_config app_config;
   vectis_http_client_config http_config;
+  vectis_proxy_route_config proxy_config;
   vectis_auth_store_config auth_store_config;
   vectis_auth_issue_config auth_issue_config;
   vectis_webdav_auth_provider_config webdav_auth_provider_config;
@@ -19,6 +21,7 @@ int main() {
   std::memset(&error, 0, sizeof(error));
   vectis_app_config_init(&app_config);
   vectis_http_client_config_init(&http_config);
+  vectis_proxy_route_config_init(&proxy_config);
   vectis_auth_store_config_init(&auth_store_config);
   vectis_auth_issue_config_init(&auth_issue_config);
   vectis_webdav_auth_provider_config_init(&webdav_auth_provider_config);
@@ -28,7 +31,8 @@ int main() {
   if (app == 0) {
     return 1;
   }
-  if (app->route_count == 0 || app->logger == 0 || app->close == 0) {
+  if (app->route_count == 0 || app->logger == 0 || app->close == 0 ||
+      app->proxy_route == 0 || proxy_config.path != 0) {
     app->close(app);
     return 2;
   }

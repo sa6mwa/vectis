@@ -109,6 +109,7 @@ typedef struct vectis_ssh_sftp_dir vectis_ssh_sftp_dir;
 typedef struct vectis_mqtt vectis_mqtt;
 typedef struct vectis_request vectis_request;
 typedef struct vectis_response vectis_response;
+typedef struct vectis_proxy_route_config vectis_proxy_route_config;
 
 /*
  * Every public stateful receiver reserves these tail slots for future Vectis
@@ -2051,7 +2052,12 @@ struct vectis_app {
       vectis_consumer_service **out, vectis_error *error);
   void (*close)(vectis_app *self);
   void *impl;
-  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
+  /* Register a bounded streaming reverse proxy route. Target strings are
+   * copied before return. See <vectis/proxy.h> for the route contract. */
+  vectis_status (*proxy_route)(vectis_app *self,
+                               const vectis_proxy_route_config *config,
+                               vectis_error *error);
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS - 1u];
 };
 
 struct vectis_managed_service {
