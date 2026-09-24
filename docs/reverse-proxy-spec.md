@@ -577,6 +577,18 @@ attached to the multi for the whole tunnel. Drain `curl_easy_recv` and
 limits, including bytes already decrypted inside TLS.
 Arm the raw watcher for pending reads and writes without leaving a writable
 fd spinning after a TLS-only `CURLE_AGAIN` with no application-byte progress.
+The pinned libcurl OpenSSL backend can return `CURLE_AGAIN` from
+`curl_easy_send()` when `SSL_write()` wants a **read**, and from
+`curl_easy_recv()` when `SSL_read()` wants a **write**. The public connect-only
+API does not report that retry direction. While either raw operation is
+pending after `CURLE_AGAIN`, arm both socket directions, preserve its input
+buffer and offset, and avoid re-registering an unchanged edge-triggered mask
+on every callback. After a readiness callback with no application progress,
+use a bounded, cancellable delayed retry so an internal TLS transition with
+no further socket edge cannot stall forever; measure its wakeup rate under an
+idle tunnel and a forced cross-direction retry. Never use a continuous
+level-triggered writable watcher as that retry mechanism. This raw-tunnel
+policy requires an executable probe before architecture commitment.
 The relay copies bounded byte chunks in both directions with independent
 ingress pause/resume. Kore's WebSocket message API remains for application
 WebSockets and is not used by transparent proxy tunnels.

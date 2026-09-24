@@ -467,6 +467,21 @@ idle/close semantics, or downstream TLS for the upgrade route. The early
 client frame is an adversarial handoff fixture; production clients should
 wait for `101` before sending frames.
 
+The pinned [libcurl OpenSSL send path](https://github.com/curl/curl/blob/curl-8_22_0/lib/vtls/openssl.c)
+sets an internal receive need and returns `CURLE_AGAIN` when `SSL_write()`
+reports `WANT_READ`; its receive path likewise returns `CURLE_AGAIN` when
+`SSL_read()` reports `WANT_WRITE`. The public
+[`curl_easy_send()`](https://curl.se/libcurl/c/curl_easy_send.html) and
+[`curl_easy_recv()`](https://curl.se/libcurl/c/curl_easy_recv.html) interfaces
+do not expose that internal direction. The fixed small-frame tunnel exchange
+does not force either case. A raw watcher therefore needs combined socket
+interest while an operation is pending, no repeated edge registration for an
+unchanged interest mask, and a cancellable delayed retry after a no-progress
+callback. Otherwise a TLS-only retry can stall or spin on a writable fd. The
+retry gate still needs a forced worker-loop test with a callback-count bound;
+this is an unresolved feasibility risk, not a proven property of the current
+tunnel probe.
+
 The worker-loop probe also sends that early client frame to a WebSocket route
 whose verified HTTPS upstream returns `403` and a 1 MiB body. The upstream
 splits its response header across TLS writes. The proxy waits for the
