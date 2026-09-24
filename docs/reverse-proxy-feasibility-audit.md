@@ -35,6 +35,16 @@ The existing HTTPS runtime test, header-limit test, and `kore_smoke` runtime
 case also pass. This proves the ordinary byte-replay prerequisite on Linux;
 it does not prove proxy takeover, TLS replay, or backpressure.
 
+## Executable finding: libcurl connect-only ownership
+
+The focused [connect-only test](../tests/unit/test_proxy_curl_connect_only.c)
+uses the pinned debug libcurl build with a local TCP echo server. It keeps a
+completed connect-only easy handle attached to a multi handle, obtains its
+active socket, exchanges bytes with `curl_easy_send` and `curl_easy_recv`, and
+checks that raw sending stops working after removing the easy handle. This
+confirms the basic handle lifetime contract in the local build. It does not
+yet prove HTTPS/WSS, socket-watcher transfer, or bounded relay behavior.
+
 ## Findings from the current source
 
 | Boundary | Evidence and consequence | Feasibility |

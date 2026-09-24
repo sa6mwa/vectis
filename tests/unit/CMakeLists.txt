@@ -79,6 +79,8 @@ vectis_add_unit_test(vectis_unit_mailbox test_vectis_mailbox.c)
 vectis_add_unit_test(vectis_unit_webdav test_vectis_webdav.c)
 vectis_add_unit_test(vectis_unit_webdav_atomic test_vectis_webdav_atomic.c)
 if(VECTIS_WITH_KORE_RUNTIME)
+  vectis_add_unit_test(vectis_unit_proxy_curl_connect_only
+    test_proxy_curl_connect_only.c)
   vectis_add_unit_test(vectis_unit_kore_pipelining test_kore_pipelining.c)
   vectis_add_unit_test(vectis_unit_https_runtime test_vectis_https_runtime.c)
   vectis_add_unit_test(vectis_unit_https_mtls_runtime test_vectis_https_mtls_runtime.c)
