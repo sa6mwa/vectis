@@ -70,6 +70,17 @@ completed `pongdone` after it. This proves response progress during a paused
 HTTP/1.1 upload in this build; it does not prove the event-loop integration,
 HTTP/2 duplex, or cancellation behavior.
 
+The [HTTP/1.1 chunked-trailer probe](../tests/unit/test_proxy_curl_chunked_trailers.c)
+sets an unknown upload size, pauses after its first chunk, and uses libcurl's
+trailer callback after the resumed final chunk. The local server observes the
+exact chunk framing and `X-Trace` request trailer. It sends the first response
+chunk before the upload resumes, then a second response chunk and `X-Final`
+trailer. The client receives the first body bytes before upload resume and
+the response trailer through the header callback. Twenty serial repetitions
+pass with the pinned libcurl 8.22.0. This proves the documented callback
+composition for a small HTTP/1.1 transfer, not Kore ingress framing, general
+trailer policy, HTTP/2 request trailers, or large-stream memory bounds.
+
 The Linux [socket handoff test](../tests/unit/test_proxy_curl_socket_handoff.c)
 drives connect-only setup through `curl_multi_socket_action()` with a socket
 callback and timer callback on an epoll loop. In the pinned build, libcurl
