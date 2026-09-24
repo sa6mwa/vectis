@@ -15,9 +15,13 @@ function(vectis_add_unit_test target_name)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
       target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|direct_io)|prebody_handoff)$")
+    set(kore_test_deadline 15)
+    if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
+      set(kore_test_deadline 30)
+    endif()
     add_test(NAME ${target_name} COMMAND bash
       "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-      15 0 $<TARGET_FILE:${target_name}>)
+      ${kore_test_deadline} 0 $<TARGET_FILE:${target_name}>)
   else()
     add_test(NAME ${target_name} COMMAND ${target_name})
   endif()
