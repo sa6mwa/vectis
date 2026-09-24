@@ -71,6 +71,41 @@ setter in the Vectis bridge; the eventual route selector must replace it.
 The raw upgrade response is a byte-ownership probe, not a complete WebSocket
 handshake or relay.
 
+## Transport candidate under test
+
+The next candidate gives the proxy exchange its own bounded downstream output
+queue and reads/writes through Kore's accepted socket or `SSL *` after
+takeover. Kore still owns accept, TLS handshake, the worker event loop, and
+connection destruction. The proxy temporarily owns the connection event
+callback and restores Kore's handler only after it has fully consumed the
+request and drained its response. It waits for any earlier ordinary response
+already queued on that connection before writing proxy bytes, preserving
+pipeline order.
+
+This may be simpler than using `net_send_stream()` for proxy output. In
+[`connection_remove()`](../vendor/kore/upstream/src/connection.c), Kore frees
+`connection->hdlr_extra` before removing queued send buffers; their stream
+completion callbacks also run during removal in
+[`net_remove_netbuf()`](../vendor/kore/upstream/src/net.c). A callback referring
+to proxy state in `hdlr_extra` would use freed memory unless the proxy adds a
+separate reference-counted lifetime or cancellation protocol. A direct output
+queue has one owner and one teardown path. It also lets a proxy-specific TLS
+adapter call `SSL_get_error()` immediately after `SSL_read()`/`SSL_write()` and
+retain the exact write buffer across retry, including Kore's enabled partial
+writes. [OpenSSL documents cross-direction retries and the stable write
+argument rule](https://docs.openssl.org/3.6/man3/SSL_write/).
+
+This candidate is **not proved**. It needs a proxy-only event-interest helper
+that can arm read or write independently on epoll and kqueue without a
+permanently writable fd spinning. Replacing `connection->evt.handle` would
+also let the proxy interpret `EPOLLRDHUP`/`EV_EOF` as a read-half-close rather
+than letting Kore's default event handler immediately disconnect it. The
+direct adapter must serialize all access to the accepted `SSL *`, drain
+decrypted data after resuming a paused read, and schedule continuation if its
+per-event work budget ends while OpenSSL still holds bytes. An executable
+slow-peer, half-close, TLS retry-direction, and cleanup probe is required
+before preferring it over Kore's send queue.
+
 ## Findings from the current source
 
 | Boundary | Evidence and consequence | Feasibility |
