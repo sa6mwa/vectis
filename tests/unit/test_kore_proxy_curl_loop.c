@@ -25,6 +25,7 @@
 #include <kore/http.h>
 #include <kore/kore.h>
 #include <vectis/vectis.h>
+#include "vectis_proxy_events.h"
 
 #define RELAY_BUFFER_SIZE 8192
 #define RELAY_PAYLOAD_SIZE (1024 * 1024)
@@ -259,6 +260,7 @@ struct curl_watch {
   struct proxy_state *state;
   curl_socket_t fd;
   struct curl_watch *retired_next;
+  int interest;
   int retired;
 };
 
@@ -1855,7 +1857,8 @@ socket_change(CURL *easy, curl_socket_t fd, int what,
   watch = (struct curl_watch *)socket_arg;
   if (what == CURL_POLL_REMOVE) {
     if (watch != NULL) {
-      kore_platform_disable_read((int)fd);
+      vectis_proxy_event_update((int)fd, &watch->evt, watch->interest, 0, 0);
+      watch->interest = 0;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
       assert(worker_curl.watch_count > 0);
       worker_curl.watch_count--;
@@ -1898,9 +1901,10 @@ socket_change(CURL *easy, curl_socket_t fd, int what,
       metrics->max_curl_watchers = state->curl_watch_count;
 #endif
   }
-  interest = (what & CURL_POLL_IN ? EPOLLIN : 0) |
-      (what & CURL_POLL_OUT ? EPOLLOUT : 0);
-  kore_platform_event_schedule((int)fd, interest, 0, &watch->evt);
+  interest = (what & CURL_POLL_IN ? VECTIS_PROXY_EVENT_READ : 0) |
+      (what & CURL_POLL_OUT ? VECTIS_PROXY_EVENT_WRITE : 0);
+  vectis_proxy_event_update((int)fd, &watch->evt, watch->interest, interest, 0);
+  watch->interest = interest;
   return 0;
 }
 
