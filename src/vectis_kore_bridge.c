@@ -2181,9 +2181,9 @@ static int vectis_kore_hex_value(unsigned char value) {
   return -1;
 }
 
-static vectis_status vectis_kore_decode_request_path(const char *path,
-                                                     char **out,
-                                                     vectis_error *error) {
+vectis_status vectis_internal_kore_decode_request_path(const char *path,
+                                                      char **out,
+                                                      vectis_error *error) {
   const unsigned char *input;
   unsigned char *output;
   char *decoded;
@@ -2660,7 +2660,7 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
     vectis_kore_reject_body_chunk(req, state, 503, "vectis app is starting\n");
     return KORE_RESULT_OK;
   }
-  status = vectis_kore_decode_request_path(req->path, &path, &error);
+  status = vectis_internal_kore_decode_request_path(req->path, &path, &error);
   if (status != VECTIS_OK) {
     vectis_kore_reject_body_chunk(
         req, state, status == VECTIS_ERR_INVALID ? 400 : 500, error.message);
@@ -2685,7 +2685,8 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
       return KORE_RESULT_OK;
     }
     status = vectis_internal_route_body_policy(
-        app, method, path, &state->policy, &state->live_upload, &error);
+        app, method, path, &state->policy, &state->live_upload, NULL, NULL,
+        &error);
     if (status != VECTIS_OK) {
       vectis_kore_reject_body_chunk(req, state, 404, NULL);
       free(path);
@@ -3354,7 +3355,7 @@ int vectis_kore_route(struct http_request *req) {
     vectis_kore_body_state_cleanup(body_state);
     return KORE_RESULT_OK;
   }
-  status = vectis_kore_decode_request_path(req->path, &path, &error);
+  status = vectis_internal_kore_decode_request_path(req->path, &path, &error);
   if (status != VECTIS_OK) {
     vectis_internal_metrics_note_http_status(
         app, status == VECTIS_ERR_INVALID ? 400 : 500);
@@ -3410,7 +3411,8 @@ int vectis_kore_route(struct http_request *req) {
   }
   if (status == VECTIS_OK) {
     status = vectis_internal_route_body_policy(app, method, path, &body_policy,
-                                               &body_is_live_upload, &error);
+                                               &body_is_live_upload, NULL, NULL,
+                                               &error);
     if (status == VECTIS_OK) {
       route_matched = 1;
     }

@@ -175,6 +175,9 @@ vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
 vectis_status
 vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
                               vectis_error *error);
+vectis_status vectis_internal_kore_decode_request_path(const char *path,
+                                                      char **out,
+                                                      vectis_error *error);
 vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error);
 int vectis_internal_kore_signal_requested(void);
 int vectis_internal_kore_signal_number(void);
@@ -214,7 +217,14 @@ vectis_status vectis_internal_metrics_snapshot_key(const char *storage_owner,
 vectis_status
 vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
                                   const char *path, vectis_body_policy *policy,
-                                  int *is_live_upload, vectis_error *error);
+                                  int *is_live_upload,
+                                  vectis_route_handler_fn *selected_handler,
+                                  void **selected_userdata,
+                                  vectis_error *error);
+vectis_status vectis_internal_proxy_raw_path_match(
+    vectis_app *app, vectis_http_method method, const char *raw_path,
+    vectis_route_handler_fn proxy_handler, vectis_request *request,
+    void **selected_userdata, vectis_error *error);
 vectis_status vectis_internal_static_route_method_denied(
     vectis_app *app, vectis_http_method method, const char *path, int *denied,
     const char **allow, vectis_error *error);

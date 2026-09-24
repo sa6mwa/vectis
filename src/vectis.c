@@ -26665,7 +26665,10 @@ vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
 vectis_status
 vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
                                   const char *path, vectis_body_policy *policy,
-                                  int *is_live_upload, vectis_error *error) {
+                                  int *is_live_upload,
+                                  vectis_route_handler_fn *selected_handler,
+                                  void **selected_userdata,
+                                  vectis_error *error) {
   vectis_app_impl *impl;
   vectis_request scratch;
   vectis_status status;
@@ -26682,6 +26685,12 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
   }
   if (is_live_upload != NULL) {
     *is_live_upload = 0;
+  }
+  if (selected_handler != NULL) {
+    *selected_handler = NULL;
+  }
+  if (selected_userdata != NULL) {
+    *selected_userdata = NULL;
   }
   impl = (vectis_app_impl *)app->impl;
   vectis_internal_request_init(&scratch);
@@ -26715,6 +26724,14 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
         *is_live_upload =
             impl->routes[i].kind == VECTIS_ROUTE_ENTRY_UPLOAD_STREAM;
       }
+      if (selected_handler != NULL &&
+          impl->routes[i].kind == VECTIS_ROUTE_ENTRY_HANDLER) {
+        *selected_handler = impl->routes[i].handler;
+      }
+      if (selected_userdata != NULL &&
+          impl->routes[i].kind == VECTIS_ROUTE_ENTRY_HANDLER) {
+        *selected_userdata = impl->routes[i].userdata;
+      }
       status = VECTIS_OK;
       break;
     }
@@ -26732,6 +26749,163 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
   vectis_internal_request_cleanup(&scratch);
   if (status == VECTIS_ERR_STATE) {
     vectis_set_error(error, VECTIS_ERR_STATE, "no route matched request");
+  }
+  return status;
+}
+
+static int vectis_proxy_hex_digit(unsigned char value) {
+  if (value >= (unsigned char)'0' && value <= (unsigned char)'9') {
+    return (int)(value - (unsigned char)'0');
+  }
+  if (value >= (unsigned char)'a' && value <= (unsigned char)'f') {
+    return (int)(value - (unsigned char)'a') + 10;
+  }
+  if (value >= (unsigned char)'A' && value <= (unsigned char)'F') {
+    return (int)(value - (unsigned char)'A') + 10;
+  }
+  return -1;
+}
+
+static vectis_status vectis_proxy_validate_raw_path(const char *path,
+                                                    vectis_error *error) {
+  const unsigned char *cursor;
+  unsigned char segment[2];
+  unsigned char value;
+  unsigned char previous;
+  unsigned char before_previous;
+  size_t segment_size;
+  int high;
+  int low;
+
+  if (path == NULL || path[0] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "proxy request path must start with '/'");
+    return VECTIS_ERR_INVALID;
+  }
+  cursor = (const unsigned char *)path;
+  segment_size = 0u;
+  previous = 0u;
+  before_previous = 0u;
+  for (; *cursor != '\0'; ++cursor) {
+    value = *cursor;
+    if (value == (unsigned char)'%') {
+      if (cursor[1] == '\0' || cursor[2] == '\0' ||
+          (high = vectis_proxy_hex_digit(cursor[1])) < 0 ||
+          (low = vectis_proxy_hex_digit(cursor[2])) < 0) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "proxy request path has an invalid percent escape");
+        return VECTIS_ERR_INVALID;
+      }
+      value = (unsigned char)((high << 4) | low);
+      cursor += 2u;
+    } else if (value == (unsigned char)'?' || value == (unsigned char)'#') {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "proxy request path must not contain a query or fragment");
+      return VECTIS_ERR_INVALID;
+    }
+    if (value < 0x20u || value == 0x7fu ||
+        value == (unsigned char)'\\') {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "proxy request path has an unsafe byte");
+      return VECTIS_ERR_INVALID;
+    }
+    if (before_previous == (unsigned char)'%' &&
+        vectis_proxy_hex_digit(previous) >= 0 &&
+        vectis_proxy_hex_digit(value) >= 0) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "proxy request path has ambiguous double escaping");
+      return VECTIS_ERR_INVALID;
+    }
+    before_previous = previous;
+    previous = value;
+    if (value == (unsigned char)'/') {
+      if ((segment_size == 1u && segment[0] == (unsigned char)'.') ||
+          (segment_size == 2u && segment[0] == (unsigned char)'.' &&
+           segment[1] == (unsigned char)'.')) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "proxy request path has a dot segment");
+        return VECTIS_ERR_INVALID;
+      }
+      segment_size = 0u;
+    } else {
+      if (segment_size < 2u) {
+        segment[segment_size] = value;
+      }
+      if (segment_size < 3u) {
+        segment_size++;
+      }
+    }
+  }
+  if ((segment_size == 1u && segment[0] == (unsigned char)'.') ||
+      (segment_size == 2u && segment[0] == (unsigned char)'.' &&
+       segment[1] == (unsigned char)'.')) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "proxy request path has a dot segment");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+vectis_status vectis_internal_proxy_raw_path_match(
+    vectis_app *app, vectis_http_method method, const char *raw_path,
+    vectis_route_handler_fn proxy_handler, vectis_request *request,
+    void **selected_userdata, vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_status status;
+  size_t saved_count;
+  size_t i;
+
+  if (app == NULL || app->impl == NULL || proxy_handler == NULL ||
+      request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "proxy route match requires app, handler and request");
+    return VECTIS_ERR_INVALID;
+  }
+  if (selected_userdata != NULL) {
+    *selected_userdata = NULL;
+  }
+  status = vectis_proxy_validate_raw_path(raw_path, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  saved_count = request->path_param_count;
+  vectis_error_clear(error);
+  status = VECTIS_ERR_STATE;
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                       saved_count);
+    if (impl->routes[i].kind != VECTIS_ROUTE_ENTRY_HANDLER ||
+        impl->routes[i].handler != proxy_handler ||
+        !vectis_route_method_matches(&impl->routes[i], method)) {
+      continue;
+    }
+    if (vectis_route_path_matches(&impl->routes[i], raw_path, request, error)) {
+      if (selected_userdata != NULL) {
+        *selected_userdata = impl->routes[i].userdata;
+      }
+      status = VECTIS_OK;
+      break;
+    }
+    if (error != NULL && (error->code == VECTIS_ERR_NOMEM ||
+                          error->code == VECTIS_ERR_INVALID)) {
+      status = error->code;
+      break;
+    }
+  }
+  if (status != VECTIS_OK) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                       saved_count);
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (status == VECTIS_ERR_STATE) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "no proxy route matched request");
   }
   return status;
 }

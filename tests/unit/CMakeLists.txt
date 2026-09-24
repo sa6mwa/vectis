@@ -61,6 +61,8 @@ function(vectis_add_cpp_header_test target_name)
 endfunction()
 
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
+vectis_add_unit_test(vectis_unit_proxy_route_selection
+  test_proxy_route_selection.c)
 vectis_add_unit_test(vectis_unit_acme_state test_vectis_acme_state.c)
 vectis_add_unit_test(vectis_unit_cai test_vectis_cai.c)
 vectis_add_unit_test(vectis_unit_smith test_vectis_smith.c)

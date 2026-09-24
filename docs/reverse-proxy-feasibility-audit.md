@@ -784,8 +784,37 @@ fallback. Running it after a valid
 decoded-path `404` would change route precedence and is excluded. The current
 decoder reports malformed escapes and disallowed escaped bytes through the
 same error status, so a raw fallback needs an independent, strict validator;
-it cannot infer safety from the decoder's error code. No production proxy kind
-or executable fallback test exists yet.
+it cannot infer safety from the decoder's error code.
+
+The new private selector probe tests a less intrusive representation: a
+proxy route can be registered as an ordinary handler with a private marker
+function. The existing body-policy scan now reports its selected handler and
+userdata, so normal-path admission needs no new route kind or matcher. A
+separate raw fallback filters the same registry to marker handlers and reuses
+its method, parameter, and regex matcher after strict path validation. It
+returns its
+matched userdata. A two-proxy-route test distinguishes their configurations
+without a second match. The validator rejects invalid percent triplets,
+controls, backslashes, dot traversal after one decode, and percent triplets
+produced by a second decode. This internal probe does not
+add public proxy registration or connect upstream.
+
+The focused [route-selection test](../tests/unit/test_proxy_route_selection.c)
+passes with ordinary regex and marker parameter routes in both registration
+orders. Normal decoded paths select the first registered route; an encoded
+slash stays inside one raw proxy parameter; encoded percent and colon retain
+their escaped spelling. Malformed and unsafe paths fail, including
+double-encoded traversal. A static directory keeps its trailing-slash path
+exception and its `405`/`Allow` result for a disallowed method. The
+[live pre-body probe](../tests/unit/test_kore_prebody_handoff.c) uses Kore's
+actual decoder and that registry over cleartext and TLS. It confirms normal
+first-match behavior, encoded-unreserved decoding, raw fallback admission,
+and rejection of malformed escapes in both route orders. The production
+selector still needs these pieces composed with application WebSocket
+priority, live-upload overlap, static overlap, and complete header framing.
+For normal decoded-path matches, the body-policy probe currently discards
+captured route parameters with its scratch request; production admission must
+return those captures to `preflight` and `rewrite` without a second match.
 
 The [Kore worker curl-loop probe](../tests/unit/test_kore_proxy_curl_loop.c)
 now covers the next transport boundary. Its pre-body hook receives
@@ -868,13 +897,14 @@ fixtures register an ordinary handler before an overlapping application
 WebSocket route: a valid upgrade receives `101`, while missing upgrade
 headers and an `h2c` upgrade attempt take the WebSocket handshake path and
 receive `400`. Exact duplicate method/path-kind/path registrations are
-rejected, but regex and literal paths may overlap. The least intrusive proxy
-selector can preserve this precedence by checking application WebSocket routes
-first, then extending the existing body-policy query to report whether its
-first match is a proxy route. It needs neither a separate matcher nor a rewrite
-of ordinary dispatch. Static directory routes register for all methods; a
-static winner must continue through the allowed-method check to preserve its
-405/`Allow` outcome. No executable proxy route-kind admission test exists yet.
+rejected, but regex and literal paths may overlap. The marker-route candidate
+preserves this precedence by checking application WebSocket routes first,
+then using the body-policy query's selected handler to identify a proxy
+marker. It needs neither a new route kind nor a rewrite of ordinary dispatch.
+Static directory routes register for all methods; a static winner must
+continue through the allowed-method check to preserve its 405/`Allow`
+outcome. The live marker overlap passes in both registration orders; composed
+production admission is still open.
 
 ## Transport candidate under test
 
@@ -1036,7 +1066,7 @@ harness and production proxy cancellation paths still need their own proof.
 
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
-| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. Patch `0032` makes the initial Host selection exact. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe. A valid `Hostile` field before `Host` no longer prevents TLS admission. Duplicate `Content-Length`, `Content-Length` plus `Transfer-Encoding`, a second `Host`, and HTTP/1.0 are visible at the hook and receive marked local `400` responses in a test-only callback. The bridge gives application WebSocket routes priority for every GET; body policy scans all route kinds in registration order and handles a selected live upload before ordinary dispatch. Live overlap tests pass in both registration orders for buffered versus live-upload routes and confirm WebSocket priority over an earlier ordinary handler. Exact duplicate routes conflict, but regex/literal overlaps are allowed. The body-policy result still lacks a proxy route-kind output; a proxy-specific admission test remains open. |
+| Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. Patch `0032` makes the initial Host selection exact. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe. A valid `Hostile` field before `Host` no longer prevents TLS admission. Duplicate `Content-Length`, `Content-Length` plus `Transfer-Encoding`, a second `Host`, and HTTP/1.0 are visible at the hook and receive marked local `400` responses in a test-only callback. The bridge gives application WebSocket routes priority for every GET; body policy scans all route kinds in registration order and handles a selected live upload before ordinary dispatch. Live overlap tests pass in both registration orders for buffered versus live-upload routes and confirm WebSocket priority over an earlier ordinary handler. Exact duplicate routes conflict, but regex/literal overlaps are allowed. The body-policy result now reports the winning handler; a private marker route passes focused selection and live pre-body overlap probes. Production admission across WebSocket, live-upload, static, and framing cases remains open. |
 | Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. Patch `0031` lets readable bytes reach the parser when an orderly write half-close accompanies them. | Coalesced and split input passes on Linux, including downstream TLS. A 1 MiB chunked POST and a same-write chunked body with a pipelined GET also pass, including the latter over TLS. Direct-I/O ordinary HTTP takeover restores Kore's event handler and serves two subsequent ordinary requests. Ordinary GET and SSE half-close with headers pass on Linux. The composed worker probe covers bounded chunked upload with curl backpressure, and replays a following ordinary GET after the live curl transfer in both same-write and split-write cases over cleartext and TLS. Full framing policy, kqueue execution, and cleanup races remain open. |
 | Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` covers ordinary byte boundaries. Pre-body takeover receives framed GET and OPTIONS bodies followed by an ordinary GET over cleartext and TLS. A bounded chunked probe validates 1 MiB incrementally, parses a trailer, and replays a following GET from borrowed and later socket bytes. A separate Kore worker probe couples 1 MiB chunked ingress to libcurl upload and trailer output with an early response and two 8 KiB buffers over cleartext and downstream TLS in both curl multi modes; a cleartext burst fills the decoded queue. The live curl worker restores Kore and serves an ordered ordinary GET from either a saved same-write suffix or later unread bytes. The TLS upload also passes forced cross-direction `SSL_read` and `SSL_write` retries. General framing policy, malformed-input handling, and TLS retry behavior in other phases remain unproved. |
 | Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, so taken-over input uses direct nonblocking fd/`SSL *` reads. Output copies one bounded chunk into Kore's send queue and uses its TLS writer; `SSL_want()` identifies queued output's retry direction. The worker probe measures an 8 KiB scratch queue plus one 8 KiB Kore netbuf. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Slow cleartext, HTTPS-upstream, and double-TLS relays pass on Linux. A filter BIO forces `SSL_read`/`WANT_WRITE` and `SSL_write`/`WANT_READ` in the coupled HTTP upload. Tunnel retries and kqueue remain open. |

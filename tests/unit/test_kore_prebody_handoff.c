@@ -13,6 +13,7 @@
 #include <kore/http.h>
 #include <kore/kore.h>
 #include <vectis/vectis.h>
+#include "vectis_internal.h"
 
 struct probe_state {
   struct http_request *req;
@@ -54,6 +55,11 @@ extern void vectis_kore_set_prebody_probe(
 
 static const char raw_path[] = "/raw-target/a%2Fb/%2e/c";
 static const char raw_query[] = "q=1&q=2&plus=%2B&empty=";
+static vectis_app *probe_app;
+
+static vectis_status proxy_marker_reply(vectis_app *app,
+    vectis_request *request, vectis_response *response, void *userdata,
+    vectis_error *error);
 
 static int
 probe_connection_handle(struct connection *c)
@@ -266,6 +272,68 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
   int framing_seen;
   size_t first;
 
+  if (strncmp(req->path, "/proxy-select/", 14) == 0) {
+    vectis_route_handler_fn selected;
+    vectis_body_policy policy;
+    vectis_request *probe_request;
+    vectis_error probe_error;
+    vectis_status status;
+    const char *allow;
+    char *decoded;
+    int denied;
+
+    assert(probe_app != NULL);
+    probe_request = vectis_internal_request_new(&probe_error);
+    assert(probe_request != NULL);
+    selected = NULL;
+    decoded = NULL;
+    denied = 0;
+    allow = NULL;
+    status = vectis_internal_kore_decode_request_path(
+        req->path, &decoded, &probe_error);
+    if (status == VECTIS_OK) {
+      status = vectis_internal_static_route_method_denied(
+          probe_app, VECTIS_HTTP_GET, decoded, &denied, &allow,
+          &probe_error);
+      if (status == VECTIS_OK && !denied)
+        status = vectis_internal_route_body_policy(
+            probe_app, VECTIS_HTTP_GET, decoded, &policy, NULL, &selected,
+            NULL, &probe_error);
+    }
+    if (status == VECTIS_ERR_INVALID) {
+      status = vectis_internal_proxy_raw_path_match(
+          probe_app, VECTIS_HTTP_GET, req->path, proxy_marker_reply,
+          probe_request, NULL, &probe_error);
+      if (status == VECTIS_OK)
+        selected = proxy_marker_reply;
+    }
+    if (status == VECTIS_OK && !denied &&
+        selected == proxy_marker_reply) {
+      static const char marker[] = "proxy-prebody-selected";
+
+      if (strcmp(req->path, "/proxy-select/a%2Fb") == 0)
+        assert(strcmp(vectis_request_path_param(probe_request, "id"),
+            "a%2Fb") == 0);
+      req->owner->flags |= CONN_CLOSE_EMPTY;
+      http_response(req, 200, marker, sizeof(marker) - 1);
+      free(decoded);
+      vectis_internal_request_free(probe_request);
+      return KORE_RESULT_ERROR;
+    }
+    if (status == VECTIS_ERR_INVALID) {
+      static const char marker[] = "proxy-raw-rejected";
+
+      req->owner->flags |= CONN_CLOSE_EMPTY;
+      http_response(req, 400, marker, sizeof(marker) - 1);
+      free(decoded);
+      vectis_internal_request_free(probe_request);
+      return KORE_RESULT_ERROR;
+    }
+    assert(status == VECTIS_OK || status == VECTIS_ERR_STATE);
+    free(decoded);
+    vectis_internal_request_free(probe_request);
+    return KORE_RESULT_OK;
+  }
   if (strncmp(req->path, "/raw-target", 11) == 0) {
     static const char marker[] = "raw-target-preserved";
     int preserved;
@@ -405,6 +473,38 @@ reply(vectis_app *app, vectis_request *request, vectis_response *response,
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
+}
+
+static vectis_status
+proxy_marker_reply(vectis_app *app, vectis_request *request,
+    vectis_response *response, void *userdata, vectis_error *error)
+{
+  (void)app;
+  (void)request;
+  (void)userdata;
+  return vectis_response_text(response, 500, "text/plain",
+      "proxy marker reached ordinary dispatch", error);
+}
+
+static void
+register_proxy_selection_routes(vectis_app *app, int proxy_first,
+    vectis_error *error)
+{
+  vectis_route_config ordinary;
+  vectis_route_config proxy;
+
+  ordinary = vectis_route(VECTIS_HTTP_GET, "^/proxy-select/.*$", reply, NULL);
+  ordinary.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  proxy = vectis_route(VECTIS_HTTP_GET, "/proxy-select/:id",
+      proxy_marker_reply, NULL);
+  proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
+  if (proxy_first) {
+    assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
+    assert(vectis_register_route(app, &ordinary, error) == VECTIS_OK);
+  } else {
+    assert(vectis_register_route(app, &ordinary, error) == VECTIS_OK);
+    assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
+  }
 }
 
 static unsigned short
@@ -986,6 +1086,8 @@ main(void)
       "^/ordinary-raw-target/.*$", reply, NULL);
   raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
+  register_proxy_selection_routes(app, 0, &error);
+  probe_app = app;
   assert(app->start(app, &error) == VECTIS_OK);
   if (getenv("VECTIS_KORE_PREBODY_EXIT_AFTER_START") != NULL)
     _exit(71);
@@ -1062,10 +1164,25 @@ main(void)
   raw_target_passed &= check_prebody_header_result(port,
       "/ordinary-raw-target/%2e%2e/child", "1.1", "", 0,
       400, "dot segments");
+  assert(check_prebody_header_result(port, "/proxy-select/a", "1.1", "",
+      0, 200, "ok"));
+  assert(check_prebody_header_result(port, "/proxy-select/%41", "1.1",
+      "", 0, 200, "ok"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%2Fb", "1.1",
+      "", 0, 200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%25b", "1.1",
+      "", 0, 200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%3Ab", "1.1",
+      "", 0, 200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%2e%2e", "1.1",
+      "", 0, 400, "proxy-raw-rejected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%ZZ", "1.1",
+      "", 0, 400, "proxy-raw-rejected"));
   reject_passed = check_local_rejection(port, "/reject", 400);
   reject_passed &= check_local_rejection(port, "/forbidden", 403);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
+  probe_app = NULL;
 
   assert(snprintf(cert_path, sizeof(cert_path),
       "/tmp/vectis-kore-prebody-%ld-cert.pem", (long)getpid()) > 0);
@@ -1098,6 +1215,8 @@ main(void)
       "^/ordinary-raw-target/.*$", reply, NULL);
   raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
+  register_proxy_selection_routes(app, 1, &error);
+  probe_app = app;
   assert(app->start(app, &error) == VECTIS_OK);
   tls_passed = check_tls_handoff(port, wire);
   tls_chunked_passed = check_small_chunked_ingress(port, 1);
@@ -1129,9 +1248,18 @@ main(void)
   raw_target_passed &= check_prebody_header_result(port,
       "/ordinary-raw-target/%2e%2e/child", "1.1", "", 1,
       400, "dot segments");
+  assert(check_prebody_header_result(port, "/proxy-select/a", "1.1", "",
+      1, 200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%41", "1.1",
+      "", 1, 200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%2Fb", "1.1",
+      "", 1, 200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%2e%2e", "1.1",
+      "", 1, 400, "proxy-raw-rejected"));
   tls_raw_passed = check_raw_handoff(port, 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
+  probe_app = NULL;
   assert(remove(cert_path) == 0);
   assert(remove(key_path) == 0);
   vectis_kore_set_prebody_probe(NULL);

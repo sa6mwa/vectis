@@ -81,8 +81,10 @@ rejects the decoded path as invalid with no static-site exception, may it
 validate the raw path separately and scan proxy routes in registration order.
 A raw path that passes this second check must have origin-form syntax, valid
 percent triplets, no raw or encoded controls or backslash, and no raw or
-once-decoded dot segments. Malformed or unsafe paths must fail locally before
-`preflight`, `rewrite`, or an upstream connection.
+once-decoded dot segments. Reject a second percent triplet that appears only
+after one decoding pass, so a backend cannot turn `%252e` or `%252f` into a
+hidden traversal or separator. Malformed or unsafe paths must fail locally
+before `preflight`, `rewrite`, or an upstream connection.
 If no proxy route matches, preserve the ordinary rejection. The raw fallback
 must never make an ordinary, upload, static, or application WebSocket route
 handle a path it currently rejects.
@@ -94,8 +96,8 @@ literal pattern cannot contain percent escapes under current route
 registration rules, so escaped-path fallback depends on a parameter or regex
 pattern. Prove this behavior, including encoded percent and colon, mixed-case
 escapes, and overlaps with every existing route kind before fixing the public
-contract. The current code has no proxy route kind, so this is a candidate,
-not a claim that escaped targets can already reach a proxy route.
+contract. The current code has no public proxy registration or production
+admission path; the internal marker-route probe only tests this candidate.
 
 This follows Go's newer `Rewrite(in, out)` model rather than copying the
 behavior of its older `Director`: sanitize first, then let application code
@@ -314,13 +316,20 @@ WebSocket route matches, return `CONTINUE` and let its current handshake path
 produce the response, including malformed-handshake responses. Only after
 that check may a proxy route be considered. For remaining requests, resolve
 the first matching route in registration order using the same method, path,
-parameter, and regex matcher used by body policy. Take over only when that
-winner is a proxy route. An ordinary handler, static handler, or live upload
-winner continues through its existing path. Extend the internal body-policy
-query to report the winning route kind along with its policy; its existing
-first-match scan already covers handlers, static routes, and live uploads.
+parameter, and regex matcher used by body policy. Represent a proxy route in
+the existing handler registry with a private marker handler and route-owned
+proxy configuration. Take over only when that marker wins. An ordinary
+handler, static handler, or live upload winner continues through its existing
+path. The internal body-policy query now reports the winning handler and
+userdata pointers along with its policy; its existing first-match scan covers
+handlers, static routes, and live uploads. The marker must return an explicit
+error if normal dispatch reaches it, rather than accidentally serving a
+buffered response.
 The pre-body hook uses that result after the application WebSocket check.
 Ordinary dispatch and upload handling keep their current selection paths.
+Production selection must also retain the winning route's captured parameters
+for `preflight` and `rewrite`; the current body-policy scratch request discards
+them. Extend that result without repeating route matching.
 Evaluate proxy WebSocket mode only for a validated HTTP/1.1 upgrade; a proxy
 route may still handle an ordinary GET through its HTTP mode. Return path
 validation and allocation errors locally before contacting upstream. Preserve
@@ -336,15 +345,21 @@ through the static-site trailing-slash exception stays on its current path.
 Do not use the fallback merely because no ordinary route matched: a proxy
 regex could acquire a valid decoded path that currently returns `404`.
 This keeps normal-path precedence and static `405` intact.
-The current body-policy return value alone cannot identify a proxy winner:
-it contains only policy and a live-upload flag. Extend this internal result
-with the winning route kind; do not duplicate its method, path, parameter,
-and regex matching loop in the pre-body hook. The bridge already consumes a
-selected live-upload route before ordinary handler dispatch. Live tests cover
+The selected handler pointer identifies a private proxy marker without a new
+route kind or a duplicate normal-path matcher. Its userdata pointer identifies
+the route-owned proxy configuration without another matching pass. Takeover
+must retain that configuration until the exchange is destroyed, including
+worker shutdown. The raw fallback validates the raw path and filters the same
+registry to marker
+routes, using its existing method, parameter, and regex matcher, and returns
+the matched userdata. The bridge already consumes a selected live-upload route
+before ordinary handler dispatch. Live tests cover
 both registration orders for overlapping buffered and live-upload routes,
-plus application WebSocket priority over an earlier ordinary handler. A
-proxy-specific overlap and takeover test remains required once the proxy
-route kind exists. This adds no further Kore transport surface.
+plus application WebSocket priority over an earlier ordinary handler. A live
+marker probe covers ordinary regex overlap in both registration orders and
+escaped-path fallback over cleartext and TLS. Production admission still
+needs the composed WebSocket, static, live-upload, and framing cases. This adds
+no further Kore transport surface.
 
 Kore's current request-body behavior is method-based: GET, HEAD, OPTIONS,
 COPY, and MOVE are marked complete at request creation; most other methods
