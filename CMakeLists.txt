@@ -673,6 +673,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_apply_relocatable_paths(vectis_kore_runtime)
   list(APPEND vectis_sources
     src/vectis_kore_bridge.c
+    src/vectis_proxy_headers.c
     src/vectis_proxy_framing.c
     $<TARGET_OBJECTS:vectis_kore_runtime>)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

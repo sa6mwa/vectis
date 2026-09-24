@@ -52,6 +52,10 @@ void vectis_proxy_body_framer_fixed(vectis_proxy_body_framer *framer,
                                     uint64_t length);
 void vectis_proxy_body_framer_chunked(vectis_proxy_body_framer *framer);
 
+/* Validate a field name for use in a trailer. The caller separately checks
+ * that a request trailer was declared before forwarding it. */
+int vectis_proxy_trailer_field_allowed(const char *name, size_t length);
+
 /* Consumes only this request's body; a suffix belongs to the next request or
  * an upgraded tunnel. COMPLETE may therefore leave input unconsumed. */
 vectis_proxy_frame_result vectis_proxy_body_framer_feed(

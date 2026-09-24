@@ -4,6 +4,9 @@
 #include <string.h>
 
 static int vectis_proxy_token_char(unsigned char c) {
+  if (c == 0u) {
+    return 0;
+  }
   if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
       (c >= 'a' && c <= 'z')) {
     return 1;
@@ -11,27 +14,7 @@ static int vectis_proxy_token_char(unsigned char c) {
   return strchr("!#$%&'*+-.^_`|~", c) != NULL;
 }
 
-static int vectis_proxy_name_is(const char *name, const char *expected) {
-  unsigned char a;
-  unsigned char b;
-
-  for (; *name != '\0' && *expected != '\0'; ++name, ++expected) {
-    a = (unsigned char)*name;
-    b = (unsigned char)*expected;
-    if (a >= 'A' && a <= 'Z') {
-      a = (unsigned char)(a + ('a' - 'A'));
-    }
-    if (b >= 'A' && b <= 'Z') {
-      b = (unsigned char)(b + ('a' - 'A'));
-    }
-    if (a != b) {
-      return 0;
-    }
-  }
-  return *name == '\0' && *expected == '\0';
-}
-
-static int vectis_proxy_forbidden_trailer(const char *name) {
+int vectis_proxy_trailer_field_allowed(const char *name, size_t length) {
   static const char *const forbidden[] = {"authorization",
                                           "connection",
                                           "content-encoding",
@@ -48,13 +31,35 @@ static int vectis_proxy_forbidden_trailer(const char *name) {
                                           "transfer-encoding",
                                           "upgrade"};
   size_t i;
+  size_t j;
 
-  for (i = 0u; i < sizeof(forbidden) / sizeof(forbidden[0]); ++i) {
-    if (vectis_proxy_name_is(name, forbidden[i])) {
-      return 1;
+  if (name == NULL || length == 0u) {
+    return 0;
+  }
+  for (j = 0u; j < length; ++j) {
+    if (!vectis_proxy_token_char((unsigned char)name[j])) {
+      return 0;
     }
   }
-  return 0;
+  for (i = 0u; i < sizeof(forbidden) / sizeof(forbidden[0]); ++i) {
+    const char *expected = forbidden[i];
+    if (strlen(expected) == length) {
+      for (j = 0u; j < length; ++j) {
+        unsigned char a = (unsigned char)name[j];
+        unsigned char b = (unsigned char)expected[j];
+        if (a >= 'A' && a <= 'Z') {
+          a = (unsigned char)(a + ('a' - 'A'));
+        }
+        if (a != b) {
+          break;
+        }
+      }
+      if (j == length) {
+        return 0;
+      }
+    }
+  }
+  return 1;
 }
 
 static int vectis_proxy_parse_size(vectis_proxy_body_framer *framer) {
@@ -130,7 +135,7 @@ static int vectis_proxy_parse_trailer(vectis_proxy_body_framer *framer,
     return 0;
   }
   line[i++] = '\0';
-  if (vectis_proxy_forbidden_trailer(line)) {
+  if (!vectis_proxy_trailer_field_allowed(line, strlen(line))) {
     return 0;
   }
   for (; i < framer->line_length && (line[i] == ' ' || line[i] == '\t'); ++i) {
