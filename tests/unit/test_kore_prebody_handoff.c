@@ -402,6 +402,20 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
         preserved ? sizeof(marker) - 1 : sizeof("raw-target-changed") - 1);
     return KORE_RESULT_ERROR;
   }
+  if (strcmp(req->path, "/framing-header-limit") == 0) {
+    static const char marker[] = "prebody-header-limit-accepted";
+    unsigned padding_count;
+
+    padding_count = 0;
+    TAILQ_FOREACH(header, &req->req_headers, list) {
+      if (strcmp(header->header, "x-pad") == 0)
+        padding_count++;
+    }
+    assert(padding_count == HTTP_REQ_HEADER_MAX - 3u);
+    req->owner->flags |= CONN_CLOSE_EMPTY;
+    http_response(req, 200, marker, sizeof(marker) - 1);
+    return KORE_RESULT_ERROR;
+  }
   if (strncmp(req->path, "/framing-", 9) == 0) {
     first_length = NULL;
     second_length = NULL;
@@ -1255,6 +1269,31 @@ check_framing_header_visibility(unsigned short port, const char *path,
       400, "prebody-framing-reject");
 }
 
+static int
+check_header_count_boundary(unsigned short port, int tls)
+{
+  char headers[512];
+  size_t used;
+  int length;
+  int index;
+
+  used = 0;
+  for (index = 0; index < HTTP_REQ_HEADER_MAX - 3; index++) {
+    length = snprintf(headers + used, sizeof(headers) - used,
+        "X-Pad: a\r\n");
+    assert(length > 0 && (size_t)length < sizeof(headers) - used);
+    used += (size_t)length;
+  }
+  assert(check_prebody_header_result(port, "/framing-header-limit",
+      "1.1", headers, tls, 200, "prebody-header-limit-accepted"));
+  length = snprintf(headers + used, sizeof(headers) - used,
+      "Transfer-Encoding: chunked\r\n");
+  assert(length > 0 && (size_t)length < sizeof(headers) - used);
+  assert(check_prebody_header_result(port, "/framing-header-limit",
+      "1.1", headers, tls, 400, "Bad Request"));
+  return 1;
+}
+
 int
 main(void)
 {
@@ -1395,6 +1434,7 @@ main(void)
       "Host: attacker.invalid\r\n", 0);
   framing_headers_passed &= check_framing_header_visibility(port,
       "/framing-http10", "1.0", "", 0);
+  framing_headers_passed &= check_header_count_boundary(port, 0);
   raw_target_passed = check_prebody_header_result(port,
       "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
       "1.1", "", 0, 200, "raw-target-preserved");
@@ -1504,6 +1544,7 @@ main(void)
       "Host: attacker.invalid\r\n", 1);
   framing_headers_passed &= check_framing_header_visibility(port,
       "/framing-http10", "1.0", "", 1);
+  framing_headers_passed &= check_header_count_boundary(port, 1);
   raw_target_passed &= check_prebody_header_result(port,
       "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
       "1.1", "", 1, 200, "raw-target-preserved");

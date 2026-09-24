@@ -750,6 +750,19 @@ generic syntax, value, and trailer validation remain unproved. The test must
 compile with `KORE_USE_CURL` to match Kore's `struct http_request` layout when
 it enumerates the header list.
 
+The same probe exposed a separate header-count boundary. Kore passed at most
+24 nonempty lines, including the request line, to its split array; an extra
+`Transfer-Encoding` field after 22 padding fields and `Host` disappeared
+without an overflow indication. The live pre-body hook then returned `200`
+for a request whose final framing field was invisible. Patch
+[`0033`](../vendor/kore/patches/0033-kore-reject-truncated-request-headers.patch)
+counts nonempty lines before the destructive split and rejects any excess
+with `400`. A boundary probe proves that the largest accepted header block
+reaches the hook intact and the next field is rejected before the hook on
+cleartext and TLS. This changes ordinary Kore requests at that limit from
+silent truncation to rejection; it does not implement the proxy's complete
+framing or header policy.
+
 The pre-body view also retains the raw path `/raw-target/a%2Fb/%2e/c` and
 query `q=1&q=2&plus=%2B&empty=` byte-for-byte over cleartext and downstream
 TLS. This gives the proxy enough inbound data to construct an origin-form

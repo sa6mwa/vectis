@@ -1,0 +1,35 @@
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -840,7 +840,7 @@ http_header_recv(struct netbuf *nb)
+ 	struct http_request	*req;
+ 	int			decision;
+ 	u_int8_t		*end_headers;
+-	int			h, i, v, skip, l;
++	int			h, i, v, skip, l, fields, in_field;
+ 	char			*headers[HTTP_REQ_HEADER_MAX];
+ 	char			*value, *host, *request[4], *hbuf;
+ 
+@@ -873,6 +873,22 @@ http_header_recv(struct netbuf *nb)
+ 	len = end_headers - nb->buf;
+ 	hbuf = (char *)nb->buf;
+ 
++	/* kore_split_string() stops at the output limit without an overflow signal. */
++	fields = 0;
++	in_field = 0;
++	for (value = hbuf; *value != '\0'; value++) {
++		if (*value == '\r' || *value == '\n') {
++			in_field = 0;
++		} else if (!in_field) {
++			in_field = 1;
++			fields++;
++			if (fields >= HTTP_REQ_HEADER_MAX) {
++				http_error_response(c, HTTP_STATUS_BAD_REQUEST);
++				return (KORE_RESULT_OK);
++			}
++		}
++	}
++
+ 	h = kore_split_string(hbuf, "\r\n", headers, HTTP_REQ_HEADER_MAX);
+ 	if (h < 2) {
+ 		http_error_response(c, HTTP_STATUS_BAD_REQUEST);

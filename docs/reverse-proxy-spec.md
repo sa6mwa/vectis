@@ -398,6 +398,9 @@ non-proxy regression coverage.
 After complete request headers, invoke the Vectis selector through a new
 optional pre-body callback on the catch-all Kore route. Leave Kore's existing
 `on_headers` timing and behavior intact for non-proxy requests. The selector
+must receive the complete parsed header list. Patch `0033` rejects header
+blocks that exceed Kore's split array before it can silently truncate the
+list; this rejection applies to ordinary requests too. The selector
 must distinguish a genuine WebSocket upgrade by validated `Connection` and
 `Upgrade` tokens, not by path alone, and preserve the established precedence
 of ordinary, static, upload, and application WebSocket routes. Reject ambiguous
