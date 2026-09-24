@@ -106,14 +106,26 @@ and one disconnect, with 108 event callbacks and no writable-fd spin. Ten
 serial repetitions passed. This establishes the Linux plain-TCP pause/resume
 and half-close mechanism without another Kore patch.
 
+The same probe now uses Kore's accepted `SSL *` directly for a 256 KiB TLS
+relay with a slow reader. One run observed 13 TLS write pauses, an 8 KiB
+maximum application queue, one read EOF, and one disconnect, with the payload
+preserved exactly. The first TLS run delivered all bytes but ended with an
+unexpected EOF at the client: Kore's connection cleanup did not complete the
+nonblocking TLS closure for this exchange. Explicitly sending the server
+`close_notify` from the proxy adapter after its output queue drained made the
+client observe `SSL_ERROR_ZERO_RETURN`. This closure is part of the proxy
+transport. The probe uses `SSL_get_error()` for retry direction and holds the
+write buffer unchanged across a retry. Five serial repetitions of the
+TLS-inclusive test passed.
+
 The full candidate is **not proved**. Kqueue still needs an equivalent
-interest helper and test. The accepted `SSL *` path needs serialized direct
-I/O, retry-direction tracking, stable write buffers, and an explicit drain
-after a paused read resumes. A per-event work budget needs a continuation
-when OpenSSL still holds bytes. Earlier Kore-queued responses need a drain
-barrier before direct output begins. TLS backpressure, those ownership
-transitions, and cancellation during worker shutdown must pass executable
-tests before preferring this path over Kore's send queue.
+interest helper and test. The TLS probe covers normal `WANT_READ` and
+`WANT_WRITE` from read and write respectively; it has not forced either
+cross-direction retry. Its per-event work budget also has not exercised the
+continuation path for OpenSSL-held bytes. Earlier Kore-queued responses need
+a drain barrier before direct output begins. Those ownership transitions,
+worker-shutdown cancellation, and an upstream full-duplex transfer must pass
+executable tests before preferring this path over Kore's send queue.
 
 ## Findings from the current source
 
@@ -122,13 +134,13 @@ tests before preferring this path over Kore's send queue.
 | Header selection | Vectis registers one catch-all Kore route in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c); its own route selection runs later. [`http_header_recv()`](../vendor/kore/upstream/src/http.c) has a point after the header list is built and before method-based body checks. Patch `0030` adds an optional callback there. The existing `on_headers` hook runs after initial body delivery and is skipped by some zero-length paths. | Hook timing passes a live probe; actual Vectis proxy route precedence remains untested. |
 | Connection handoff | [`kore_connection_event()`](../vendor/kore/upstream/src/connection.c) calls the replaceable `connection->handle`. [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) invokes the receive callback while processing an event. The handoff probe replaces both connection and receive handlers and owns the initial suffix. | Coalesced and split input passes on Linux, including downstream TLS; bounded pauses and cleanup races remain open. |
 | Body framing and pipelining | Kore's ordinary request path is method-based and has no incoming chunked decoder. Before patch `0029`, `http_header_recv()` could drop bytes after a header-only request and pass surplus across a fixed body boundary to `http_body_update()`. | Patch `0029` and the live test cover ordinary byte boundaries. A proxy-owned fixed/chunked framer and its bounds remain unproved. |
-| Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome. A proxy handler can gate reads and resume by explicitly draining. Linux [`kore_platform_disable_read()`](../vendor/kore/upstream/src/linux.c) deletes the entire epoll registration, so it cannot be used while writes must progress. [`kore_tls_read()` and `kore_tls_write()`](../vendor/kore/upstream/src/tls_openssl.c) collapse `WANT_READ` and `WANT_WRITE` into the same success result and clear only the operation's event flag. [OpenSSL permits either retry direction](https://docs.openssl.org/3.0/man3/SSL_get_error/) for either operation. | Current API is insufficient for correct cross-direction TLS retries. Compare a proxy-only OpenSSL adapter with a targeted Kore TLS result extension, then prove readiness on Linux and BSD. |
+| Backpressure and TLS | [`net_recv_flush()`](../vendor/kore/upstream/src/net.c) has no pause outcome, and Kore's TLS wrappers collapse `WANT_READ` and `WANT_WRITE`. The Linux probe bypasses both for taken-over exchanges, uses direct OpenSSL I/O and an 8 KiB queue, and arms only the needed epoll direction. [OpenSSL permits either retry direction](https://docs.openssl.org/3.6/man3/SSL_write/). | Normal TLS read/write retries, slow readers, and bounded application output pass on Linux. Forced cross-direction retries, kqueue, and upstream coupling remain open. |
 | TLS buffered data | [OpenSSL documents](https://docs.openssl.org/3.0/man3/SSL_pending/) processed and unprocessed records that can remain after the socket stops reporting readable. An edge-triggered handler must drain buffered application data when capacity resumes, but it must not spin on a record that cannot yet produce application bytes. | Requires a bounded work budget and explicit continuation scheduling, not readiness alone. |
-| EOF and half-close | [`net_read()`](../vendor/kore/upstream/src/net.c) disconnects the whole connection on a zero-byte read; `kore_tls_read()` treats `SSL_ERROR_ZERO_RETURN` as an error. A client TCP write-half-close after a complete upload can still expect a response. | Decide and prove the proxy EOF contract. Supporting half-close needs a proxy-specific read result or adapter; treating read EOF as full disconnect is insufficient for that case. |
-| Response output | Vectis already drives bounded generated responses using [`net_send_stream()`](../vendor/kore/upstream/src/net.c) and send-completion callbacks in [`vectis_kore_bridge.c`](../src/vectis_kore_bridge.c). An asynchronous producer can reuse that queue mechanism with its own wakeup and high-water mark. | Mechanism exists; zero queued bytes must mean wait, and callbacks on cancellation must be tested. |
+| EOF and half-close | [`net_read()`](../vendor/kore/upstream/src/net.c) disconnects the whole connection on a zero-byte read; `kore_tls_read()` treats `SSL_ERROR_ZERO_RETURN` as an error. The direct-I/O probe keeps writing after TCP EOF and after a TLS client `close_notify`. | One cleartext and one TLS half-close exchange pass. Early upstream final responses, resets, and close deadlines remain open. |
+| Response output | Vectis uses [`net_send_stream()`](../vendor/kore/upstream/src/net.c) for generated responses, but Kore invokes stream callbacks during connection removal after freeing `hdlr_extra`. The direct-I/O probe owns its output queue and teardown. | Direct output passes slow-peer tests without send callbacks; preserving order behind an earlier Kore-queued response remains unproved. |
 | Request/accounting lifetime | A taken-over GET may already have `HTTP_REQUEST_COMPLETE`. [`http_request_sleep()`](../vendor/kore/upstream/src/http.c) prevents normal dispatch, and connection removal wakes attached requests for deletion. A sleeping SSE request still counts against `http_request_limit` and retains the header allocation; Vectis defaults the header limit to 64 KiB and the request limit to max connections. | Ownership path exists; admission and memory measurements must include long-lived request/header objects. Any early release needs its own logging, timeout, and cleanup proof. |
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) skips the normal idle check while a request remains attached and can enforce ordinary send timeouts on queued output. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). | Proxy timers and one owner for cancellation are required. Cancel curl handles and timers before connection/request teardown, including worker stop. |
-| Upstream transport | The local debug dependency bundle identifies libcurl 8.22.0 and OpenSSL 3.6.4. A direct `curl_version_info()` check of its shared library reports asynchronous DNS, HTTP/2, and TLS support. The existing Kore curl wrapper buffers responses and removes completed easy handles; proxy HTTP needs a separate multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Local debug build clears the asynchronous-DNS feature check. Connect-only fd ownership, full duplex, and HTTP/2 memory envelope remain open, including for release bundles. |
+| Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Local plain-TCP connect-only lifetime passes. HTTPS/WSS, multi socket handoff, full duplex, release-bundle features, and HTTP/2 memory remain open. |
 
 ## Minimum executable proof before architecture commitment
 

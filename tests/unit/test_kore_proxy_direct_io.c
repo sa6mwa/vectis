@@ -2,6 +2,8 @@
 #include <assert.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -18,6 +20,7 @@
 
 #define DIRECT_BUFFER_SIZE 8192
 #define DIRECT_PAYLOAD_SIZE (1024 * 1024)
+#define TLS_PAYLOAD_SIZE (256 * 1024)
 
 struct direct_metrics {
   unsigned events;
@@ -25,6 +28,10 @@ struct direct_metrics {
   unsigned disconnects;
   unsigned write_pauses;
   unsigned read_eofs;
+  unsigned tls_read_want_write;
+  unsigned tls_write_want_read;
+  unsigned tls_read_want_read;
+  unsigned tls_write_want_write;
   size_t max_queued;
 };
 
@@ -56,6 +63,8 @@ static void
 direct_interest(struct connection *c, struct direct_state *state)
 {
   int events;
+  int result;
+  int ssl_error;
 
   events = 0;
   if (state->length > state->offset) {
@@ -69,6 +78,19 @@ direct_interest(struct connection *c, struct direct_state *state)
     else
       events |= EPOLLIN | EPOLLRDHUP;
   } else {
+    if (c->tls != NULL) {
+      ERR_clear_error();
+      result = SSL_shutdown(c->tls);
+      if (result < 0) {
+        ssl_error = SSL_get_error(c->tls, result);
+        if (ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE) {
+          events = ssl_error == SSL_ERROR_WANT_READ ? EPOLLIN : EPOLLOUT;
+          kore_platform_event_schedule(c->fd, events, 0, c);
+          return;
+        }
+      }
+    }
     kore_connection_disconnect(c);
     return;
   }
@@ -108,14 +130,21 @@ direct_pump(struct connection *c)
 {
   struct direct_state *state;
   ssize_t amount;
+  int ssl_error;
   int step;
 
   state = (struct direct_state *)c->hdlr_extra;
   assert(state != NULL);
   for (step = 0; step < 64; step++) {
     if (state->length > state->offset) {
-      amount = send(c->fd, state->output + state->offset,
-          state->length - state->offset, MSG_NOSIGNAL);
+      if (c->tls != NULL) {
+        ERR_clear_error();
+        amount = SSL_write(c->tls, state->output + state->offset,
+            (int)(state->length - state->offset));
+      } else {
+        amount = send(c->fd, state->output + state->offset,
+            state->length - state->offset, MSG_NOSIGNAL);
+      }
       if (amount > 0) {
         state->offset += (size_t)amount;
         state->write_wait = 0;
@@ -124,6 +153,22 @@ direct_pump(struct connection *c)
           state->length = 0;
         }
         continue;
+      }
+      if (c->tls != NULL) {
+        ssl_error = SSL_get_error(c->tls, (int)amount);
+        if (ssl_error == SSL_ERROR_WANT_READ ||
+            ssl_error == SSL_ERROR_WANT_WRITE) {
+          state->write_wait = ssl_error == SSL_ERROR_WANT_READ
+              ? KORE_EVENT_READ : KORE_EVENT_WRITE;
+          if (ssl_error == SSL_ERROR_WANT_READ)
+            metrics->tls_write_want_read++;
+          else
+            metrics->tls_write_want_write++;
+          metrics->write_pauses++;
+          break;
+        }
+        kore_connection_disconnect(c);
+        return;
       }
       if (amount < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
         state->write_wait = KORE_EVENT_WRITE;
@@ -137,13 +182,39 @@ direct_pump(struct connection *c)
     }
     if (state->read_eof)
       break;
-    amount = recv(c->fd, state->output, sizeof(state->output), 0);
+    if (c->tls != NULL) {
+      ERR_clear_error();
+      amount = SSL_read(c->tls, state->output,
+          (int)sizeof(state->output));
+    } else {
+      amount = recv(c->fd, state->output, sizeof(state->output), 0);
+    }
     if (amount > 0) {
       state->length = (size_t)amount;
       state->read_wait = 0;
       if (state->length > metrics->max_queued)
         metrics->max_queued = state->length;
       continue;
+    }
+    if (c->tls != NULL) {
+      ssl_error = SSL_get_error(c->tls, (int)amount);
+      if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+        state->read_eof = 1;
+        metrics->read_eofs++;
+        break;
+      }
+      if (ssl_error == SSL_ERROR_WANT_READ ||
+          ssl_error == SSL_ERROR_WANT_WRITE) {
+        state->read_wait = ssl_error == SSL_ERROR_WANT_WRITE
+            ? KORE_EVENT_WRITE : KORE_EVENT_READ;
+        if (ssl_error == SSL_ERROR_WANT_WRITE)
+          metrics->tls_read_want_write++;
+        else
+          metrics->tls_read_want_read++;
+        break;
+      }
+      kore_connection_disconnect(c);
+      return;
     }
     if (amount == 0) {
       state->read_eof = 1;
@@ -282,6 +353,76 @@ health(vectis_app *app, vectis_request *request, vectis_response *response,
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
+static void
+check_tls_relay(unsigned short port, const unsigned char *payload)
+{
+  static const char request[] =
+      "GET /direct HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+  SSL_CTX *ctx;
+  SSL *ssl;
+  char response_header[256];
+  unsigned char recvbuf[DIRECT_BUFFER_SIZE];
+  size_t header_used;
+  size_t sent;
+  size_t received;
+  size_t chunk;
+  int fd;
+  int amount;
+  int sndbuf;
+  struct timeval timeout;
+
+  fd = connect_local(port);
+  sndbuf = 1024 * 1024;
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+      sizeof(timeout)) == 0);
+  ctx = SSL_CTX_new(TLS_client_method());
+  assert(ctx != NULL);
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+  ssl = SSL_new(ctx);
+  assert(ssl != NULL);
+  assert(SSL_set_fd(ssl, fd) == 1);
+  assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
+  assert(SSL_connect(ssl) == 1);
+  assert(SSL_write(ssl, request, (int)(sizeof(request) - 1)) ==
+      (int)(sizeof(request) - 1));
+  header_used = 0;
+  response_header[0] = '\0';
+  while (strstr(response_header, "\r\n\r\n") == NULL) {
+    assert(header_used < sizeof(response_header) - 1);
+    assert(SSL_read(ssl, response_header + header_used, 1) == 1);
+    response_header[++header_used] = '\0';
+  }
+  assert(strstr(response_header, " 101 ") != NULL);
+  sent = 0;
+  while (sent < TLS_PAYLOAD_SIZE) {
+    chunk = TLS_PAYLOAD_SIZE - sent;
+    if (chunk > 16384)
+      chunk = 16384;
+    amount = SSL_write(ssl, payload + sent, (int)chunk);
+    assert(amount > 0);
+    sent += (size_t)amount;
+  }
+  assert(SSL_shutdown(ssl) >= 0);
+  usleep(100000u);
+  received = 0;
+  while (received < TLS_PAYLOAD_SIZE) {
+    amount = SSL_read(ssl, recvbuf, sizeof(recvbuf));
+    assert(amount > 0);
+    assert((size_t)amount <= TLS_PAYLOAD_SIZE - received);
+    assert(memcmp(recvbuf, payload + received, (size_t)amount) == 0);
+    received += (size_t)amount;
+  }
+  amount = SSL_read(ssl, recvbuf, sizeof(recvbuf));
+  assert(amount == 0 && SSL_get_error(ssl, amount) == SSL_ERROR_ZERO_RETURN);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
+  assert(close(fd) == 0);
+}
+
 int
 main(void)
 {
@@ -289,6 +430,7 @@ main(void)
       "GET /direct HTTP/1.1\r\nHost: localhost\r\n"
       "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
   vectis_app_config config;
+  vectis_cert_bundle_config certs;
   vectis_route_config route;
   vectis_error error;
   vectis_app *app;
@@ -305,6 +447,8 @@ main(void)
   int fd;
   size_t header_used;
   char ch;
+  char cert_path[128];
+  char key_path[128];
 
   metrics = mmap(NULL, sizeof(*metrics), PROT_READ | PROT_WRITE,
       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -361,7 +505,6 @@ main(void)
   assert(close(fd) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
-  vectis_kore_set_prebody_probe(NULL);
   fprintf(stderr,
       "direct io: events=%u continuations=%u pauses=%u eof=%u "
       "disconnects=%u max_queue=%zu\n",
@@ -369,6 +512,54 @@ main(void)
       metrics->read_eofs, metrics->disconnects, metrics->max_queued);
   assert(metrics->events < 10000);
   assert(metrics->write_pauses > 0);
+  assert(metrics->read_eofs == 1);
+  assert(metrics->disconnects == 1);
+  assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
+
+  memset(metrics, 0, sizeof(*metrics));
+  assert(snprintf(cert_path, sizeof(cert_path),
+      "/tmp/vectis-kore-direct-%ld-cert.pem", (long)getpid()) > 0);
+  assert(snprintf(key_path, sizeof(key_path),
+      "/tmp/vectis-kore-direct-%ld-key.pem", (long)getpid()) > 0);
+  vectis_cert_bundle_config_init(&certs);
+  certs.subject.common_name = "localhost";
+  certs.dns_names = "localhost";
+  certs.output_cert_path = cert_path;
+  certs.output_key_path = key_path;
+  certs.key_bits = 2048u;
+  certs.valid_days = 1L;
+  assert(vectis_cert_generate_bundle(&certs, &error) == VECTIS_OK);
+  port = available_port();
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_MANUAL;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.tls.domain = "localhost";
+  config.tls.certificate_path = cert_path;
+  config.tls.private_key_path = key_path;
+  config.tls.ca_bundle_path = cert_path;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  assert(app->start(app, &error) == VECTIS_OK);
+  check_tls_relay(port, payload);
+  assert(vectis_stop(app, &error) == VECTIS_OK);
+  app->close(app);
+  vectis_kore_set_prebody_probe(NULL);
+  assert(remove(cert_path) == 0);
+  assert(remove(key_path) == 0);
+  fprintf(stderr,
+      "direct TLS io: events=%u continuations=%u pauses=%u eof=%u "
+      "disconnects=%u max_queue=%zu read_want_read=%u "
+      "write_want_write=%u cross_read=%u cross_write=%u\n",
+      metrics->events, metrics->continuations, metrics->write_pauses,
+      metrics->read_eofs, metrics->disconnects, metrics->max_queued,
+      metrics->tls_read_want_read, metrics->tls_write_want_write,
+      metrics->tls_read_want_write, metrics->tls_write_want_read);
+  assert(metrics->write_pauses > 0);
+  assert(metrics->tls_read_want_read > 0);
+  assert(metrics->tls_write_want_write > 0);
   assert(metrics->read_eofs == 1);
   assert(metrics->disconnects == 1);
   assert(metrics->max_queued <= DIRECT_BUFFER_SIZE);
