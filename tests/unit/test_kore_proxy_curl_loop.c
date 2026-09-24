@@ -24,6 +24,9 @@
 
 #define RELAY_BUFFER_SIZE 8192
 #define RELAY_PAYLOAD_SIZE (1024 * 1024)
+#define SSE_CHUNK_SIZE 4096
+#define SSE_BODY_SIZE (1024 * 1024)
+#define HTTP_BODY_BUFFER_SIZE 16384
 
 static const char relay_response[] =
     "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n";
@@ -33,6 +36,7 @@ struct echo_server {
   unsigned short port;
   pthread_t thread;
   SSL_CTX *tls_ctx;
+  volatile int allow_body;
 };
 
 struct loop_metrics {
@@ -67,6 +71,13 @@ struct loop_metrics {
   size_t relay_max_queued;
   size_t relay_max_kore_queued;
   unsigned relay_max_kore_buffers;
+  unsigned http_done;
+  unsigned http_body_pauses;
+  unsigned http_chunks;
+  unsigned http_headers_ready;
+  unsigned http_pump_calls;
+  size_t http_max_kore_queued;
+  unsigned http_max_kore_buffers;
 };
 
 struct proxy_state;
@@ -95,6 +106,16 @@ struct proxy_state {
   size_t response_sent;
   int relay_mode;
   int relay_tls;
+  int http_mode;
+  int http_status_seen;
+  int http_headers_ready;
+  int http_headers_sent;
+  int http_transfer_done;
+  int http_paused;
+  int http_final_sent;
+  size_t http_body_length;
+  unsigned char http_body[HTTP_BODY_BUFFER_SIZE];
+  unsigned char http_frame[HTTP_BODY_BUFFER_SIZE + 32];
   unsigned char to_upstream[RELAY_BUFFER_SIZE];
   size_t to_upstream_offset;
   size_t to_upstream_length;
@@ -114,6 +135,7 @@ static unsigned short upstream_port;
 static unsigned short stalled_port;
 static unsigned short relay_port;
 static unsigned short relay_tls_port;
+static unsigned short sse_port;
 static char tls_cert_path[128];
 static char tls_key_path[128];
 
@@ -125,6 +147,7 @@ static void drive_curl(struct proxy_state *state, curl_socket_t fd, int flags);
 static void curl_event(void *arg, int error);
 static void downstream_event(void *arg, int error);
 static void relay_pump(struct proxy_state *state);
+static void http_pump(struct proxy_state *state);
 
 static void
 relay_continue(void *arg, u_int64_t now)
@@ -267,6 +290,88 @@ relay_send_main(void *arg)
   return NULL;
 }
 
+static void
+send_all(int fd, const void *data, size_t length)
+{
+  const unsigned char *bytes;
+  size_t offset;
+  ssize_t sent;
+
+  bytes = (const unsigned char *)data;
+  offset = 0;
+  while (offset < length) {
+    sent = send(fd, bytes + offset, length - offset, MSG_NOSIGNAL);
+    assert(sent > 0);
+    offset += (size_t)sent;
+  }
+}
+
+static unsigned char
+sse_byte(size_t offset)
+{
+  static const char prefix[] = "data: ";
+  size_t within;
+
+  within = offset % SSE_CHUNK_SIZE;
+  if (within < sizeof(prefix) - 1)
+    return (unsigned char)prefix[within];
+  if (within >= SSE_CHUNK_SIZE - 2)
+    return '\n';
+  return 'x';
+}
+
+static void *
+sse_main(void *arg)
+{
+  static const char header[] =
+      "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+      "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+  struct echo_server *server;
+  unsigned char body[SSE_CHUNK_SIZE];
+  char chunk_header[32];
+  char request[1024];
+  size_t used;
+  size_t offset;
+  ssize_t got;
+  int attempt;
+  int length;
+  int fd;
+
+  server = (struct echo_server *)arg;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0;
+  request[0] = '\0';
+  while (strstr(request, "\r\n\r\n") == NULL) {
+    assert(used < sizeof(request) - 1);
+    got = recv(fd, request + used, sizeof(request) - 1 - used, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  }
+  assert(strstr(request, "GET / HTTP/1.1\r\n") == request);
+  send_all(fd, header, sizeof(header) - 1);
+  for (attempt = 0; attempt < 500 &&
+      __sync_fetch_and_add(&server->allow_body, 0) == 0; attempt++)
+    usleep(10000u);
+  assert(__sync_fetch_and_add(&server->allow_body, 0) == 1);
+  length = snprintf(chunk_header, sizeof(chunk_header), "%x\r\n",
+      SSE_CHUNK_SIZE);
+  assert(length > 0 && (size_t)length < sizeof(chunk_header));
+  for (offset = 0; offset < SSE_BODY_SIZE; offset += sizeof(body)) {
+    size_t i;
+
+    for (i = 0; i < sizeof(body); i++)
+      body[i] = sse_byte(offset + i);
+    send_all(fd, chunk_header, (size_t)length);
+    send_all(fd, body, sizeof(body));
+    send_all(fd, "\r\n", 2);
+  }
+  send_all(fd, "0\r\n\r\n", 5);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
 static void *
 stall_main(void *arg)
 {
@@ -314,6 +419,7 @@ prepare_echo(struct echo_server *server)
   socklen_t size;
 
   server->tls_ctx = NULL;
+  server->allow_body = 0;
   server->listener = socket(AF_INET, SOCK_STREAM, 0);
   assert(server->listener >= 0);
   memset(&addr, 0, sizeof(addr));
@@ -682,6 +788,130 @@ tunnel_event(void *arg, int error)
 }
 
 static void
+http_schedule(struct proxy_state *state)
+{
+  kore_platform_event_schedule(state->downstream->fd, EPOLLOUT, 0,
+      state->downstream);
+  state->downstream_watched = 1;
+}
+
+static size_t
+http_header(char *data, size_t size, size_t count, void *arg)
+{
+  struct proxy_state *state;
+  size_t amount;
+
+  state = (struct proxy_state *)arg;
+  amount = size * count;
+  if (!state->http_status_seen) {
+    assert(amount >= 13);
+    assert(memcmp(data, "HTTP/1.1 200 ", 13) == 0);
+    state->http_status_seen = 1;
+  } else if (amount == 2 && memcmp(data, "\r\n", 2) == 0) {
+    state->http_headers_ready = 1;
+    metrics->http_headers_ready++;
+    http_schedule(state);
+  }
+  return amount;
+}
+
+static size_t
+http_download(char *data, size_t size, size_t count, void *arg)
+{
+  struct proxy_state *state;
+  size_t amount;
+
+  state = (struct proxy_state *)arg;
+  amount = size * count;
+  assert(state->http_headers_ready);
+  assert(amount <= sizeof(state->http_body));
+  if (state->http_body_length != 0) {
+    state->http_paused = 1;
+    metrics->http_body_pauses++;
+    return CURL_WRITEFUNC_PAUSE;
+  }
+  memcpy(state->http_body, data, amount);
+  state->http_body_length = amount;
+  http_schedule(state);
+  return amount;
+}
+
+static void
+http_pump(struct proxy_state *state)
+{
+  static const char response_header[] =
+      "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+      "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+  struct connection *downstream;
+  struct netbuf *buffer;
+  size_t queued;
+  size_t frame_length;
+  unsigned count;
+  int prefix_length;
+
+  downstream = state->downstream;
+  metrics->http_pump_calls++;
+  if (!TAILQ_EMPTY(&downstream->send_queue)) {
+    downstream->evt.flags |= KORE_EVENT_WRITE;
+    assert(net_send_flush(downstream) == KORE_RESULT_OK);
+    if (!TAILQ_EMPTY(&downstream->send_queue)) {
+      http_schedule(state);
+      return;
+    }
+  }
+  if (state->http_headers_ready && !state->http_headers_sent) {
+    net_send_queue(downstream, response_header,
+        sizeof(response_header) - 1);
+    state->http_headers_sent = 1;
+  } else if (state->http_body_length != 0 &&
+      state->http_headers_sent) {
+    prefix_length = snprintf((char *)state->http_frame,
+        sizeof(state->http_frame), "%zx\r\n", state->http_body_length);
+    assert(prefix_length > 0);
+    frame_length = (size_t)prefix_length + state->http_body_length + 2;
+    assert(frame_length <= sizeof(state->http_frame));
+    memcpy(state->http_frame + prefix_length, state->http_body,
+        state->http_body_length);
+    memcpy(state->http_frame + prefix_length + state->http_body_length,
+        "\r\n", 2);
+    net_send_queue(downstream, state->http_frame, frame_length);
+    state->http_body_length = 0;
+    metrics->http_chunks++;
+  } else if (state->http_transfer_done && !state->http_final_sent) {
+    net_send_queue(downstream, "0\r\n\r\n", 5);
+    state->http_final_sent = 1;
+  } else if (state->http_final_sent) {
+    metrics->http_done++;
+    kore_connection_disconnect(downstream);
+    return;
+  }
+  if (!TAILQ_EMPTY(&downstream->send_queue)) {
+    queued = 0;
+    count = 0;
+    TAILQ_FOREACH(buffer, &downstream->send_queue, list) {
+      queued += buffer->b_len - buffer->s_off;
+      count++;
+    }
+    if (queued > metrics->http_max_kore_queued)
+      metrics->http_max_kore_queued = queued;
+    if (count > metrics->http_max_kore_buffers)
+      metrics->http_max_kore_buffers = count;
+    http_schedule(state);
+    return;
+  }
+  if (state->http_paused) {
+    state->http_paused = 0;
+    assert(curl_easy_pause(state->easy, CURLPAUSE_CONT) == CURLE_OK);
+    if (state->http_body_length != 0 || state->http_transfer_done) {
+      http_schedule(state);
+      return;
+    }
+  }
+  kore_platform_disable_read(downstream->fd);
+  state->downstream_watched = 0;
+}
+
+static void
 drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
 {
   CURLMsg *msg;
@@ -695,6 +925,12 @@ drive_curl(struct proxy_state *state, curl_socket_t fd, int flags)
   msg = curl_multi_info_read(state->multi, &pending);
   assert(msg != NULL && msg->msg == CURLMSG_DONE);
   assert(msg->data.result == CURLE_OK);
+  if (state->http_mode) {
+    state->http_transfer_done = 1;
+    state->phase = 1;
+    http_schedule(state);
+    return;
+  }
   assert(curl_easy_getinfo(state->easy, CURLINFO_ACTIVESOCKET,
       &state->upstream_fd) == CURLE_OK);
   assert(state->upstream_fd != CURL_SOCKET_BAD);
@@ -809,6 +1045,13 @@ downstream_event(void *arg, int error)
   connection = (struct connection *)arg;
   state = (struct proxy_state *)connection->hdlr_extra;
   connection->evt.flags = 0;
+  if (state->http_mode) {
+    if (error)
+      kore_connection_disconnect(connection);
+    else
+      http_pump(state);
+    return;
+  }
   if (state->relay_mode) {
     if (connection->tls != NULL)
       metrics->tls_downstream_events++;
@@ -846,6 +1089,7 @@ takeover(struct http_request *req, const void *data, size_t len)
   if (strcmp(req->path, "/curl") != 0 &&
       strcmp(req->path, "/relay") != 0 &&
       strcmp(req->path, "/relay-tls") != 0 &&
+      strcmp(req->path, "/sse") != 0 &&
       strcmp(req->path, "/pending") != 0)
     return KORE_RESULT_OK;
   assert(len == 0 || strcmp(req->path, "/relay") == 0 ||
@@ -854,6 +1098,7 @@ takeover(struct http_request *req, const void *data, size_t len)
   state->relay_mode = strcmp(req->path, "/relay") == 0 ||
       strcmp(req->path, "/relay-tls") == 0;
   state->relay_tls = strcmp(req->path, "/relay-tls") == 0;
+  state->http_mode = strcmp(req->path, "/sse") == 0;
   if (state->relay_mode) {
     int sndbuf;
 
@@ -896,11 +1141,30 @@ takeover(struct http_request *req, const void *data, size_t len)
       state->relay_tls ? "localhost" : "127.0.0.1",
       (unsigned)(strcmp(req->path, "/pending") == 0
           ? stalled_port : (state->relay_tls ? relay_tls_port :
-              (state->relay_mode ? relay_port : upstream_port))))
+              (state->http_mode ? sse_port :
+                  (state->relay_mode ? relay_port : upstream_port)))))
       > 0);
   assert(curl_easy_setopt(state->easy, CURLOPT_URL, url) == CURLE_OK);
-  assert(curl_easy_setopt(state->easy, CURLOPT_CONNECT_ONLY, 1L) == CURLE_OK);
+  if (!state->http_mode)
+    assert(curl_easy_setopt(state->easy, CURLOPT_CONNECT_ONLY,
+        1L) == CURLE_OK);
   assert(curl_easy_setopt(state->easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
+  if (state->http_mode) {
+    assert(curl_easy_setopt(state->easy, CURLOPT_HEADERFUNCTION,
+        http_header) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_HEADERDATA,
+        state) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_WRITEFUNCTION,
+        http_download) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_WRITEDATA,
+        state) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_BUFFERSIZE,
+        8192L) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_HTTP_VERSION,
+        CURL_HTTP_VERSION_1_1) == CURLE_OK);
+    assert(curl_easy_setopt(state->easy, CURLOPT_NOPROXY,
+        "*") == CURLE_OK);
+  }
   if (state->relay_tls) {
     assert(curl_easy_setopt(state->easy, CURLOPT_CAINFO,
         tls_cert_path) == CURLE_OK);
@@ -917,6 +1181,10 @@ takeover(struct http_request *req, const void *data, size_t len)
   }
   assert(curl_multi_add_handle(state->multi, state->easy) == CURLM_OK);
   state->running = 1;
+  if (state->http_mode) {
+    kore_platform_disable_read(state->downstream->fd);
+    state->downstream_watched = 0;
+  }
   drive_curl(state, CURL_SOCKET_TIMEOUT, 0);
   if (state->relay_mode && state->phase == 0) {
     kore_platform_disable_read(state->downstream->fd);
@@ -939,6 +1207,105 @@ health(vectis_app *app, vectis_request *request, vectis_response *response,
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
+}
+
+static void
+sse_read_exact(int fd, void *output, size_t length)
+{
+  unsigned char *bytes;
+  size_t received;
+  ssize_t got;
+
+  bytes = (unsigned char *)output;
+  received = 0;
+  while (received < length) {
+    got = recv(fd, bytes + received, length - received, 0);
+    assert(got > 0);
+    received += (size_t)got;
+  }
+}
+
+static void
+sse_read_line(int fd, char *line, size_t capacity)
+{
+  size_t used;
+
+  used = 0;
+  for (;;) {
+    assert(used < capacity - 1);
+    sse_read_exact(fd, line + used, 1);
+    if (line[used++] == '\n') {
+      line[used] = '\0';
+      return;
+    }
+  }
+}
+
+static void
+check_sse(unsigned short port, struct echo_server *server)
+{
+  static const char request[] =
+      "GET /sse HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  struct sockaddr_in addr;
+  struct timeval timeout;
+  unsigned char body[HTTP_BODY_BUFFER_SIZE];
+  char line[256];
+  char ending[2];
+  size_t received;
+  size_t chunk;
+  size_t i;
+  int saw_type;
+  int saw_chunked;
+  int fd;
+
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  assert(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+      &timeout, sizeof(timeout)) == 0);
+  send_all(fd, request, sizeof(request) - 1);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strstr(line, " 200 ") != NULL);
+  saw_type = 0;
+  saw_chunked = 0;
+  for (;;) {
+    sse_read_line(fd, line, sizeof(line));
+    if (strcmp(line, "\r\n") == 0)
+      break;
+    if (strstr(line, "Content-Type: text/event-stream") != NULL)
+      saw_type = 1;
+    if (strstr(line, "Transfer-Encoding: chunked") != NULL)
+      saw_chunked = 1;
+  }
+  assert(saw_type && saw_chunked);
+  __sync_lock_test_and_set(&server->allow_body, 1);
+  received = 0;
+  for (;;) {
+    sse_read_line(fd, line, sizeof(line));
+    chunk = strtoul(line, NULL, 16);
+    if (chunk == 0)
+      break;
+    assert(chunk <= sizeof(body));
+    assert(chunk <= SSE_BODY_SIZE - received);
+    sse_read_exact(fd, body, chunk);
+    for (i = 0; i < chunk; i++)
+      assert(body[i] == sse_byte(received + i));
+    received += chunk;
+    sse_read_exact(fd, ending, sizeof(ending));
+    assert(memcmp(ending, "\r\n", 2) == 0);
+    usleep(1000u);
+  }
+  assert(received == SSE_BODY_SIZE);
+  sse_read_line(fd, line, sizeof(line));
+  assert(strcmp(line, "\r\n") == 0);
+  assert(recv(fd, ending, sizeof(ending), 0) == 0);
+  assert(close(fd) == 0);
 }
 
 static void
@@ -1138,6 +1505,7 @@ main(void)
   struct echo_server upstream;
   struct echo_server relay;
   struct echo_server relay_tls;
+  struct echo_server sse;
   struct echo_server stalled;
   struct sockaddr_in addr;
   struct timeval timeout;
@@ -1161,10 +1529,12 @@ main(void)
   prepare_echo(&upstream);
   prepare_echo(&relay);
   prepare_echo(&relay_tls);
+  prepare_echo(&sse);
   prepare_echo(&stalled);
   upstream_port = upstream.port;
   relay_port = relay.port;
   relay_tls_port = relay_tls.port;
+  sse_port = sse.port;
   stalled_port = stalled.port;
   assert(snprintf(tls_cert_path, sizeof(tls_cert_path),
       "vectis-curl-loop-%ld-cert.pem", (long)getpid()) > 0);
@@ -1247,6 +1617,11 @@ main(void)
   assert(close(relay_tls.listener) == 0);
   SSL_CTX_free(relay_tls.tls_ctx);
 
+  assert(pthread_create(&sse.thread, NULL, sse_main, &sse) == 0);
+  check_sse(port, &sse);
+  assert(pthread_join(sse.thread, NULL) == 0);
+  assert(close(sse.listener) == 0);
+
   assert(pthread_create(&stalled.thread, NULL, stall_main, &stalled) == 0);
   fd = socket(AF_INET, SOCK_STREAM, 0);
   assert(fd >= 0);
@@ -1324,8 +1699,19 @@ main(void)
   assert(metrics->curl_watch_removed > 0);
   assert(metrics->tunnel_done == 1);
   assert(metrics->downstream_done == 1);
-  assert(metrics->disconnects == 5);
+  assert(metrics->disconnects == 6);
   assert(metrics->relay_done == 3);
+  assert(metrics->http_done == 1);
+  assert(metrics->http_headers_ready == 1);
+  assert(metrics->http_chunks > 0);
+  assert(metrics->http_body_pauses > 0);
+  assert(metrics->http_pump_calls < 5000);
+  assert(metrics->http_max_kore_queued <= HTTP_BODY_BUFFER_SIZE + 32);
+  assert(metrics->http_max_kore_buffers == 1);
+  fprintf(stderr, "SSE loop: chunks=%u pauses=%u pumps=%u max_queue=%lu\n",
+      metrics->http_chunks, metrics->http_body_pauses,
+      metrics->http_pump_calls,
+      (unsigned long)metrics->http_max_kore_queued);
   assert(metrics->downstream_tls_close_notify == 1);
   assert(metrics->downstream_tls_write_pauses > 0);
   assert(metrics->relay_max_queued <= RELAY_BUFFER_SIZE);
