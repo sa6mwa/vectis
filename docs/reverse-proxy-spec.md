@@ -8,7 +8,9 @@ bounded raw relay; a cleartext live test covers coalesced handshake/frame bytes
 and 1 MiB streaming in both directions. Non-`101` replies now use an
 incremental HTTP/1.1 rejection path; a cleartext live test covers a 1 MiB
 fixed-length rejection that starts before the origin finishes sending, chunked
-trailers, and `103` followed by a close-delimited final response. WSS, TLS
+trailers, and `103` followed by a close-delimited final response. A verified
+local WSS route now relays 128 KiB frames in both directions, rejects an
+untrusted peer, and shares its optional CA bundle with ordinary HTTPS. TLS
 retry, backpressure, and shutdown cases need production-route tests.
 Application director hooks and the
 remaining resource limits are still in progress. The
@@ -53,6 +55,7 @@ planned callback phases have the following contract:
 | `path`, `methods`, `path_kind` | Use Vectis route matching and ordering. WebSocket upgrade requires GET. |
 | `target` | Required configured `http://` or `https://` base URL. Its scheme and authority are fixed for the route. |
 | `upstream_http_version` | `auto` by default: prefer HTTP/2 over HTTPS for ordinary HTTP/SSE, with HTTP/1.1 fallback; use HTTP/1.1 for cleartext HTTP and every WebSocket upgrade. `http1` forces HTTP/1.1 for the whole route. Neither mode uses h2c. |
+| `tls_ca_pem` | Optional copied PEM CA bundle for HTTPS and WSS origin verification. Omit it to use libcurl's default trust store. The bundle replaces that store for the route; peer and hostname checks stay enabled. Limit: 256 KiB. |
 | `auth` or `preflight(in)` | Optional admission decision at headers time. It may proxy or send a local response before any upstream transfer. It sees headers and route metadata only; it cannot consume the body. |
 | `rewrite(in, out)` | Optional synchronous, borrowed callback. `in` is immutable inbound metadata; `out` is sanitized mutable outbound metadata. It may select an explicitly configured target, change method/path/query/Host and edit end-to-end headers. |
 | `modify_response(response)` | Optional status/header decision after final upstream headers and before downstream headers are committed, for ordinary HTTP/SSE and non-`101` WebSocket rejections. A successful WebSocket `101` bypasses this hook so the validated handshake cannot be altered. The hook does not receive a materialized body. The transport owns framing fields and validates bodyless final statuses. |
@@ -112,8 +115,8 @@ literal pattern cannot contain percent escapes under current route
 registration rules, so escaped-path fallback depends on a parameter or regex
 pattern. Prove this behavior, including encoded percent and colon, mixed-case
 escapes, and overlaps with every existing route kind before fixing the public
-contract. The current code has no public proxy registration or production
-admission path; the internal marker-route probe only tests this candidate.
+contract. Public proxy registration and production admission now use this
+fallback; the remaining overlap and encoded-path cases still need verification.
 
 This follows Go's newer `Rewrite(in, out)` model rather than copying the
 behavior of its older `Director`: sanitize first, then let application code

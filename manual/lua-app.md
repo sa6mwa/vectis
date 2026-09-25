@@ -311,11 +311,15 @@ request and response bodies through bounded chunks, including SSE responses.
 It accepts `path`, `target`, optional `method` or `methods`, `path_kind`
 (`literal`, `params`, or `regex`), `alternate_targets`,
 `upstream_http_version` (`auto` or `http1`), `connect_timeout_ms`,
-`idle_timeout_ms`, `total_timeout_ms`, and `buffer_limit_bytes`. Omitted methods
+`idle_timeout_ms`, `total_timeout_ms`, `buffer_limit_bytes`, and optional
+`tls_ca_pem` for HTTPS and WSS upstream verification. Omitted methods
 permit all supported HTTP methods. Targets must be HTTP or HTTPS base URLs;
 Vectis copies them at registration. Zero-valued timeouts and buffer limit use
 the C API defaults. The upstream HTTP version defaults to `auto`, which prefers
 HTTP/2 over HTTPS and uses HTTP/1.1 for cleartext.
+`tls_ca_pem` is copied at registration, accepts up to 256 KiB of PEM text,
+and replaces libcurl's default CA bundle for that route. Peer and hostname
+verification remain enabled. Omit it to use the default trust store.
 
 ```lua
 assert(app:proxy({

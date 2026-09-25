@@ -666,6 +666,8 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
       upload_config.trailers = vectis_proxy_upload_curl_trailers;
   }
   if (easy == NULL ||
+      vectis_proxy_curl_set_ca(easy, route->tls_ca_pem,
+                               route->tls_ca_pem_length, &error) != VECTIS_OK ||
       vectis_proxy_http_upstream_init(
           &state->upstream, easy, route->targets[0], state->request_target,
           method_name, state->request_headers, route->buffer_limit_bytes,

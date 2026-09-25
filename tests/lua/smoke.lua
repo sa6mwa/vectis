@@ -1022,12 +1022,23 @@ do
     alternate_targets = {false},
   })
   assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "https://localhost:9",
+    tls_ca_pem = "bad\0cert",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "https://localhost:9",
+    tls_ca_pem = "",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
   assert(server:proxy({
     path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
     alternate_targets = {"https://example.invalid"},
     methods = {"GET", "POST"}, path_kind = "literal",
     upstream_http_version = "http1", buffer_limit_bytes = 16384,
     connect_timeout_ms = 1000, idle_timeout_ms = 3000,
+    tls_ca_pem = "-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----\n",
   }) == true)
   assert(server:route_count() == 1)
 end

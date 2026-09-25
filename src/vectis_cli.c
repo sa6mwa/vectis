@@ -11449,6 +11449,7 @@ static int vectis_lua_app_proxy(lua_State *lua) {
   const char *version;
   const char *kind;
   size_t count;
+  size_t ca_length;
   size_t i;
 
   app = vectis_lua_app_app(lua, 1);
@@ -11496,6 +11497,24 @@ static int vectis_lua_app_proxy(lua_State *lua) {
       vectis_lua_table_long(lua, 2, "total_timeout_ms", 0L);
   config.buffer_limit_bytes =
       vectis_lua_table_size(lua, 2, "buffer_limit_bytes", 0u);
+
+  lua_getfield(lua, 2, "tls_ca_pem");
+  if (!lua_isnil(lua, -1)) {
+    if (lua_type(lua, -1) != LUA_TSTRING) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "proxy tls_ca_pem must be PEM text");
+    }
+    config.tls_ca_pem = lua_tolstring(lua, -1, &ca_length);
+    if (ca_length == 0u || ca_length > 262144u ||
+        memchr(config.tls_ca_pem, '\0', ca_length) != NULL) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "proxy tls_ca_pem must contain 1 to 262144 non-NUL bytes");
+    }
+  }
+  lua_pop(lua, 1);
 
   lua_getfield(lua, 2, "alternate_targets");
   if (!lua_isnil(lua, -1)) {

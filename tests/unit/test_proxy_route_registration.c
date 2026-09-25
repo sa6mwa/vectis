@@ -16,6 +16,8 @@ static vectis_app *new_app(vectis_error *error) {
 static void test_route_ownership_and_selection(void) {
   char primary[] = "https://upstream.test/base";
   char alternate[] = "http://backup.test/other";
+  char ca_pem[] = "-----BEGIN CERTIFICATE-----\nexample\n"
+                  "-----END CERTIFICATE-----\n";
   const char *alternates[1];
   vectis_proxy_route_config config;
   vectis_proxy_route_data *data;
@@ -37,10 +39,12 @@ static void test_route_ownership_and_selection(void) {
   config.target = primary;
   config.alternate_targets = alternates;
   config.alternate_target_count = 1u;
+  config.tls_ca_pem = ca_pem;
   assert(app->proxy_route(app, &config, &error) == VECTIS_OK);
   assert(app->route_count(app) == 1u);
   primary[8] = 'X';
   alternate[7] = 'X';
+  ca_pem[27] = 'X';
 
   request = vectis_internal_request_new(&error);
   response = vectis_internal_response_new(&error);
@@ -61,6 +65,10 @@ static void test_route_ownership_and_selection(void) {
   assert(data->idle_timeout_ms == 60000L);
   assert(data->total_timeout_ms == 0L);
   assert(data->buffer_limit_bytes == 16384u);
+  assert(data->tls_ca_pem != NULL);
+  assert(data->tls_ca_pem[27] == '\n');
+  assert(strstr(data->tls_ca_pem, "example") != NULL);
+  assert(data->tls_ca_pem_length == strlen(data->tls_ca_pem));
   assert(strcmp(vectis_request_path_param(request, "id"), "a") == 0);
 
   vectis_internal_request_cleanup(request);
@@ -116,6 +124,9 @@ static void test_invalid_targets(void) {
   config.buffer_limit_bytes = 4096u;
   assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_INVALID);
   config.buffer_limit_bytes = 0u;
+  config.tls_ca_pem = "";
+  assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_INVALID);
+  config.tls_ca_pem = NULL;
   assert(app->proxy_route(app, &config, &error) == VECTIS_OK);
   assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_CONFLICT);
   app->close(app);

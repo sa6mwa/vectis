@@ -38,6 +38,11 @@ Major groups:
 - WebSocket routes: `vectis_websocket_route_config`,
   `vectis_register_websocket()`, and callback-borrowed
   `vectis_websocket_send_*()` helpers.
+- Reverse proxy routes: `vectis_proxy_route_config` in
+  `include/vectis/proxy.h` registers bounded streaming HTTP, SSE, and
+  WebSocket forwarding. `tls_ca_pem` optionally supplies a copied CA bundle
+  for verified HTTPS and WSS origins; without it, libcurl uses its default
+  trust store. The public interface compiles as C89.
 - TLS/server hardening: `vectis_tls_config` supports manual/ACME material,
   client CA verification, protocol version selection, and OpenSSL cipher lists;
   `vectis_server_config` covers listener backlog, processing budget, and HSTS

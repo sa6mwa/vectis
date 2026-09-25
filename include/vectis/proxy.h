@@ -49,6 +49,12 @@ struct vectis_proxy_route_config {
   /* Zero uses a 16 KiB per-direction transport chunk limit. Allowed range is
    * 8 KiB through 1 MiB. Header limits are separate. */
   size_t buffer_limit_bytes;
+  /* Optional PEM CA bundle for verifying HTTPS and WSS upstream peers.
+   * NULL uses libcurl's configured default trust store. The PEM text is
+   * borrowed until registration returns, then copied. It replaces libcurl's
+   * default CA bundle for this route; peer and hostname checks remain on.
+   * A nonempty bundle may contain at most 256 KiB of PEM text. */
+  const char *tls_ca_pem;
 };
 
 /** Set the documented zero-value defaults. NULL is ignored. */

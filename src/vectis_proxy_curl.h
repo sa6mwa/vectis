@@ -8,6 +8,11 @@ typedef struct vectis_proxy_curl_transfer vectis_proxy_curl_transfer;
 typedef void (*vectis_proxy_curl_done_fn)(CURL *easy, CURLcode result,
                                           void *userdata);
 
+/* Copy a route-owned PEM bundle into an easy before submission. NULL leaves
+ * libcurl's default trust store and peer/hostname verification untouched. */
+vectis_status vectis_proxy_curl_set_ca(CURL *easy, char *pem, size_t pem_length,
+                                       vectis_error *error);
+
 /* Submission takes ownership of easy only on success. Completion invokes
  * done while easy remains valid, then closes it. Cancellation never invokes
  * done. All calls run on the owning Kore worker. */

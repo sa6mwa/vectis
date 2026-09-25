@@ -41,7 +41,8 @@ int main(void) {
   vectis_app_config_init(&config);
   vectis_proxy_route_config_init(&proxy_config);
   if (proxy_config.path != NULL ||
-      proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO) {
+      proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO ||
+      proxy_config.tls_ca_pem != NULL) {
     return 11;
   }
   if (config.app_name == NULL || strcmp(config.app_name, "vectis") != 0) {

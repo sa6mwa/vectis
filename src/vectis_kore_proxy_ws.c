@@ -796,7 +796,9 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
                        route->connect_timeout_ms) != CURLE_OK ||
       curl_easy_setopt(easy, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2) !=
           CURLE_OK ||
-      curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) != CURLE_OK) {
+      curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) != CURLE_OK ||
+      vectis_proxy_curl_set_ca(easy, route->tls_ca_pem,
+                               route->tls_ca_pem_length, &error) != VECTIS_OK) {
     curl_easy_cleanup(easy);
     vectis_kore_ws_free(state);
     return vectis_kore_ws_reject(request, 500);

@@ -53,6 +53,32 @@ static size_t vectis_proxy_curl_active;
 static int vectis_proxy_curl_ready;
 static int vectis_proxy_curl_shutting_down;
 
+vectis_status vectis_proxy_curl_set_ca(CURL *easy, char *pem, size_t pem_length,
+                                       vectis_error *error) {
+  struct curl_blob blob;
+
+  if (easy == NULL || (pem == NULL && pem_length != 0u) ||
+      (pem != NULL && pem_length == 0u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "invalid proxy TLS CA bundle configuration");
+    return VECTIS_ERR_INVALID;
+  }
+  if (pem == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  blob.data = pem;
+  blob.len = pem_length;
+  blob.flags = CURL_BLOB_COPY;
+  if (curl_easy_setopt(easy, CURLOPT_CAINFO_BLOB, &blob) != CURLE_OK) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to configure proxy TLS CA bundle");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static void vectis_proxy_curl_drive(vectis_proxy_curl_pool *pool,
                                     curl_socket_t fd, int flags);
 

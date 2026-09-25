@@ -11,6 +11,8 @@ typedef struct vectis_proxy_route_data {
   long idle_timeout_ms;
   long total_timeout_ms;
   size_t buffer_limit_bytes;
+  char *tls_ca_pem;
+  size_t tls_ca_pem_length;
 } vectis_proxy_route_data;
 
 /* The selector compares this function pointer with the winning route handler

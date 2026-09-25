@@ -15,6 +15,7 @@
 #define VECTIS_PROXY_MIN_BUFFER_LIMIT_BYTES 8192u
 #define VECTIS_PROXY_MAX_BUFFER_LIMIT_BYTES 1048576u
 #define VECTIS_PROXY_MAX_TARGETS 16u
+#define VECTIS_PROXY_MAX_CA_PEM_BYTES 262144u
 
 static char *vectis_proxy_copy_string(const char *value) {
   char *copy;
@@ -40,6 +41,7 @@ static void vectis_proxy_route_data_free(void *userdata) {
     free(data->targets[i]);
   }
   free(data->targets);
+  free(data->tls_ca_pem);
   free(data);
 }
 
@@ -168,6 +170,7 @@ vectis_register_proxy_route(vectis_app *app,
   vectis_status status;
   size_t i;
   size_t count;
+  size_t ca_pem_length;
   const char *target;
 
   if (app == NULL || app->impl == NULL || config == NULL) {
@@ -197,6 +200,15 @@ vectis_register_proxy_route(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "proxy timeouts or buffer_limit_bytes are invalid");
     return VECTIS_ERR_INVALID;
+  }
+  ca_pem_length = 0u;
+  if (config->tls_ca_pem != NULL) {
+    ca_pem_length = strlen(config->tls_ca_pem);
+    if (ca_pem_length == 0u || ca_pem_length > VECTIS_PROXY_MAX_CA_PEM_BYTES) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "proxy tls_ca_pem must contain 1 to 262144 bytes");
+      return VECTIS_ERR_INVALID;
+    }
   }
   count = config->alternate_target_count + 1u;
   data = (vectis_proxy_route_data *)calloc(1u, sizeof(*data));
@@ -241,6 +253,16 @@ vectis_register_proxy_route(vectis_app *app,
   data->buffer_limit_bytes = config->buffer_limit_bytes != 0u
                                  ? config->buffer_limit_bytes
                                  : VECTIS_PROXY_DEFAULT_BUFFER_LIMIT_BYTES;
+  if (config->tls_ca_pem != NULL) {
+    data->tls_ca_pem_length = ca_pem_length;
+    data->tls_ca_pem = vectis_proxy_copy_string(config->tls_ca_pem);
+    if (data->tls_ca_pem == NULL) {
+      vectis_proxy_route_data_free(data);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy proxy TLS CA bundle");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
   route = vectis_route(VECTIS_HTTP_ANY, config->path, vectis_proxy_route_marker,
                        data);
   route.methods = config->methods != VECTIS_HTTP_METHODS_NONE
