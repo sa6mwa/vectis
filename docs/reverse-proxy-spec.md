@@ -2,11 +2,13 @@
 
 Status: architecture selected for implementation, 2026-09-25. Route
 registration, target construction, worker curl integration, and bounded live
-HTTP/SSE request and response streaming are implemented. The WebSocket
-connect-only ownership and opening-handshake validator are implemented, but
-the production route still returns `501` after a valid upgrade request;
-WebSocket relay, application director hooks, and the remaining resource limits
-are still in progress. The
+HTTP/SSE request and response streaming are implemented. A successful
+HTTP/1.1 WebSocket upgrade now uses a retained connect-only transfer and a
+bounded raw relay; a cleartext live test covers coalesced handshake/frame bytes
+and 1 MiB streaming in both directions. Non-`101` upstream replies still need
+the incremental HTTP rejection path, and WSS, TLS retry, backpressure, and
+shutdown cases need production-route tests. Application director hooks and the
+remaining resource limits are still in progress. The
 [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
 

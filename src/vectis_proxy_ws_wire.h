@@ -28,4 +28,11 @@ vectis_proxy_ws_head_result vectis_proxy_ws_wire_response_head(
     const unsigned char *data, size_t length, size_t *head_length,
     unsigned *status, vectis_proxy_headers *headers, const char **reason);
 
+/* Rebuild a validated 101 response with only end-to-end upstream fields.
+ * Upgrade and Connection are regenerated after sanitization. */
+vectis_status
+vectis_proxy_ws_wire_upgrade_response(const vectis_proxy_headers *validated,
+                                      char **wire, size_t *wire_length,
+                                      vectis_error *error);
+
 #endif

@@ -1,4 +1,5 @@
 #include "vectis_kore_proxy.h"
+#include "vectis_kore_proxy_ws.h"
 
 #include "vectis_internal.h"
 #include "vectis_proxy_curl.h"
@@ -533,16 +534,26 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   }
   if (head.websocket_upgrade) {
     int valid_ws;
+    int result;
 
     valid_ws = vectis_proxy_ws_request_valid(method, &inbound, &reason);
+    if (valid_ws && (head.chunked || head.has_content_length))
+      valid_ws = 0;
+    if (valid_ws) {
+      result =
+          vectis_kore_proxy_ws_start(request, surplus, surplus_length, app,
+                                     route_request, route, &inbound, &outbound);
+      vectis_proxy_headers_cleanup(&outbound);
+      vectis_proxy_headers_cleanup(&inbound);
+      if (result != KORE_RESULT_RETRY)
+        vectis_internal_request_free(route_request);
+      return result;
+    }
     vectis_proxy_headers_cleanup(&outbound);
     vectis_proxy_headers_cleanup(&inbound);
     vectis_internal_request_free(route_request);
-    if (!valid_ws)
-      return vectis_kore_proxy_reject(request, 400,
-                                      "invalid proxy WebSocket handshake\n");
-    return vectis_kore_proxy_reject(request, 501,
-                                    "proxy request mode pending\n");
+    return vectis_kore_proxy_reject(request, 400,
+                                    "invalid proxy WebSocket handshake\n");
   }
   state = (vectis_kore_proxy_state *)calloc(1u, sizeof(*state));
   if (state == NULL) {
@@ -698,6 +709,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
 void vectis_kore_proxy_worker_cleanup(void) {
   vectis_kore_proxy_state *state;
 
+  vectis_kore_proxy_ws_worker_cleanup();
   for (state = vectis_kore_proxy_states; state != NULL; state = state->next) {
     if (state->wake_timer != NULL) {
       kore_timer_remove(state->wake_timer);

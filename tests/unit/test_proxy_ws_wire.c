@@ -124,9 +124,42 @@ static void test_head_limits(void) {
   free(oversized);
 }
 
+static void test_upgrade_response(void) {
+  vectis_proxy_headers upstream;
+  vectis_error error;
+  char *wire;
+  size_t length;
+
+  vectis_proxy_headers_init(&upstream);
+  assert(vectis_proxy_headers_add(&upstream, "Connection", "Upgrade, X-Hop") ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_headers_add(&upstream, "Upgrade", "websocket") ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_headers_add(&upstream, "Sec-WebSocket-Accept",
+                                  "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_headers_add(&upstream, "Sec-WebSocket-Protocol",
+                                  "chat") == VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_headers_add(&upstream, "X-Hop", "discard") ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_headers_add(&upstream, "Set-Cookie", "session=1") ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_ws_wire_upgrade_response(&upstream, &wire, &length,
+                                               &error) == VECTIS_OK);
+  assert(length == strlen(wire));
+  assert(strstr(wire, "HTTP/1.1 101 Switching Protocols\r\n") == wire);
+  assert(strstr(wire, "Connection: Upgrade\r\nUpgrade: websocket\r\n") != NULL);
+  assert(strstr(wire, "Sec-WebSocket-Protocol: chat\r\n") != NULL);
+  assert(strstr(wire, "Set-Cookie: session=1\r\n") != NULL);
+  assert(strstr(wire, "X-Hop:") == NULL);
+  free(wire);
+  vectis_proxy_headers_cleanup(&upstream);
+}
+
 int main(void) {
   test_request();
   test_response();
   test_head_limits();
+  test_upgrade_response();
   return 0;
 }

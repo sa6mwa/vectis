@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -21,6 +22,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   unsigned selection;
   unsigned parsed_status;
   size_t parsed_length;
+  size_t wire_length;
+  char *wire;
+  vectis_error error;
 
   if (size == 0u || size > sizeof(value))
     return 0;
@@ -62,9 +66,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   vectis_proxy_headers_init(&parsed);
   head_result = vectis_proxy_ws_wire_response_head(
       data + 1u, size - 1u, &parsed_length, &parsed_status, &parsed, NULL);
-  if (head_result == VECTIS_PROXY_WS_HEAD_COMPLETE && parsed_status == 101u)
+  if (head_result == VECTIS_PROXY_WS_HEAD_COMPLETE && parsed_status == 101u) {
     (void)vectis_proxy_ws_response_valid(&request, parsed_status, &parsed,
                                          NULL);
+    wire = NULL;
+    if (vectis_proxy_ws_wire_upgrade_response(&parsed, &wire, &wire_length,
+                                              &error) == VECTIS_OK)
+      free(wire);
+  }
   vectis_proxy_headers_cleanup(&parsed);
   vectis_proxy_headers_cleanup(&response);
   vectis_proxy_headers_cleanup(&request);

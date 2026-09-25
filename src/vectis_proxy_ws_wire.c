@@ -290,3 +290,101 @@ invalid:
   *status = 0u;
   return VECTIS_PROXY_WS_HEAD_INVALID;
 }
+
+static size_t
+vectis_proxy_ws_wire_field_count(const vectis_proxy_headers *headers,
+                                 const char *name) {
+  size_t count;
+  size_t i;
+
+  count = 0u;
+  for (i = 0u; i < headers->count; ++i) {
+    if (strcasecmp(headers->fields[i].name, name) == 0)
+      ++count;
+  }
+  return count;
+}
+
+vectis_status
+vectis_proxy_ws_wire_upgrade_response(const vectis_proxy_headers *validated,
+                                      char **wire, size_t *wire_length,
+                                      vectis_error *error) {
+  static const char prefix[] = "HTTP/1.1 101 Switching Protocols\r\n"
+                               "Connection: Upgrade\r\nUpgrade: websocket\r\n";
+  static const char *const selected[] = {"Sec-WebSocket-Accept",
+                                         "Sec-WebSocket-Protocol",
+                                         "Sec-WebSocket-Extensions"};
+  vectis_proxy_headers sanitized;
+  size_t capacity;
+  size_t used;
+  size_t i;
+  size_t n;
+  char *buffer;
+
+  if (wire != NULL)
+    *wire = NULL;
+  if (wire_length != NULL)
+    *wire_length = 0u;
+  if (validated == NULL || wire == NULL || wire_length == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "invalid WebSocket response writer input");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_proxy_headers_init(&sanitized);
+  if (vectis_proxy_headers_sanitize_response(validated, &sanitized) !=
+      VECTIS_PROXY_HEADER_OK) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "invalid WebSocket response hop-by-hop fields");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 0u; i < sizeof(selected) / sizeof(selected[0]); ++i) {
+    if (vectis_proxy_ws_wire_field_count(validated, selected[i]) !=
+        vectis_proxy_ws_wire_field_count(&sanitized, selected[i])) {
+      vectis_proxy_headers_cleanup(&sanitized);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "WebSocket negotiation field was nominated hop-by-hop");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  capacity = sizeof(prefix) + 2u;
+  for (i = 0u; i < sanitized.count; ++i) {
+    n = strlen(sanitized.fields[i].name) + strlen(sanitized.fields[i].value) +
+        4u;
+    if (n > VECTIS_PROXY_WS_WIRE_LIMIT - capacity) {
+      vectis_proxy_headers_cleanup(&sanitized);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "WebSocket response head exceeds limit");
+      return VECTIS_ERR_INVALID;
+    }
+    capacity += n;
+  }
+  buffer = (char *)malloc(capacity);
+  if (buffer == NULL) {
+    vectis_proxy_headers_cleanup(&sanitized);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate WebSocket response head");
+    return VECTIS_ERR_NOMEM;
+  }
+  used = sizeof(prefix) - 1u;
+  memcpy(buffer, prefix, used);
+  for (i = 0u; i < sanitized.count; ++i) {
+    n = strlen(sanitized.fields[i].name);
+    memcpy(buffer + used, sanitized.fields[i].name, n);
+    used += n;
+    memcpy(buffer + used, ": ", 2u);
+    used += 2u;
+    n = strlen(sanitized.fields[i].value);
+    memcpy(buffer + used, sanitized.fields[i].value, n);
+    used += n;
+    memcpy(buffer + used, "\r\n", 2u);
+    used += 2u;
+  }
+  memcpy(buffer + used, "\r\n", 2u);
+  used += 2u;
+  buffer[used] = '\0';
+  *wire = buffer;
+  *wire_length = used;
+  vectis_proxy_headers_cleanup(&sanitized);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
