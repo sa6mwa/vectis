@@ -781,10 +781,24 @@ WebSocket payload bytes. The ASan run passed the same 256 MiB aggregate
 ceiling and teardown checks. This exercises the shared sixteen-slot admission
 cap under mixed load; it does not establish a deployment-wide worker budget.
 
-The full admission reserve still needs mixed HTTP/1.1 and HTTP/2 uploads,
-simultaneous bidirectional WebSocket pressure, both idle caches, maximum
-permitted headers, CA bundles, and client identities, and a deployment
-worker-memory budget.
+The upload-pressure variant holds sixteen HTTP/2 POSTs, or eight HTTP/2 and
+eight HTTP/1.1 POSTs in the same worker, against origins that stop reading
+after the first request-body chunk. Each client generates a 64 MiB logical
+body and stops sending on backpressure, without buffering that body in the
+test process. Every origin receives body bytes before its client finishes.
+The test samples the four-second worker RSS plateau, verifies `503` admission
+without another origin connection, and checks FD recovery. In one x86-64
+Linux Debug mixed-pool run with 1 MiB route chunk limits, worker RSS was
+7,464 KiB at the preflight baseline, 41,896 KiB at headers and through the
+sampled plateau, and 40,808 KiB after teardown; clients had sent 119,666,556
+bytes in aggregate while the origins remained stalled. Both upload variants
+also passed under ASan's 256 MiB aggregate ceiling. This measures a stalled
+upload profile, not the allocator maximum for every concurrent workload.
+
+The full admission reserve still needs combined upload and download pressure,
+both idle caches, maximum permitted headers, CA bundles and client identities,
+and a deployment worker-memory budget. The bidirectional WebSocket case is
+covered separately above.
 The existing 16-slot exchange cap remains provisional until that gate is
 complete.
 
