@@ -747,6 +747,20 @@ later plateau, and 18,144 KiB after teardown. The executable ceiling is
 slow-reader test, not a measurement of the exact occupancy of each relay
 buffer or a bound for every active WebSocket workload.
 
+The mixed production-route smoke holds eight certificate-verified HTTP/2
+slow-reader downloads and eight cleartext WebSocket tunnels in the same worker.
+Each WebSocket origin sends one 4 MiB frame to a client that stops reading;
+the HTTP/2 origins offer 64 MiB each with 1 MiB route chunk limits. The test
+checks both overflow request types return `503` without reaching either
+origin, samples the four-second RSS plateau, and checks descriptor recovery.
+On the pinned x86-64 Linux Debug run, worker RSS was 7,460 KiB before the
+first connection, 35,908 KiB at the sampled peak and later plateau, and
+19,992 KiB after teardown. Worker FDs were 15 / 49 / 17 before, during, and
+after. The origins produced 43,024,384 HTTP/2 bytes and 33,554,432
+WebSocket payload bytes. The ASan run passed the same 256 MiB aggregate
+ceiling and teardown checks. This exercises the shared sixteen-slot admission
+cap under mixed load; it does not establish a deployment-wide worker budget.
+
 The full admission reserve still needs mixed HTTP/1.1 and HTTP/2 uploads,
 simultaneous bidirectional WebSocket pressure, both idle caches, maximum
 permitted headers and CA bundles, and a deployment worker-memory budget.

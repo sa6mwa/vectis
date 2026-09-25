@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <nghttp2/nghttp2.h>
@@ -24,7 +25,9 @@
 #include <vectis/vectis.h>
 
 #define TEST_CONNECTIONS 16
+#define TEST_MIXED_CONNECTIONS (TEST_CONNECTIONS / 2)
 #define TEST_BODY_SIZE (64u * 1024u * 1024u)
+#define TEST_WS_FRAME_SIZE (4u * 1024u * 1024u)
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define TEST_ASAN_ENABLED 1
@@ -53,7 +56,19 @@ typedef struct test_origin {
   unsigned short port;
   pthread_t thread;
   test_probe *probe;
+  int connections;
 } test_origin;
+
+typedef struct test_ws_origin {
+  int listener;
+  int clients[TEST_MIXED_CONNECTIONS];
+  unsigned short port;
+  pthread_t thread;
+  volatile unsigned accepted;
+  volatile size_t produced;
+  volatile int producer_done;
+  volatile int release;
+} test_ws_origin;
 
 typedef struct test_connection {
   test_origin *origin;
@@ -318,7 +333,7 @@ static void *origin_main(void *userdata) {
   int i;
 
   origin = (test_origin *)userdata;
-  for (i = 0; i < TEST_CONNECTIONS; ++i) {
+  for (i = 0; i < origin->connections; ++i) {
     connection = (test_connection *)calloc(1u, sizeof(*connection));
     assert(connection != NULL);
     connection->origin = origin;
@@ -327,7 +342,7 @@ static void *origin_main(void *userdata) {
     (void)__sync_add_and_fetch(&origin->probe->accepted, 1u);
     assert(pthread_create(&threads[i], NULL, connection_main, connection) == 0);
   }
-  for (i = 0; i < TEST_CONNECTIONS; ++i)
+  for (i = 0; i < origin->connections; ++i)
     assert(pthread_join(threads[i], NULL) == 0);
   return NULL;
 }
@@ -368,9 +383,99 @@ static void send_all(int fd, const char *bytes, size_t length) {
   }
 }
 
-static int connect_app(unsigned short port) {
-  static const char request[] =
+static void *ws_origin_main(void *userdata) {
+  static const char response[] =
+      "HTTP/1.1 101 Switching Protocols\r\n"
+      "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+      "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+  static const unsigned char frame_header[] = {0x82u, 0x7fu, 0u,    0u, 0u,
+                                               0u,    0u,    0x40u, 0u, 0u};
+  test_ws_origin *origin;
+  char request[2048];
+  char payload[4096];
+  size_t offsets[TEST_MIXED_CONNECTIONS];
+  const char *data;
+  size_t length;
+  size_t used;
+  ssize_t amount;
+  int progress;
+  int active;
+  int idle;
+  int i;
+
+  origin = (test_ws_origin *)userdata;
+  memset(payload, 'w', sizeof(payload));
+  memset(offsets, 0, sizeof(offsets));
+  for (i = 0; i < TEST_MIXED_CONNECTIONS; ++i) {
+    origin->clients[i] = accept(origin->listener, NULL, NULL);
+    assert(origin->clients[i] >= 0);
+    used = 0u;
+    request[0] = '\0';
+    while (strstr(request, "\r\n\r\n") == NULL) {
+      assert(used < sizeof(request) - 1u);
+      amount = recv(origin->clients[i], request + used,
+                    sizeof(request) - used - 1u, 0);
+      assert(amount > 0);
+      used += (size_t)amount;
+      request[used] = '\0';
+    }
+    assert(strstr(request, "GET /proxy/ws HTTP/1.1\r\n") == request);
+    send_all(origin->clients[i], response, sizeof(response) - 1u);
+    (void)__sync_add_and_fetch(&origin->accepted, 1u);
+  }
+  idle = 0;
+  while (idle < 200) {
+    active = 0;
+    progress = 0;
+    for (i = 0; i < TEST_MIXED_CONNECTIONS; ++i) {
+      if (offsets[i] == sizeof(frame_header) + TEST_WS_FRAME_SIZE)
+        continue;
+      active = 1;
+      if (offsets[i] < sizeof(frame_header)) {
+        data = (const char *)frame_header + offsets[i];
+        length = sizeof(frame_header) - offsets[i];
+      } else {
+        data = payload;
+        length = sizeof(payload);
+        if (length > sizeof(frame_header) + TEST_WS_FRAME_SIZE - offsets[i])
+          length = sizeof(frame_header) + TEST_WS_FRAME_SIZE - offsets[i];
+      }
+      amount = send(origin->clients[i], data, length, MSG_DONTWAIT);
+      if (amount > 0) {
+        if (offsets[i] >= sizeof(frame_header))
+          (void)__sync_add_and_fetch(&origin->produced, (size_t)amount);
+        offsets[i] += (size_t)amount;
+        progress = 1;
+      } else {
+        assert(amount == -1);
+        assert(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
+      }
+    }
+    if (!active)
+      break;
+    if (progress)
+      idle = 0;
+    else {
+      ++idle;
+      usleep(1000u);
+    }
+  }
+  (void)__sync_lock_test_and_set(&origin->producer_done, 1);
+  while (__sync_fetch_and_add(&origin->release, 0) == 0)
+    usleep(1000u);
+  for (i = 0; i < TEST_MIXED_CONNECTIONS; ++i)
+    assert(close(origin->clients[i]) == 0);
+  return NULL;
+}
+
+static int connect_app(unsigned short port, int websocket) {
+  static const char http_request[] =
       "GET /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char ws_request[] =
+      "GET /proxy/ws HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+      "Sec-WebSocket-Version: 13\r\n"
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
   struct sockaddr_in address;
   struct timeval timeout;
   int receive_buffer;
@@ -397,7 +502,10 @@ static int connect_app(unsigned short port) {
   timeout.tv_usec = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
          0);
-  send_all(fd, request, sizeof(request) - 1u);
+  if (websocket)
+    send_all(fd, ws_request, sizeof(ws_request) - 1u);
+  else
+    send_all(fd, http_request, sizeof(http_request) - 1u);
   return fd;
 }
 
@@ -418,6 +526,7 @@ static void read_head(int fd, char *head, size_t capacity) {
 
 int main(void) {
   test_origin origin;
+  test_ws_origin ws_origin;
   test_probe *probe;
   vectis_proxy_route_config proxy;
   vectis_app_config config;
@@ -431,6 +540,7 @@ int main(void) {
   unsigned short app_port;
   char *ca_pem;
   char target[128];
+  char ws_target[128];
   char head[2048];
   int clients[TEST_CONNECTIONS];
   int overflow;
@@ -446,8 +556,12 @@ int main(void) {
   size_t generated_after_warmup;
   size_t generated_later;
   size_t buffer_limit;
+  int mixed;
+  int h2_connections;
 
   (void)signal(SIGPIPE, SIG_IGN);
+  mixed = getenv("VECTIS_PROXY_MIXED_MEMORY") != NULL;
+  h2_connections = mixed ? TEST_MIXED_CONNECTIONS : TEST_CONNECTIONS;
   probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   assert(probe != MAP_FAILED);
@@ -465,12 +579,16 @@ int main(void) {
   ca_pem[pem_data->length] = '\0';
   memset(&origin, 0, sizeof(origin));
   origin.probe = probe;
+  origin.connections = h2_connections;
+  memset(&ws_origin, 0, sizeof(ws_origin));
   origin.ctx = SSL_CTX_new(TLS_server_method());
   assert(origin.ctx != NULL);
   assert(SSL_CTX_use_certificate(origin.ctx, cert) == 1);
   assert(SSL_CTX_use_PrivateKey(origin.ctx, key) == 1);
   SSL_CTX_set_alpn_select_cb(origin.ctx, select_h2, &origin);
   origin.port = listen_port(&origin.listener);
+  if (mixed)
+    ws_origin.port = listen_port(&ws_origin.listener);
   app_port = unused_port();
   assert(snprintf(target, sizeof(target), "https://localhost:%u",
                   (unsigned)origin.port) > 0);
@@ -492,20 +610,53 @@ int main(void) {
   proxy.preflight = capture_worker;
   proxy.preflight_userdata = probe;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
+  if (mixed) {
+    assert(snprintf(ws_target, sizeof(ws_target), "http://127.0.0.1:%u",
+                    (unsigned)ws_origin.port) > 0);
+    vectis_proxy_route_config_init(&proxy);
+    proxy.path = "/proxy/ws";
+    proxy.methods = VECTIS_HTTP_METHODS_GET;
+    proxy.target = ws_target;
+    proxy.buffer_limit_bytes = 1048576u;
+    assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
+  }
   free(ca_pem);
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
+  if (mixed)
+    assert(pthread_create(&ws_origin.thread, NULL, ws_origin_main,
+                          &ws_origin) == 0);
 
-  for (i = 0; i < TEST_CONNECTIONS; ++i) {
-    clients[i] = connect_app(app_port);
+  for (i = 0; i < h2_connections; ++i) {
+    clients[i] = connect_app(app_port, 0);
     read_head(clients[i], head, sizeof(head));
     assert(strstr(head, "HTTP/1.1 200 ") == head);
     assert(strstr(head, "Transfer-Encoding: chunked\r\n") != NULL);
   }
+  if (mixed) {
+    for (i = h2_connections; i < TEST_CONNECTIONS; ++i) {
+      clients[i] = connect_app(app_port, 1);
+      read_head(clients[i], head, sizeof(head));
+      assert(strstr(head, "HTTP/1.1 101 Switching Protocols\r\n") == head);
+    }
+    for (i = 0; i < 500; ++i) {
+      if (__sync_fetch_and_add(&ws_origin.producer_done, 0) != 0)
+        break;
+      usleep(10000u);
+    }
+    assert(i < 500);
+    assert(__sync_fetch_and_add(&ws_origin.accepted, 0u) ==
+           TEST_MIXED_CONNECTIONS);
+    assert(__sync_fetch_and_add(&ws_origin.produced, 0u) >=
+           (size_t)TEST_MIXED_CONNECTIONS * 1048576u);
+  }
   assert(probe->worker_pid > 0);
-  assert(__sync_fetch_and_add(&probe->accepted, 0u) == TEST_CONNECTIONS);
-  assert(__sync_fetch_and_add(&probe->negotiated_h2, 0u) == TEST_CONNECTIONS);
-  assert(__sync_fetch_and_add(&probe->requests, 0u) == TEST_CONNECTIONS);
+  assert(__sync_fetch_and_add(&probe->accepted, 0u) ==
+         (unsigned)h2_connections);
+  assert(__sync_fetch_and_add(&probe->negotiated_h2, 0u) ==
+         (unsigned)h2_connections);
+  assert(__sync_fetch_and_add(&probe->requests, 0u) ==
+         (unsigned)h2_connections);
   at_headers = process_rss_kb(probe->worker_pid);
   at_headers_fds = process_fd_count(probe->worker_pid);
   generated_at_headers = __sync_fetch_and_add(&probe->generated, 0u);
@@ -527,35 +678,51 @@ int main(void) {
   later = process_rss_kb(probe->worker_pid);
   generated_later = __sync_fetch_and_add(&probe->generated, 0u);
   fprintf(stderr,
-          "production h2 worker: buffer=%lu baseline=%luKB headers=%luKB "
+          "production %s worker: buffer=%lu baseline=%luKB headers=%luKB "
           "warmup=%luKB peak=%luKB later=%luKB fds=%u,%u "
-          "generated=%lu,%lu,%lu\n",
-          (unsigned long)buffer_limit, probe->baseline_rss_kb, at_headers,
-          after_warmup, peak, later, probe->baseline_fds, at_headers_fds,
+          "generated=%lu,%lu,%lu ws=%lu\n",
+          mixed ? "mixed h2/ws" : "h2", (unsigned long)buffer_limit,
+          probe->baseline_rss_kb, at_headers, after_warmup, peak, later,
+          probe->baseline_fds, at_headers_fds,
           (unsigned long)generated_at_headers,
-          (unsigned long)generated_after_warmup,
-          (unsigned long)generated_later);
+          (unsigned long)generated_after_warmup, (unsigned long)generated_later,
+          (unsigned long)(mixed ? ws_origin.produced : 0u));
   assert(at_headers <= probe->baseline_rss_kb + TEST_MAX_RSS_DELTA_KB);
   assert(peak <= probe->baseline_rss_kb + TEST_MAX_RSS_DELTA_KB);
   assert(later <= after_warmup + 4096u);
   assert(at_headers_fds <= probe->baseline_fds + 64u);
-  assert(generated_later > (size_t)TEST_CONNECTIONS * 1048576u);
-  assert(generated_later < (size_t)TEST_CONNECTIONS * TEST_BODY_SIZE / 4u);
+  assert(generated_later > (size_t)h2_connections * 1048576u);
+  assert(generated_later < (size_t)h2_connections * TEST_BODY_SIZE / 4u);
   assert(generated_later - generated_after_warmup <=
-         (size_t)TEST_CONNECTIONS * 1048576u);
+         (size_t)h2_connections * 1048576u);
 
-  overflow = connect_app(app_port);
+  overflow = connect_app(app_port, 0);
   read_head(overflow, head, sizeof(head));
   assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
   assert(close(overflow) == 0);
+  if (mixed) {
+    overflow = connect_app(app_port, 1);
+    read_head(overflow, head, sizeof(head));
+    assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
+    assert(close(overflow) == 0);
+  }
   pending.fd = origin.listener;
   pending.events = POLLIN;
   pending.revents = 0;
   assert(poll(&pending, 1u, 100) == 0);
+  if (mixed) {
+    pending.fd = ws_origin.listener;
+    pending.revents = 0;
+    assert(poll(&pending, 1u, 100) == 0);
+  }
 
   for (i = 0; i < TEST_CONNECTIONS; ++i)
     assert(close(clients[i]) == 0);
   assert(pthread_join(origin.thread, NULL) == 0);
+  if (mixed) {
+    (void)__sync_lock_test_and_set(&ws_origin.release, 1);
+    assert(pthread_join(ws_origin.thread, NULL) == 0);
+  }
   usleep(100000u);
   after_close = process_rss_kb(probe->worker_pid);
   after_close_fds = process_fd_count(probe->worker_pid);
@@ -566,6 +733,8 @@ int main(void) {
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   assert(close(origin.listener) == 0);
+  if (mixed)
+    assert(close(ws_origin.listener) == 0);
   SSL_CTX_free(origin.ctx);
   BIO_free(pem);
   X509_free(cert);
