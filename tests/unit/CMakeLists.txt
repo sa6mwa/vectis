@@ -75,6 +75,23 @@ if(VECTIS_WITH_KORE_RUNTIME)
       LABELS "unit;local" TIMEOUT 15)
   endif()
   vectis_add_unit_test(vectis_unit_proxy_framing test_proxy_framing.c)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Compile the BSD branch of the C89 adapter with a minimal event.h shim.
+    # This checks interest translation; native kqueue execution is separate.
+    add_executable(vectis_unit_proxy_events_kqueue_sim
+      test_proxy_events_kqueue_sim.c
+      "${CMAKE_SOURCE_DIR}/src/vectis_proxy_events.c")
+    target_include_directories(vectis_unit_proxy_events_kqueue_sim PRIVATE
+      "${CMAKE_SOURCE_DIR}/src"
+      "${CMAKE_SOURCE_DIR}/tests/fixtures/kqueue")
+    target_compile_options(vectis_unit_proxy_events_kqueue_sim PRIVATE
+      -U__linux__ -UNDEBUG)
+    vectis_configure_c89_target(vectis_unit_proxy_events_kqueue_sim)
+    add_test(NAME vectis_unit_proxy_events_kqueue_sim
+      COMMAND vectis_unit_proxy_events_kqueue_sim)
+    set_tests_properties(vectis_unit_proxy_events_kqueue_sim PROPERTIES
+      LABELS "unit;local;proxy" TIMEOUT 5)
+  endif()
   vectis_add_unit_test(vectis_unit_proxy_headers test_proxy_headers.c)
   vectis_add_unit_test(vectis_unit_proxy_http test_proxy_http.c)
   vectis_add_unit_test(vectis_unit_proxy_http_upstream

@@ -35,7 +35,8 @@ PROXY_FAST_TESTS := \
 ifeq ($(shell uname -s),Linux)
 PROXY_FAST_TESTS += \
 	vectis_unit_kore_proxy_admission_live \
-	vectis_unit_proxy_curl_tls_floor vectis_unit_proxy_curl_http2_pause
+	vectis_unit_proxy_curl_tls_floor vectis_unit_proxy_curl_http2_pause \
+	vectis_unit_proxy_events_kqueue_sim
 endif
 empty :=
 space := $(empty) $(empty)

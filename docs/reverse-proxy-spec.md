@@ -931,9 +931,12 @@ handlers in the same worker. `max_request_header_bytes` can currently be
 configured above 64 KiB, so that setting requires a new measurement or a
 lower active-exchange cap. Provision additional memory for the Kore parent,
 other workers, and the operating system; do not use 256 MiB as a whole-app
-or cgroup limit. Native kqueue execution remains unverified without a macOS
-or BSD runner. Both idle caches, active maximum-configuration transfers in
-both protocol pools, a same-exchange full-duplex HTTP workload, and
+or cgroup limit. A Linux-hosted C89 test compiles the BSD event adapter with
+a minimal `sys/event.h` shim and checks takeover, edge and level interest
+transitions, and removal of both filters. Native kqueue execution remains
+unverified without a macOS or BSD runner. Both idle caches,
+maximum-configuration transfers in both protocol pools, a same-exchange
+full-duplex HTTP workload, and
 bidirectional WebSocket pressure have live Linux coverage above.
 
 ### Downstream response writer
