@@ -681,10 +681,14 @@ must mark that object retired and unregister both filters, but defer freeing
 it until after the current Kore event batch. Kqueue can return read and write
 results for the same socket in one batch; a second result must find the
 retired object and do nothing. Worker teardown drains the retired list after
-event processing stops. A taken-over downstream connection likewise ignores
-any later batch result after entering Kore's disconnecting state. This is
-proxy-owned watcher lifetime management and requires no new generic Kore
-event API. Native kqueue execution is an implementation verification gate.
+event processing stops. A WebSocket tunnel that embeds its upstream event
+object follows the same lifetime rule: disconnect marks the state inactive,
+releases the transfer and payload buffers, and defers freeing the small state
+object until the batch ends. A taken-over downstream connection likewise
+ignores any later batch result after entering Kore's disconnecting state.
+This is proxy-owned watcher lifetime management and requires no new generic
+Kore event API. Native kqueue execution is an implementation verification
+gate.
 
 Use libcurl upload mode with a known length or a streamed unknown length when
 a framed body is present, then set the validated method string. On HTTP/1.1,

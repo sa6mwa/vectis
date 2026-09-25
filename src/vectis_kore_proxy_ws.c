@@ -38,6 +38,7 @@ typedef enum vectis_kore_ws_phase {
 
 typedef struct vectis_kore_ws_state {
   struct vectis_kore_ws_state *next;
+  struct vectis_kore_ws_state *retired_next;
   struct kore_event upstream_event;
   struct connection *downstream;
   struct http_request *request;
@@ -86,6 +87,8 @@ typedef struct vectis_kore_ws_state {
 } vectis_kore_ws_state;
 
 static vectis_kore_ws_state *vectis_kore_ws_states;
+static vectis_kore_ws_state *vectis_kore_ws_retired;
+static struct kore_timer *vectis_kore_ws_retire_timer;
 
 static void vectis_kore_ws_pump(vectis_kore_ws_state *state);
 static void vectis_kore_ws_schedule(vectis_kore_ws_state *state);
@@ -127,10 +130,26 @@ static void vectis_kore_ws_record(vectis_kore_ws_state *state) {
                               kore_time_ms());
 }
 
+static void vectis_kore_ws_reap(void *userdata, u_int64_t now) {
+  vectis_kore_ws_state *state;
+
+  (void)userdata;
+  (void)now;
+  vectis_kore_ws_retire_timer = NULL;
+  while ((state = vectis_kore_ws_retired) != NULL) {
+    vectis_kore_ws_retired = state->retired_next;
+    free(state);
+  }
+}
+
 static void vectis_kore_ws_free(vectis_kore_ws_state *state) {
+  int was_active;
+
   if (state == NULL)
     return;
+  was_active = state->active;
   vectis_kore_ws_record(state);
+  state->active = 0;
   if (state->wake_timer != NULL)
     kore_timer_remove(state->wake_timer);
   if (state->idle_timer != NULL)
@@ -145,7 +164,7 @@ static void vectis_kore_ws_free(vectis_kore_ws_state *state) {
   if (state->transfer != NULL)
     vectis_proxy_curl_cancel(state->transfer);
   vectis_kore_ws_unlink(state);
-  if (state->request != NULL && state->active) {
+  if (state->request != NULL && was_active) {
     state->request->flags |= HTTP_REQUEST_DELETE;
     http_request_wakeup(state->request);
   }
@@ -157,7 +176,16 @@ static void vectis_kore_ws_free(vectis_kore_ws_state *state) {
   free(state->response_head);
   free(state->to_upstream);
   free(state->to_downstream);
-  free(state);
+  if (was_active) {
+    /* kqueue can retain a second read/write result from this event batch. */
+    state->retired_next = vectis_kore_ws_retired;
+    vectis_kore_ws_retired = state;
+    if (vectis_kore_ws_retire_timer == NULL)
+      vectis_kore_ws_retire_timer =
+          kore_timer_add(vectis_kore_ws_reap, 1u, NULL, KORE_TIMER_ONESHOT);
+  } else {
+    free(state);
+  }
 }
 
 static void vectis_kore_ws_disconnect(struct connection *connection) {
@@ -917,4 +945,9 @@ void vectis_kore_proxy_ws_worker_cleanup(void) {
     vectis_kore_ws_record(state);
     state->active = 0;
   }
+  if (vectis_kore_ws_retire_timer != NULL) {
+    kore_timer_remove(vectis_kore_ws_retire_timer);
+    vectis_kore_ws_retire_timer = NULL;
+  }
+  vectis_kore_ws_reap(NULL, 0u);
 }
