@@ -1934,7 +1934,8 @@ EOF
     return 1
   fi
   printf '[e2e] lua libmdf example\n'
-  "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua"
+  "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua" \
+    >/dev/null
   return 0
   auth_headers="$work_dir/packed-auth-login.headers"
   body=$(curl_or_log "$packed_service_log" "packed auth login" \
@@ -3455,7 +3456,8 @@ EOF
   fi
 
   printf '[e2e] lua libmdf example\n'
-  "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua"
+  "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua" \
+    >/dev/null
 }
 
 run_tls_cert_examples() {
