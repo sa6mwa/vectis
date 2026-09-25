@@ -14,7 +14,7 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|local_live|unwritten_live|admission_live|ws_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
+      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|local_live|unwritten_live|admission_live|h2_memory_live|ws_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
     set(kore_test_deadline 15)
     if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
       set(kore_test_deadline 30)
@@ -83,6 +83,14 @@ if(VECTIS_WITH_KORE_RUNTIME)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     vectis_add_unit_test(vectis_unit_kore_proxy_admission_live
       test_kore_proxy_admission_live.c)
+    vectis_add_unit_test(vectis_unit_kore_proxy_h2_memory_live
+      test_kore_proxy_h2_memory_live.c)
+    add_test(NAME vectis_unit_kore_proxy_h2_memory_large
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_H2_LARGE_BUFFER=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+    set_tests_properties(vectis_unit_kore_proxy_h2_memory_large PROPERTIES
+      LABELS "unit;local" TIMEOUT 180)
     vectis_add_unit_test(vectis_unit_kore_proxy_unwritten_live
       test_kore_proxy_unwritten_live.c)
     target_include_directories(vectis_unit_kore_proxy_unwritten_live PRIVATE

@@ -32,7 +32,9 @@ open beyond the deadline when periodic events make progress. A provisional
 shared 16-exchange cap now rejects excess HTTP and WebSocket requests with
 `503` at header admission, before allocating proxy exchange buffers; a live
 test holds sixteen streams and verifies both rejections without an extra
-upstream connection. The measured aggregate worker memory allowance remains
+upstream connection. A pinned Release production-route HTTP/2 slow-reader
+smoke now measures worker RSS and descriptors at both the minimum and maximum
+route chunk settings. The mixed-protocol aggregate worker allowance remains
 open.
 
 The [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
@@ -693,6 +695,35 @@ connections against the worker budget. Release exchange reservations only
 after their easy handles and owned buffers are retired. Choose the numerical
 limits from the pinned-bundle memory gate; the sixteen-connection probe does
 not establish a release-wide allowance.
+
+The Linux production-route HTTP/2 memory smoke uses sixteen independent,
+certificate-verified TLS connections to a local `h2` origin, one Vectis worker,
+and downstream clients that stop reading after response headers. Each origin
+offers a 64 MiB response, or 1 GiB total. The test samples worker RSS every
+20 ms for four seconds, checks the later two-second interval for stable RSS
+and limited upstream production, verifies a seventeenth request receives
+`503` without opening an origin connection, then checks worker FD recovery.
+It runs with both 8 KiB and 1 MiB route chunk limits.
+
+| Pinned x86-64 Linux Release run, 2026-09-25 | 8 KiB chunks | 1 MiB chunks |
+| --- | ---: | ---: |
+| Worker RSS before first upstream connection | 7,408 KiB | 7,328 KiB |
+| Sampled peak with sixteen exchanges | 16,740 KiB | 37,344 KiB |
+| Worker RSS after closing clients | 16,492 KiB | 22,192 KiB |
+| Worker FDs before / during / after | 14 / 48 / 16 | 14 / 48 / 16 |
+| Origin bytes produced at four seconds | 87,228,416 | 96,092,160 |
+
+These are observed values for this GET/SSE profile, not a libcurl allocator
+bound. The executable regression ceiling is 64 MiB of aggregate additional
+worker RSS for sixteen exchanges, equivalent to 4 MiB per exchange, plus no
+more than 4 MiB growth after the first two seconds. It does not measure each
+connection's allocation separately. The ASan build uses a 256 MiB aggregate
+RSS ceiling for instrumentation redzones and quarantine while retaining the
+same streaming, plateau, and teardown checks.
+The full admission reserve still needs mixed HTTP/1.1 and HTTP/2 uploads,
+retained WebSocket tunnels, both idle caches, maximum permitted headers and
+CA bundles, and a deployment worker-memory budget. The existing 16-slot
+exchange cap remains provisional until that gate is complete.
 
 ### Downstream response writer
 

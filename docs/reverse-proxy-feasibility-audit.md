@@ -634,9 +634,13 @@ does not establish an 8 KiB libcurl memory ceiling. The proposal therefore
 requires an explicit per-connection HTTP/2 memory allowance and per-worker
 admission limit, validated against the pinned binary under a paused slow
 consumer. A local four-transfer memory measurement exists below, but no
-release-wide production allowance has been established yet. If that allowance
-cannot satisfy the streaming memory budget, the architecture needs a
-different HTTP/2 client transport or a narrower supported contract.
+release-wide production allowance has been established yet. A production-route
+sixteen-connection GET/SSE smoke now measures pinned Release RSS at 8 KiB and
+1 MiB chunk settings; its results are recorded in the
+[proxy spec](reverse-proxy-spec.md). Mixed uploads, retained WebSocket tunnels,
+idle caches, and maximum metadata are still outside that memory gate. If the
+allowance cannot satisfy the streaming memory budget, the architecture needs
+a different HTTP/2 client transport or a narrower supported contract.
 
 The Linux [HTTPS HTTP/2 pause probes](../tests/unit/test_proxy_curl_http2_pause.c)
 use a local nghttp2 server over certificate-verified TLS. ALPN selects `h2`;
