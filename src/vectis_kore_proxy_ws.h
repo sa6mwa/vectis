@@ -14,7 +14,9 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
                                vectis_app *app, vectis_request *route_request,
                                vectis_proxy_route_data *route,
                                vectis_proxy_headers *inbound,
-                               const vectis_proxy_headers *outbound);
+                               const vectis_proxy_headers *outbound,
+                               const char *url, const char *request_target,
+                               const char *authority);
 
 void vectis_kore_proxy_ws_worker_cleanup(void);
 

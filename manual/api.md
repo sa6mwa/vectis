@@ -42,7 +42,11 @@ Major groups:
   `include/vectis/proxy.h` registers bounded streaming HTTP, SSE, and
   WebSocket forwarding. `tls_ca_pem` optionally supplies a copied CA bundle
   for verified HTTPS and WSS origins; without it, libcurl uses its default
-  trust store. The public interface compiles as C89.
+  trust store. Its optional `rewrite` callback receives borrowed inbound
+  metadata and changes the configured target index, method, raw path/query,
+  Host, and end-to-end headers through `vectis_proxy_outbound_*` helpers.
+  Invalid rewrites fail before an upstream connection. The public interface
+  compiles as C89.
 - TLS/server hardening: `vectis_tls_config` supports manual/ACME material,
   client CA verification, protocol version selection, and OpenSSL cipher lists;
   `vectis_server_config` covers listener backlog, processing budget, and HSTS

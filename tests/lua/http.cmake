@@ -1,3 +1,6 @@
+include("${CMAKE_CURRENT_LIST_DIR}/port_retry.cmake")
+vectis_pick_test_port(http_test_port)
+
 set(json_file "${WORK_DIR}/vectis-http-response.json")
 set(invalid_json_file "${WORK_DIR}/vectis-http-invalid-response.json")
 set(download_source "${WORK_DIR}/vectis-http-download-source.txt")
@@ -1802,6 +1805,10 @@ assert(streamed.ok == true, streamed.error and streamed.error.message)
 assert(streamed.json.ok == true)
 assert(streamed.response_json.message == "vectis-http")
 ]])
+
+file(READ "${script}" http_script)
+string(REPLACE "28484" "${http_test_port}" http_script "${http_script}")
+file(WRITE "${script}" "${http_script}")
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${json_file}"
                         "${download_source}" "${download_target}"

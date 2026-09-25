@@ -3,6 +3,7 @@
 
 #include "vectis_internal.h"
 #include "vectis_proxy_curl.h"
+#include "vectis_proxy_director.h"
 #include "vectis_proxy_events.h"
 #include "vectis_proxy_headers.h"
 #include "vectis_proxy_http_upstream.h"
@@ -484,6 +485,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   vectis_proxy_route_data *route;
   vectis_proxy_headers inbound;
   vectis_proxy_headers outbound;
+  vectis_proxy_outbound directed;
   vectis_proxy_request_head head;
   vectis_proxy_header_status header_status;
   vectis_request *route_request;
@@ -491,9 +493,14 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   vectis_status status;
   const char *reason;
   const char *method_name;
+  const char *selected_url;
+  char *request_target;
+  char *authority;
   vectis_proxy_http_upload upload_config;
   vectis_proxy_frame_result frame_result;
   size_t i;
+  int valid_ws;
+  int result;
   CURL *easy;
 
   if (app == NULL || request == NULL || request->path == NULL)
@@ -533,30 +540,53 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
                                     "invalid proxy request headers\n");
   }
   if (head.websocket_upgrade) {
-    int valid_ws;
-    int result;
-
     valid_ws = vectis_proxy_ws_request_valid(method, &inbound, &reason);
     if (valid_ws && (head.chunked || head.has_content_length))
       valid_ws = 0;
-    if (valid_ws) {
-      result =
-          vectis_kore_proxy_ws_start(request, surplus, surplus_length, app,
-                                     route_request, route, &inbound, &outbound);
+    if (!valid_ws) {
       vectis_proxy_headers_cleanup(&outbound);
       vectis_proxy_headers_cleanup(&inbound);
-      if (result != KORE_RESULT_RETRY)
-        vectis_internal_request_free(route_request);
-      return result;
+      vectis_internal_request_free(route_request);
+      return vectis_kore_proxy_reject(request, 400,
+                                      "invalid proxy WebSocket handshake\n");
     }
+  }
+  memset(&directed, 0, sizeof(directed));
+  request_target = NULL;
+  authority = NULL;
+  status = vectis_proxy_director_prepare(
+      route, method, request->path, request->query_string, head.host,
+      head.websocket_upgrade, route_request, &inbound, &outbound, &directed,
+      &request_target, &authority, &error);
+  if (status != VECTIS_OK) {
+    vectis_proxy_director_cleanup(&directed);
     vectis_proxy_headers_cleanup(&outbound);
     vectis_proxy_headers_cleanup(&inbound);
     vectis_internal_request_free(route_request);
-    return vectis_kore_proxy_reject(request, 400,
-                                    "invalid proxy WebSocket handshake\n");
+    return vectis_kore_proxy_reject(request,
+                                    status == VECTIS_ERR_INVALID ? 400 : 500,
+                                    "invalid proxy rewrite\n");
+  }
+  selected_url = route->targets[directed.target_index];
+  method_name = vectis_http_method_string(directed.method);
+  if (head.websocket_upgrade) {
+    result = vectis_kore_proxy_ws_start(
+        request, surplus, surplus_length, app, route_request, route, &inbound,
+        &directed.headers, selected_url, request_target, authority);
+    free(request_target);
+    free(authority);
+    vectis_proxy_director_cleanup(&directed);
+    vectis_proxy_headers_cleanup(&outbound);
+    vectis_proxy_headers_cleanup(&inbound);
+    if (result != KORE_RESULT_RETRY)
+      vectis_internal_request_free(route_request);
+    return result;
   }
   state = (vectis_kore_proxy_state *)calloc(1u, sizeof(*state));
   if (state == NULL) {
+    free(request_target);
+    free(authority);
+    vectis_proxy_director_cleanup(&directed);
     vectis_proxy_headers_cleanup(&outbound);
     vectis_proxy_headers_cleanup(&inbound);
     vectis_internal_request_free(route_request);
@@ -567,6 +597,8 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   state->app = app;
   state->route_request = route_request;
   state->route = route;
+  state->request_target = request_target;
+  state->authority = authority;
   state->has_upload = head.chunked || head.has_content_length;
   if (state->has_upload) {
     status = vectis_proxy_upload_init(&state->upload, route->buffer_limit_bytes,
@@ -583,6 +615,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
         status = VECTIS_ERR_NOMEM;
     }
     if (status != VECTIS_OK) {
+      vectis_proxy_director_cleanup(&directed);
       vectis_proxy_headers_cleanup(&outbound);
       vectis_proxy_headers_cleanup(&inbound);
       vectis_kore_proxy_free(state);
@@ -594,6 +627,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
           &state->upload, (const unsigned char *)surplus, surplus_length,
           &state->surplus_offset);
       if (frame_result == VECTIS_PROXY_FRAME_INVALID) {
+        vectis_proxy_director_cleanup(&directed);
         vectis_proxy_headers_cleanup(&outbound);
         vectis_proxy_headers_cleanup(&inbound);
         vectis_kore_proxy_free(state);
@@ -607,18 +641,26 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
                                : CURL_MAX_WRITE_SIZE) +
                           32u;
   state->frame = (char *)malloc(state->frame_capacity);
-  status = vectis_proxy_target_build(
-      route->targets[0], request->path, request->query_string,
-      &state->request_target, &state->authority, &error);
-  if (status != VECTIS_OK || state->frame == NULL) {
+  if (state->frame == NULL) {
+    vectis_proxy_director_cleanup(&directed);
     vectis_proxy_headers_cleanup(&outbound);
     vectis_proxy_headers_cleanup(&inbound);
     vectis_kore_proxy_free(state);
-    return vectis_kore_proxy_reject(request, 400, "invalid proxy target\n");
+    return vectis_kore_proxy_reject(request, 500, "proxy allocation failed\n");
   }
-  for (i = 0u; i < outbound.count; ++i) {
-    if (!vectis_kore_proxy_add_header(state, outbound.fields[i].name,
-                                      outbound.fields[i].value)) {
+  if (directed.host != NULL &&
+      !vectis_kore_proxy_add_header(state, "Host", authority)) {
+    vectis_proxy_director_cleanup(&directed);
+    vectis_proxy_headers_cleanup(&outbound);
+    vectis_proxy_headers_cleanup(&inbound);
+    vectis_kore_proxy_free(state);
+    return vectis_kore_proxy_reject(request, 500,
+                                    "proxy header allocation failed\n");
+  }
+  for (i = 0u; i < directed.headers.count; ++i) {
+    if (!vectis_kore_proxy_add_header(state, directed.headers.fields[i].name,
+                                      directed.headers.fields[i].value)) {
+      vectis_proxy_director_cleanup(&directed);
       vectis_proxy_headers_cleanup(&outbound);
       vectis_proxy_headers_cleanup(&inbound);
       vectis_kore_proxy_free(state);
@@ -630,6 +672,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
     struct curl_slist *next;
     next = curl_slist_append(state->request_headers, "Expect:");
     if (next == NULL) {
+      vectis_proxy_director_cleanup(&directed);
       vectis_proxy_headers_cleanup(&outbound);
       vectis_proxy_headers_cleanup(&inbound);
       vectis_kore_proxy_free(state);
@@ -644,6 +687,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
         continue;
       if (!vectis_kore_proxy_add_header(state, "Trailer",
                                         inbound.fields[i].value)) {
+        vectis_proxy_director_cleanup(&directed);
         vectis_proxy_headers_cleanup(&outbound);
         vectis_proxy_headers_cleanup(&inbound);
         vectis_kore_proxy_free(state);
@@ -652,10 +696,10 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
       }
     }
   }
+  vectis_proxy_director_cleanup(&directed);
   vectis_proxy_headers_cleanup(&outbound);
   vectis_proxy_headers_cleanup(&inbound);
   easy = curl_easy_init();
-  method_name = vectis_http_method_string(method);
   memset(&upload_config, 0, sizeof(upload_config));
   if (state->has_upload) {
     upload_config.read = vectis_proxy_upload_read;
@@ -669,7 +713,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
       vectis_proxy_curl_set_ca(easy, route->tls_ca_pem,
                                route->tls_ca_pem_length, &error) != VECTIS_OK ||
       vectis_proxy_http_upstream_init(
-          &state->upstream, easy, route->targets[0], state->request_target,
+          &state->upstream, easy, selected_url, state->request_target,
           method_name, state->request_headers, route->buffer_limit_bytes,
           route->connect_timeout_ms, route->total_timeout_ms,
           state->has_upload ? &upload_config : NULL, vectis_kore_proxy_ready,

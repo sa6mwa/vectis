@@ -12,7 +12,9 @@ trailers, and `103` followed by a close-delimited final response. A verified
 local WSS route now relays 128 KiB frames in both directions, rejects an
 untrusted peer, and shares its optional CA bundle with ordinary HTTPS. TLS
 retry, backpressure, and shutdown cases need production-route tests.
-Application director hooks and the
+The C request rewrite hook now selects a configured target and edits method,
+raw path/query, Host, and bounded end-to-end headers before either upstream
+transport starts. Lua rewrite, admission, response, and error hooks and the
 remaining resource limits are still in progress. The
 [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.

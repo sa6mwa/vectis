@@ -551,6 +551,9 @@ set(vectis_sources
   src/vectis_auth.c
   src/vectis_embedded_fs.c
   src/vectis_proxy_route.c
+  src/vectis_proxy_director.c
+  src/vectis_proxy_headers.c
+  src/vectis_proxy_framing.c
   src/vectis_proxy_url.c
   src/vectis_smith.c
   src/vectis_totp_qr.c
@@ -681,7 +684,6 @@ if(VECTIS_WITH_KORE_RUNTIME)
     src/vectis_proxy_events.c
     src/vectis_proxy_curl.c
     src/vectis_proxy_select.c
-    src/vectis_proxy_headers.c
     src/vectis_proxy_http.c
     src/vectis_proxy_http_upstream.c
     src/vectis_proxy_http_wire.c
@@ -689,7 +691,6 @@ if(VECTIS_WITH_KORE_RUNTIME)
     src/vectis_proxy_ws_handshake.c
     src/vectis_proxy_ws_wire.c
     src/vectis_proxy_ws_rejection.c
-    src/vectis_proxy_framing.c
     $<TARGET_OBJECTS:vectis_kore_runtime>)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     set_source_files_properties(src/vectis_kore_bridge.c PROPERTIES

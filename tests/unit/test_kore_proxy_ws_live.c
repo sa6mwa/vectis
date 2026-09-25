@@ -100,7 +100,9 @@ static void *origin_main(void *userdata) {
     assert(used < sizeof(request) - 1u);
   }
   assert(strstr((const char *)request,
-                "GET /backend/ws?q=1&q=2 HTTP/1.1\r\n") != NULL);
+                "GET /alternate/rewritten?route=ws HTTP/1.1\r\n") != NULL);
+  assert(strstr((const char *)request, "Host: public.example\r\n") != NULL);
+  assert(strstr((const char *)request, "X-Director: websocket\r\n") != NULL);
   assert(strstr((const char *)request, "Sec-WebSocket-Key: ") != NULL ||
          strstr((const char *)request, "sec-websocket-key: ") != NULL);
   assert(used == strlen((const char *)request));
@@ -193,6 +195,23 @@ static int connect_app(unsigned short port) {
   return fd;
 }
 
+static vectis_status rewrite_ws(const vectis_proxy_inbound *in,
+                                vectis_proxy_outbound *out, void *userdata,
+                                vectis_error *error) {
+  (void)userdata;
+  assert(vectis_proxy_inbound_websocket(in));
+  assert(vectis_proxy_inbound_method(in) == VECTIS_HTTP_GET);
+  assert(strcmp(vectis_proxy_inbound_path(in), "/ws") == 0);
+  assert(strcmp(vectis_proxy_inbound_query(in), "q=1&q=2") == 0);
+  assert(vectis_proxy_outbound_select_target(out, 1u, error) == VECTIS_OK);
+  assert(vectis_proxy_outbound_set_path(out, "/rewritten", error) == VECTIS_OK);
+  assert(vectis_proxy_outbound_set_query(out, "route=ws", error) == VECTIS_OK);
+  assert(vectis_proxy_outbound_set_host(out, "public.example", error) ==
+         VECTIS_OK);
+  return vectis_proxy_outbound_add_header(out, "X-Director", "websocket",
+                                          error);
+}
+
 int main(void) {
   origin_server origin;
   vectis_proxy_route_config proxy;
@@ -206,6 +225,8 @@ int main(void) {
   const unsigned char *frame;
   unsigned short app_port;
   char target[128];
+  char alternate[128];
+  const char *alternates[1];
   size_t used;
   size_t offset;
   size_t i;
@@ -216,6 +237,9 @@ int main(void) {
   app_port = available_port();
   assert(snprintf(target, sizeof(target), "http://127.0.0.1:%u/backend",
                   (unsigned)origin.port) > 0);
+  assert(snprintf(alternate, sizeof(alternate), "http://127.0.0.1:%u/alternate",
+                  (unsigned)origin.port) > 0);
+  alternates[0] = alternate;
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -227,6 +251,9 @@ int main(void) {
   proxy.path = "/ws";
   proxy.methods = VECTIS_HTTP_METHODS_GET;
   proxy.target = target;
+  proxy.alternate_targets = alternates;
+  proxy.alternate_target_count = 1u;
+  proxy.rewrite = rewrite_ws;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   if (app->start(app, &error) != VECTIS_OK) {
     fprintf(stderr, "WebSocket proxy startup: %s\n", error.message);

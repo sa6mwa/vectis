@@ -13,6 +13,8 @@ typedef struct vectis_proxy_route_data {
   size_t buffer_limit_bytes;
   char *tls_ca_pem;
   size_t tls_ca_pem_length;
+  vectis_proxy_rewrite_fn rewrite;
+  void *rewrite_userdata;
 } vectis_proxy_route_data;
 
 /* The selector compares this function pointer with the winning route handler

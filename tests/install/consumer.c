@@ -42,9 +42,13 @@ int main(void) {
   vectis_proxy_route_config_init(&proxy_config);
   if (proxy_config.path != NULL ||
       proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO ||
-      proxy_config.tls_ca_pem != NULL) {
+      proxy_config.tls_ca_pem != NULL || proxy_config.rewrite != NULL ||
+      vectis_proxy_inbound_header_count(NULL) != 0u ||
+      vectis_proxy_outbound_select_target(NULL, 0u, &error) !=
+          VECTIS_ERR_INVALID) {
     return 11;
   }
+  vectis_error_clear(&error);
   if (config.app_name == NULL || strcmp(config.app_name, "vectis") != 0) {
     return 1;
   }

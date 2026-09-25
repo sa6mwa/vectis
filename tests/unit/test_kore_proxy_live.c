@@ -67,9 +67,13 @@ static void *origin_main(void *userdata) {
     used += (size_t)got;
     request[used] = '\0';
   } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
-  assert(strstr(request, "GET /api/proxy/a%2Fb?q=1&q=2 HTTP/1.1\r\n") != NULL);
-  assert(strstr(request, "Host: 127.0.0.1:") != NULL);
-  assert(strstr(request, "x-trace: stream-test\r\n") != NULL);
+  assert(strstr(request, "GET /alternate/changed/a%2Fb?x=1&x=2 HTTP/1.1\r\n") !=
+         NULL);
+  assert(strstr(request, "Host: public.example\r\n") != NULL ||
+         strstr(request, "host: public.example\r\n") != NULL);
+  assert(strstr(request, "X-Trace: rewritten\r\n") != NULL ||
+         strstr(request, "x-trace: rewritten\r\n") != NULL);
+  assert(strstr(request, "X-Director: yes\r\n") != NULL);
   assert(strstr(request, "Connection:") == NULL);
   send_all(fd, first, sizeof(first) - 1u);
   server->first_sent = 1;
@@ -108,7 +112,7 @@ static void *origin_main(void *userdata) {
     request[used] = '\0';
   } while (strstr(request, "\r\n\r\nABCD") == NULL &&
            used < sizeof(request) - 1u);
-  assert(strstr(request, "POST /api/proxy/upload HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "PUT /api/proxy/upload HTTP/1.1\r\n") != NULL);
   assert(strstr(request, "Content-Length: 8\r\n") != NULL ||
          strstr(request, "content-length: 8\r\n") != NULL);
   server->upload_first_seen = 1;
@@ -256,6 +260,41 @@ static vectis_status plain(vectis_app *app, vectis_request *request,
   return vectis_response_text(response, 200, "text/plain", "plain", error);
 }
 
+static vectis_status rewrite_first(const vectis_proxy_inbound *in,
+                                   vectis_proxy_outbound *out, void *userdata,
+                                   vectis_error *error) {
+  const char *name;
+  const char *value;
+
+  (void)userdata;
+  if (strcmp(vectis_proxy_inbound_path(in), "/proxy/deny") == 0) {
+    assert(vectis_proxy_outbound_set_path(out, "/../secret", error) ==
+           VECTIS_ERR_INVALID);
+    return VECTIS_OK;
+  }
+  if (strcmp(vectis_proxy_inbound_path(in), "/proxy/upload") == 0)
+    return vectis_proxy_outbound_set_method(out, VECTIS_HTTP_PUT, error);
+  if (strcmp(vectis_proxy_inbound_path(in), "/proxy/a%2Fb") != 0)
+    return VECTIS_OK;
+  assert(vectis_proxy_inbound_method(in) == VECTIS_HTTP_GET);
+  assert(strcmp(vectis_proxy_inbound_query(in), "q=1&q=2") == 0);
+  assert(strcmp(vectis_proxy_inbound_host(in), "localhost") == 0);
+  assert(strcmp(vectis_proxy_inbound_path_param(in, "id"), "a%2Fb") == 0);
+  assert(!vectis_proxy_inbound_websocket(in));
+  assert(vectis_proxy_inbound_header_count(in) >= 2u);
+  assert(vectis_proxy_inbound_header_at(in, 0u, &name, &value) == VECTIS_OK);
+  assert(strcmp(name, "Host") == 0 && strcmp(value, "localhost") == 0);
+  assert(vectis_proxy_outbound_select_target(out, 1u, error) == VECTIS_OK);
+  assert(vectis_proxy_outbound_set_path(out, "/changed/a%2Fb", error) ==
+         VECTIS_OK);
+  assert(vectis_proxy_outbound_set_query(out, "x=1&x=2", error) == VECTIS_OK);
+  assert(vectis_proxy_outbound_set_host(out, "public.example", error) ==
+         VECTIS_OK);
+  assert(vectis_proxy_outbound_set_header(out, "X-Trace", "rewritten", error) ==
+         VECTIS_OK);
+  return vectis_proxy_outbound_add_header(out, "X-Director", "yes", error);
+}
+
 int main(void) {
   struct origin_server origin;
   vectis_proxy_route_config proxy;
@@ -265,6 +304,8 @@ int main(void) {
   vectis_app *app;
   unsigned short app_port;
   char target[128];
+  char alternate[128];
+  const char *alternates[1];
   char response[8192];
   char big_body[32768];
   size_t used;
@@ -275,6 +316,9 @@ int main(void) {
   app_port = available_port();
   assert(snprintf(target, sizeof(target), "http://127.0.0.1:%u/api",
                   (unsigned)origin.port) > 0);
+  assert(snprintf(alternate, sizeof(alternate), "http://127.0.0.1:%u/alternate",
+                  (unsigned)origin.port) > 0);
+  alternates[0] = alternate;
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -287,6 +331,9 @@ int main(void) {
   proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
   proxy.methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST;
   proxy.target = target;
+  proxy.alternate_targets = alternates;
+  proxy.alternate_target_count = 1u;
+  proxy.rewrite = rewrite_first;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/plain", plain, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
@@ -313,6 +360,24 @@ int main(void) {
            "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
            strlen("GET /proxy/ws HTTP/1.1\r\nHost: localhost\r\n"
                   "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n"));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+    response[used] = '\0';
+  }
+  assert(strstr(response, "400 Bad Request") != NULL);
+  assert(close(fd) == 0);
+
+  fd = connect_app(app_port);
+  send_all(fd,
+           "GET /proxy/deny HTTP/1.1\r\nHost: localhost\r\n"
+           "Connection: close\r\n\r\n",
+           strlen("GET /proxy/deny HTTP/1.1\r\nHost: localhost\r\n"
+                  "Connection: close\r\n\r\n"));
   used = 0u;
   while (used < sizeof(response) - 1u) {
     got = recv(fd, response + used, sizeof(response) - used - 1u, 0);

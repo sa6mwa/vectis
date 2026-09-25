@@ -86,6 +86,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
     test_kore_proxy_wss_live.c)
   vectis_add_unit_test(vectis_unit_proxy_route_registration
     test_proxy_route_registration.c)
+  vectis_add_unit_test(vectis_unit_proxy_director
+    test_proxy_director.c)
   vectis_add_unit_test(vectis_unit_proxy_select test_proxy_select.c)
 else()
   vectis_add_unit_test(vectis_unit_proxy_no_kore test_proxy_no_kore.c)

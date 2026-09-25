@@ -739,12 +739,12 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
                                vectis_app *app, vectis_request *route_request,
                                vectis_proxy_route_data *route,
                                vectis_proxy_headers *inbound,
-                               const vectis_proxy_headers *outbound) {
+                               const vectis_proxy_headers *outbound,
+                               const char *url, const char *request_target,
+                               const char *authority) {
   vectis_kore_ws_state *state;
   vectis_error error;
   vectis_status status;
-  char *request_target;
-  char *authority;
   CURL *easy;
 
   state = (vectis_kore_ws_state *)calloc(1u, sizeof(*state));
@@ -756,7 +756,7 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
   state->request = request;
   state->app = app;
   state->route = route;
-  state->upstream_tls = strncmp(route->targets[0], "https://", 8u) == 0;
+  state->upstream_tls = strncmp(url, "https://", 8u) == 0;
   state->buffer_capacity = route->buffer_limit_bytes;
   state->initial = (const unsigned char *)surplus;
   state->initial_length = surplus_length;
@@ -765,22 +765,14 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
   state->response_head = (unsigned char *)malloc(VECTIS_KORE_WS_HEAD_CAPACITY);
   state->to_upstream = (unsigned char *)malloc(state->buffer_capacity);
   state->to_downstream = (unsigned char *)malloc(state->buffer_capacity);
-  request_target = NULL;
-  authority = NULL;
   if (state->response_head == NULL || state->to_upstream == NULL ||
       state->to_downstream == NULL) {
     vectis_kore_ws_free(state);
     return vectis_kore_ws_reject(request, 500);
   }
-  status = vectis_proxy_target_build(route->targets[0], request->path,
-                                     request->query_string, &request_target,
-                                     &authority, &error);
-  if (status == VECTIS_OK)
-    status = vectis_proxy_ws_wire_request(request_target, authority, outbound,
-                                          &state->request_wire,
-                                          &state->request_length, &error);
-  free(request_target);
-  free(authority);
+  status = vectis_proxy_ws_wire_request(request_target, authority, outbound,
+                                        &state->request_wire,
+                                        &state->request_length, &error);
   if (status != VECTIS_OK) {
     vectis_kore_ws_free(state);
     return vectis_kore_ws_reject(request,
@@ -791,7 +783,7 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
     vectis_kore_ws_free(state);
     return vectis_kore_ws_reject(request, 500);
   }
-  if (curl_easy_setopt(easy, CURLOPT_URL, route->targets[0]) != CURLE_OK ||
+  if (curl_easy_setopt(easy, CURLOPT_URL, url) != CURLE_OK ||
       curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS,
                        route->connect_timeout_ms) != CURLE_OK ||
       curl_easy_setopt(easy, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2) !=

@@ -16,6 +16,67 @@ typedef enum vectis_proxy_http_version {
   VECTIS_PROXY_HTTP_1_1 = 1
 } vectis_proxy_http_version;
 
+typedef struct vectis_proxy_inbound vectis_proxy_inbound;
+typedef struct vectis_proxy_outbound vectis_proxy_outbound;
+
+/**
+ * Synchronous request rewrite, called after Vectis validates and sanitizes
+ * the inbound headers and before any upstream connection. Both views are
+ * borrowed for this call. Returning an error rejects the request locally.
+ * The callback must not block, retain either view, or consume a request body.
+ */
+typedef vectis_status (*vectis_proxy_rewrite_fn)(
+    const vectis_proxy_inbound *inbound, vectis_proxy_outbound *outbound,
+    void *userdata, vectis_error *error);
+
+/** Borrowed raw request metadata. NULL means no query or path parameter. */
+vectis_http_method vectis_proxy_inbound_method(const vectis_proxy_inbound *in);
+const char *vectis_proxy_inbound_path(const vectis_proxy_inbound *in);
+const char *vectis_proxy_inbound_query(const vectis_proxy_inbound *in);
+const char *vectis_proxy_inbound_host(const vectis_proxy_inbound *in);
+int vectis_proxy_inbound_websocket(const vectis_proxy_inbound *in);
+const char *vectis_proxy_inbound_path_param(const vectis_proxy_inbound *in,
+                                            const char *name);
+size_t vectis_proxy_inbound_header_count(const vectis_proxy_inbound *in);
+/** Header names and values remain valid only during the rewrite call. */
+vectis_status vectis_proxy_inbound_header_at(const vectis_proxy_inbound *in,
+                                             size_t index, const char **name,
+                                             const char **value);
+
+/**
+ * Mutate sanitized outbound metadata. Setters copy strings before returning.
+ * Target indices refer to target (zero) followed by alternate_targets in
+ * registration order. Only end-to-end fields may be edited through these
+ * helpers; Host has its own setter. Vectis validates the final raw target and
+ * handshake again before connecting.
+ */
+vectis_status vectis_proxy_outbound_select_target(vectis_proxy_outbound *out,
+                                                  size_t index,
+                                                  vectis_error *error);
+vectis_status vectis_proxy_outbound_set_method(vectis_proxy_outbound *out,
+                                               vectis_http_method method,
+                                               vectis_error *error);
+vectis_status vectis_proxy_outbound_set_path(vectis_proxy_outbound *out,
+                                             const char *raw_path,
+                                             vectis_error *error);
+vectis_status vectis_proxy_outbound_set_query(vectis_proxy_outbound *out,
+                                              const char *raw_query,
+                                              vectis_error *error);
+vectis_status vectis_proxy_outbound_set_host(vectis_proxy_outbound *out,
+                                             const char *host,
+                                             vectis_error *error);
+vectis_status vectis_proxy_outbound_add_header(vectis_proxy_outbound *out,
+                                               const char *name,
+                                               const char *value,
+                                               vectis_error *error);
+vectis_status vectis_proxy_outbound_set_header(vectis_proxy_outbound *out,
+                                               const char *name,
+                                               const char *value,
+                                               vectis_error *error);
+vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
+                                                  const char *name,
+                                                  vectis_error *error);
+
 /**
  * Registration input for one in-process reverse proxy route.
  *
@@ -55,6 +116,9 @@ struct vectis_proxy_route_config {
    * default CA bundle for this route; peer and hostname checks remain on.
    * A nonempty bundle may contain at most 256 KiB of PEM text. */
   const char *tls_ca_pem;
+  /* Optional synchronous rewrite hook and borrowed application context. */
+  vectis_proxy_rewrite_fn rewrite;
+  void *rewrite_userdata;
 };
 
 /** Set the documented zero-value defaults. NULL is ignored. */
