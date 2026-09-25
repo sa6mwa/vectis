@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <assert.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <openssl/bio.h>
 #include <openssl/crypto.h>
@@ -13,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -21,6 +23,22 @@
 #include <vectis/vectis.h>
 
 #define WSS_PAYLOAD_BYTES (128u * 1024u)
+#define WSS_SLOW_PAYLOAD_BYTES (32u * 1024u * 1024u)
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define WSS_ASAN_ENABLED 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(WSS_ASAN_ENABLED)
+#define WSS_MAX_RSS_DELTA_KB (128u * 1024u)
+#else
+#define WSS_MAX_RSS_DELTA_KB (24u * 1024u)
+#endif
+
+typedef struct test_probe {
+  volatile pid_t worker_pid;
+  volatile unsigned long baseline_rss_kb;
+} test_probe;
 
 typedef struct tls_origin {
   SSL_CTX *ctx;
@@ -31,6 +49,11 @@ typedef struct tls_origin {
   int ws_offered_alpn;
   int http_offered_alpn;
   int require_client_cert;
+  int slow;
+  int cancel;
+  volatile int response_started;
+  volatile size_t produced;
+  volatile int write_failed;
 } tls_origin;
 
 static const char client_head[] =
@@ -49,7 +72,48 @@ static const unsigned char client_big_head[] = {
     0x82u, 0xffu, 0u, 0u, 0u, 0u, 0u, 2u, 0u, 0u, 0x12u, 0x34u, 0x56u, 0x78u};
 static const unsigned char server_big_head[] = {0x82u, 0x7fu, 0u, 0u, 0u,
                                                 0u,    0u,    2u, 0u, 0u};
+static const unsigned char client_slow_head[] = {0x82u, 0xffu, 0u,    0u,   0u,
+                                                 0u,    0x02u, 0u,    0u,   0u,
+                                                 0x12u, 0x34u, 0x56u, 0x78u};
+static const unsigned char server_slow_head[] = {0x82u, 0x7fu, 0u, 0u, 0u,
+                                                 0u,    0x02u, 0u, 0u, 0u};
 static const unsigned char mask[] = {0x12u, 0x34u, 0x56u, 0x78u};
+
+static unsigned long process_rss_kb(pid_t pid) {
+  char path[64];
+  char line[256];
+  unsigned long amount;
+  FILE *file;
+
+  assert(snprintf(path, sizeof(path), "/proc/%ld/status", (long)pid) > 0);
+  file = fopen(path, "r");
+  assert(file != NULL);
+  amount = 0u;
+  while (fgets(line, sizeof(line), file) != NULL) {
+    if (sscanf(line, "VmRSS: %lu kB", &amount) == 1)
+      break;
+  }
+  assert(fclose(file) == 0);
+  assert(amount != 0u);
+  return amount;
+}
+
+static vectis_status capture_worker(const vectis_proxy_inbound *inbound,
+                                    vectis_proxy_local_response *response,
+                                    void *userdata, vectis_error *error) {
+  test_probe *probe;
+
+  (void)inbound;
+  (void)response;
+  (void)error;
+  probe = (test_probe *)userdata;
+  if (probe->worker_pid == 0) {
+    probe->baseline_rss_kb = process_rss_kb(getpid());
+    __sync_synchronize();
+    probe->worker_pid = getpid();
+  }
+  return VECTIS_OK;
+}
 
 static EVP_PKEY *make_key(void) {
   EVP_PKEY_CTX *ctx;
@@ -151,9 +215,13 @@ static void *origin_main(void *userdata) {
   X509 *peer_cert;
   size_t used;
   size_t offset;
+  size_t payload_bytes;
   size_t i;
   int fd;
   int got;
+  int sent;
+  int ssl_error;
+  int socket_error;
 
   origin = (tls_origin *)userdata;
   timeout.tv_sec = 5;
@@ -162,6 +230,9 @@ static void *origin_main(void *userdata) {
   assert(fd >= 0);
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
          0);
+  if (origin->cancel)
+    assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) ==
+           0);
   ssl = SSL_new(origin->ctx);
   assert(ssl != NULL);
   assert(SSL_set_fd(ssl, fd) == 1);
@@ -186,19 +257,44 @@ static void *origin_main(void *userdata) {
   memcpy(response + sizeof(upstream_head) - 1u, server_early,
          sizeof(server_early));
   ssl_write_all(ssl, response, sizeof(response));
+  if (origin->slow)
+    usleep(200000u);
   ssl_read_exact(ssl, early, sizeof(early));
   assert(memcmp(early, client_early, sizeof(early)) == 0);
   ssl_read_exact(ssl, header, sizeof(header));
-  assert(memcmp(header, client_big_head, sizeof(header)) == 0);
-  for (offset = 0u; offset < WSS_PAYLOAD_BYTES; offset += sizeof(chunk)) {
+  assert(memcmp(header, origin->slow ? client_slow_head : client_big_head,
+                sizeof(header)) == 0);
+  payload_bytes = origin->slow ? WSS_SLOW_PAYLOAD_BYTES : WSS_PAYLOAD_BYTES;
+  for (offset = 0u; offset < payload_bytes; offset += sizeof(chunk)) {
     ssl_read_exact(ssl, chunk, sizeof(chunk));
     for (i = 0u; i < sizeof(chunk); ++i)
       assert(chunk[i] == (unsigned char)('A' ^ mask[(offset + i) % 4u]));
   }
-  ssl_write_all(ssl, server_big_head, sizeof(server_big_head));
+  ssl_write_all(ssl, origin->slow ? server_slow_head : server_big_head,
+                sizeof(server_big_head));
+  if (origin->slow)
+    (void)__sync_lock_test_and_set(&origin->response_started, 1);
   memset(chunk, 'B', sizeof(chunk));
-  for (offset = 0u; offset < WSS_PAYLOAD_BYTES; offset += sizeof(chunk))
-    ssl_write_all(ssl, chunk, sizeof(chunk));
+  for (offset = 0u; offset < payload_bytes; offset += sizeof(chunk)) {
+    if (origin->cancel) {
+      sent = SSL_write(ssl, chunk, (int)sizeof(chunk));
+      if (sent <= 0) {
+        socket_error = errno;
+        ssl_error = SSL_get_error(ssl, sent);
+        assert(ssl_error != SSL_ERROR_WANT_READ &&
+               ssl_error != SSL_ERROR_WANT_WRITE);
+        assert(ssl_error != SSL_ERROR_SYSCALL ||
+               (socket_error != EAGAIN && socket_error != EWOULDBLOCK));
+        (void)__sync_lock_test_and_set(&origin->write_failed, 1);
+        break;
+      }
+      assert(sent == (int)sizeof(chunk));
+    } else {
+      ssl_write_all(ssl, chunk, sizeof(chunk));
+    }
+    if (origin->slow)
+      (void)__sync_add_and_fetch(&origin->produced, sizeof(chunk));
+  }
   SSL_free(ssl);
   assert(close(fd) == 0);
 
@@ -324,7 +420,8 @@ static unsigned short available_port(void) {
   return port;
 }
 
-static void run_trusted(unsigned short app_port) {
+static void run_trusted(unsigned short app_port, tls_origin *origin,
+                        test_probe *probe) {
   unsigned char response[2048];
   unsigned char chunk[4096];
   unsigned char header[sizeof(server_big_head)];
@@ -332,10 +429,16 @@ static void run_trusted(unsigned short app_port) {
   const char *boundary;
   size_t used;
   size_t offset;
+  size_t payload_bytes;
   size_t i;
   ssize_t got;
   int fd;
+  int slow;
+  unsigned long stalled_rss_kb;
+  unsigned long current_rss_kb;
+  size_t stalled_produced;
 
+  slow = origin->slow;
   fd = connect_app(app_port);
   send_all(fd, client_head, sizeof(client_head) - 1u);
   send_all(fd, client_early, sizeof(client_early));
@@ -354,15 +457,47 @@ static void run_trusted(unsigned short app_port) {
   assert(strstr((const char *)response, "HTTP/1.1 101 ") != NULL);
   frame = (const unsigned char *)boundary + 4u;
   assert(memcmp(frame, server_early, sizeof(server_early)) == 0);
-  send_all(fd, client_big_head, sizeof(client_big_head));
-  for (offset = 0u; offset < WSS_PAYLOAD_BYTES; offset += sizeof(chunk)) {
+  send_all(fd, slow ? client_slow_head : client_big_head,
+           sizeof(client_big_head));
+  payload_bytes = slow ? WSS_SLOW_PAYLOAD_BYTES : WSS_PAYLOAD_BYTES;
+  for (offset = 0u; offset < payload_bytes; offset += sizeof(chunk)) {
     for (i = 0u; i < sizeof(chunk); ++i)
       chunk[i] = (unsigned char)('A' ^ mask[(offset + i) % 4u]);
     send_all(fd, chunk, sizeof(chunk));
   }
+  if (slow) {
+    for (i = 0u; i < 500u; ++i) {
+      if (__sync_fetch_and_add(&origin->response_started, 0) != 0)
+        break;
+      usleep(10000u);
+    }
+    assert(i < 500u);
+    assert(probe != NULL && probe->worker_pid > 0);
+    stalled_rss_kb = process_rss_kb(probe->worker_pid);
+    for (i = 0u; i < 10u; ++i) {
+      usleep(20000u);
+      current_rss_kb = process_rss_kb(probe->worker_pid);
+      if (current_rss_kb > stalled_rss_kb)
+        stalled_rss_kb = current_rss_kb;
+    }
+    stalled_produced = __sync_fetch_and_add(&origin->produced, 0u);
+    assert(stalled_produced >= 1048576u);
+    assert(stalled_produced < payload_bytes);
+    fprintf(stderr,
+            "production WSS slow peer: baseline=%luKB sampled_peak=%luKB "
+            "origin_sent=%lu/%lu\n",
+            probe->baseline_rss_kb, stalled_rss_kb,
+            (unsigned long)stalled_produced, (unsigned long)payload_bytes);
+    assert(stalled_rss_kb <= probe->baseline_rss_kb + WSS_MAX_RSS_DELTA_KB);
+    if (origin->cancel) {
+      assert(close(fd) == 0);
+      return;
+    }
+  }
   read_exact(fd, header, sizeof(header));
-  assert(memcmp(header, server_big_head, sizeof(header)) == 0);
-  for (offset = 0u; offset < WSS_PAYLOAD_BYTES; offset += sizeof(chunk)) {
+  assert(memcmp(header, slow ? server_slow_head : server_big_head,
+                sizeof(header)) == 0);
+  for (offset = 0u; offset < payload_bytes; offset += sizeof(chunk)) {
     read_exact(fd, chunk, sizeof(chunk));
     for (i = 0u; i < sizeof(chunk); ++i)
       assert(chunk[i] == 'B');
@@ -433,11 +568,22 @@ int main(void) {
   char target[128];
   unsigned short app_port;
   int mtls;
+  test_probe *probe;
 
   assert(signal(SIGPIPE, SIG_IGN) != SIG_ERR);
   memset(&origin, 0, sizeof(origin));
   mtls = getenv("VECTIS_PROXY_WSS_MTLS") != NULL;
   origin.require_client_cert = mtls;
+  origin.slow = getenv("VECTIS_PROXY_WSS_SLOW") != NULL;
+  origin.cancel = getenv("VECTIS_PROXY_WSS_CANCEL") != NULL;
+  assert(!origin.cancel || origin.slow);
+  probe = NULL;
+  if (origin.slow) {
+    probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
+                 MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    assert(probe != MAP_FAILED);
+    memset(probe, 0, sizeof(*probe));
+  }
   key = make_key();
   cert = make_cert(key);
   origin.ctx = SSL_CTX_new(TLS_server_method());
@@ -489,6 +635,10 @@ int main(void) {
   proxy.methods = VECTIS_HTTP_METHODS_GET;
   proxy.target = target;
   proxy.tls_ca_pem = ca_pem;
+  if (probe != NULL) {
+    proxy.preflight = capture_worker;
+    proxy.preflight_userdata = probe;
+  }
   if (mtls) {
     proxy.tls_client_cert_pem = ca_pem;
     proxy.tls_client_key_pem = client_key_pem;
@@ -506,10 +656,14 @@ int main(void) {
   }
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
-  run_trusted(app_port);
+  run_trusted(app_port, &origin, probe);
   run_untrusted(app_port);
   run_http(app_port);
   assert(pthread_join(origin.thread, NULL) == 0);
+  if (origin.cancel) {
+    assert(__sync_fetch_and_add(&origin.write_failed, 0) == 1);
+    assert(__sync_fetch_and_add(&origin.produced, 0u) < WSS_SLOW_PAYLOAD_BYTES);
+  }
   assert(origin.hello_count == 3);
   assert(!origin.ws_offered_alpn);
   assert(origin.http_offered_alpn);
@@ -521,5 +675,7 @@ int main(void) {
   BIO_free(key_pem);
   X509_free(cert);
   EVP_PKEY_free(key);
+  if (probe != NULL)
+    assert(munmap(probe, sizeof(*probe)) == 0);
   return 0;
 }

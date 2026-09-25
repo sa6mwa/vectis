@@ -10,8 +10,11 @@ incremental HTTP/1.1 rejection path; a cleartext live test covers a 1 MiB
 fixed-length rejection that starts before the origin finishes sending, chunked
 trailers, and `103` followed by a close-delimited final response. A verified
 local WSS route now relays 128 KiB frames in both directions, rejects an
-untrusted peer, and shares its optional CA bundle with ordinary HTTPS. TLS
-retry, backpressure, and shutdown cases need production-route tests.
+untrusted peer, and shares its optional CA bundle with ordinary HTTPS. A
+slow-peer mTLS variant covers larger frames, bounded worker RSS, and
+downstream cancellation during a partial TLS response. Explicit libcurl TLS
+retry and worker shutdown during a live tunnel still need production-route
+tests.
 The C and Lua request rewrite hooks now select a configured target and edit
 method, raw path/query, Host, and bounded end-to-end headers before either
 upstream transport starts. C and Lua final-response hooks edit downstream
@@ -800,6 +803,23 @@ after teardown. Both client and origin sockets accepted 64 MiB of frame
 payload. The ASan variant passed the same behavioral checks and its 256 MiB
 aggregate RSS ceiling. These figures include allocator retention and do not
 establish a per-tunnel allocator bound.
+
+The WSS mTLS variant transfers one 32 MiB frame in each direction using
+bounded chunks. The upstream pauses before consuming the client frame, and
+the downstream stops reading the server frame for 200 ms. During that pause,
+the TLS origin had written 7,356,416 bytes of its 32 MiB frame and remained
+blocked; sampled worker RSS peaked at 12,356 KiB from an 8,376 KiB baseline
+in a local Linux Debug run. The complete frame later arrived intact. The
+test passed under ASan as well and keeps a 24 MiB incremental Debug RSS
+ceiling for this one-tunnel profile. This verifies slow-peer backpressure
+through the WSS route; it does not instrument individual libcurl
+`CURLE_AGAIN` returns.
+A cancellation variant closes the downstream client during that partial
+32 MiB response. The TLS origin observes a write failure before finishing
+the frame; the worker then serves a rejected untrusted WSS request and a
+successful HTTPS request before clean app shutdown. Debug and ASan runs pass.
+This covers downstream cancellation while the TLS origin is blocked, but
+does not simulate worker shutdown while the tunnel is still active.
 
 The mixed production-route smoke holds eight certificate-verified HTTP/2
 slow-reader downloads and eight cleartext WebSocket tunnels in the same worker.
