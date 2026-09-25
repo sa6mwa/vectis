@@ -17,6 +17,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <vectis/proxy.h>
@@ -52,6 +53,8 @@ typedef struct tls_origin {
   int slow;
   int cancel;
   int shutdown;
+  int delay_head;
+  volatile int head_pending;
   volatile int response_started;
   volatile size_t produced;
   volatile int write_failed;
@@ -257,6 +260,10 @@ static void *origin_main(void *userdata) {
   memcpy(response, upstream_head, sizeof(upstream_head) - 1u);
   memcpy(response + sizeof(upstream_head) - 1u, server_early,
          sizeof(server_early));
+  if (origin->delay_head) {
+    (void)__sync_lock_test_and_set(&origin->head_pending, 1);
+    usleep(600000u);
+  }
   ssl_write_all(ssl, response, sizeof(response));
   if (origin->slow)
     usleep(200000u);
@@ -441,11 +448,35 @@ static void run_trusted(unsigned short app_port, tls_origin *origin,
   unsigned long stalled_rss_kb;
   unsigned long current_rss_kb;
   size_t stalled_produced;
+  clockid_t worker_clock;
+  struct timespec cpu_before;
+  struct timespec cpu_after;
+  long cpu_ms;
 
   slow = origin->slow;
   fd = connect_app(app_port);
   send_all(fd, client_head, sizeof(client_head) - 1u);
   send_all(fd, client_early, sizeof(client_early));
+  if (origin->delay_head) {
+    for (i = 0u; i < 100u; ++i) {
+      if (__sync_fetch_and_add(&origin->head_pending, 0) != 0)
+        break;
+      usleep(10000u);
+    }
+    assert(i < 100u);
+    assert(probe != NULL && probe->worker_pid > 0);
+    assert(clock_getcpuclockid(probe->worker_pid, &worker_clock) == 0);
+    assert(clock_gettime(worker_clock, &cpu_before) == 0);
+    usleep(300000u);
+    assert(recv(fd, response, sizeof(response), MSG_DONTWAIT) == -1);
+    assert(errno == EAGAIN || errno == EWOULDBLOCK);
+    assert(clock_gettime(worker_clock, &cpu_after) == 0);
+    cpu_ms = (long)(cpu_after.tv_sec - cpu_before.tv_sec) * 1000L +
+             (long)(cpu_after.tv_nsec - cpu_before.tv_nsec) / 1000000L;
+    fprintf(stderr, "production WSS idle handshake worker CPU=%ldms/300ms\n",
+            cpu_ms);
+    assert(cpu_ms < 150L);
+  }
   used = 0u;
   do {
     got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
@@ -586,10 +617,11 @@ int main(void) {
   origin.slow = getenv("VECTIS_PROXY_WSS_SLOW") != NULL;
   origin.cancel = getenv("VECTIS_PROXY_WSS_CANCEL") != NULL;
   origin.shutdown = getenv("VECTIS_PROXY_WSS_SHUTDOWN") != NULL;
+  origin.delay_head = getenv("VECTIS_PROXY_WSS_RETRY") != NULL;
   assert(!origin.cancel || origin.slow);
   assert(!origin.shutdown || (origin.slow && origin.cancel));
   probe = NULL;
-  if (origin.slow) {
+  if (origin.slow || origin.delay_head) {
     probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
                  MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     assert(probe != MAP_FAILED);
