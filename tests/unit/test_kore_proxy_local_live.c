@@ -102,6 +102,26 @@ static size_t request_app(unsigned short port, const char *request,
   return used;
 }
 
+static unsigned long metric_bucket(vectis_app *app, const char *name) {
+  vectis_mutable_bytes snapshot;
+  vectis_error error;
+  char key[32];
+  const char *value;
+  char *end;
+  unsigned long count;
+
+  memset(&snapshot, 0, sizeof(snapshot));
+  assert(vectis_metrics_snapshot_json(app, &snapshot, &error) == VECTIS_OK);
+  assert(snprintf(key, sizeof(key), "\"%s\":", name) > 0);
+  value = strstr((const char *)snapshot.data, key);
+  assert(value != NULL);
+  value += strlen(key);
+  count = strtoul(value, &end, 10);
+  assert(end != value);
+  vectis_mutable_bytes_cleanup(&snapshot);
+  return count;
+}
+
 static void *origin_main(void *userdata) {
   origin_server *server;
   char request[1024];
@@ -173,6 +193,7 @@ static vectis_status on_error(const vectis_error *cause, int default_status,
 int main(void) {
   origin_server origin;
   vectis_proxy_route_config proxy;
+  vectis_metrics_config metrics;
   vectis_app_config config;
   vectis_app *app;
   vectis_error error;
@@ -183,6 +204,8 @@ int main(void) {
   char response[2048];
   const char *boundary;
   size_t length;
+  unsigned long prior_2xx;
+  unsigned long prior_5xx;
 
   origin.port = listen_port(&origin.listener);
   app_port = unused_port();
@@ -217,6 +240,8 @@ int main(void) {
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   proxy.path = "/proxy/ws";
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
+  vectis_metrics_config_init(&metrics);
+  assert(app->metrics(app, &metrics, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
 
@@ -257,6 +282,7 @@ int main(void) {
   assert(boundary != NULL && strstr(response, "Content-Length: 4\r\n") != NULL);
   assert(length == (size_t)(boundary + 4u - response));
 
+  prior_2xx = metric_bucket(app, "2xx");
   length = request_app(app_port,
                        "GET /proxy/preflight/allow HTTP/1.1\r\n"
                        "Host: localhost\r\n\r\n",
@@ -264,7 +290,9 @@ int main(void) {
   assert(length != 0u && strstr(response, "200 ") != NULL);
   assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
   assert(strstr(response, "\r\n\r\n2\r\nok\r\n0\r\n\r\n") != NULL);
+  assert(metric_bucket(app, "2xx") == prior_2xx + 1u);
 
+  prior_5xx = metric_bucket(app, "5xx");
   length = request_app(app_port,
                        "GET /proxy/error HTTP/1.1\r\n"
                        "Host: localhost\r\n\r\n",
@@ -272,6 +300,7 @@ int main(void) {
   assert(length != 0u && strstr(response, "503 ") != NULL);
   assert(strstr(response, "X-Local: gateway\r\n") != NULL);
   assert(strstr(response, "\r\n\r\nupstream down") != NULL);
+  assert(metric_bucket(app, "5xx") == prior_5xx + 1u);
 
   length = request_app(app_port,
                        "GET /proxy/ws HTTP/1.1\r\nHost: localhost\r\n"
@@ -282,6 +311,7 @@ int main(void) {
   assert(length != 0u && strstr(response, "503 ") != NULL);
   assert(strstr(response, "X-Local: gateway\r\n") != NULL);
   assert(strstr(response, "\r\n\r\nupstream down") != NULL);
+  assert(metric_bucket(app, "5xx") == prior_5xx + 2u);
 
   assert(pthread_join(origin.thread, NULL) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);

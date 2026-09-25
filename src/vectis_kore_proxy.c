@@ -62,6 +62,7 @@ typedef struct vectis_kore_proxy_state {
   int response_status;
   int error_status;
   int headers_queued;
+  int response_accounted;
   int final_queued;
   int done;
   int failed;
@@ -344,6 +345,12 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     state->final_queued = 0;
   }
   if (!TAILQ_EMPTY(&connection->send_queue)) {
+    if (state->headers_queued && !state->response_accounted) {
+      vectis_internal_metrics_note_http_status(state->app,
+                                               state->response_status);
+      connection->http_response_count++;
+      state->response_accounted = 1;
+    }
     connection->evt.flags |= KORE_EVENT_WRITE;
     if (net_send_flush(connection) != KORE_RESULT_OK) {
       kore_connection_disconnect(connection);
@@ -369,6 +376,7 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     }
     vectis_proxy_local_cleanup(&local);
     state->headers_queued = 1;
+    state->response_accounted = 1;
     state->final_queued = 1;
     state->done = 1;
     state->failed = 0;
@@ -379,9 +387,6 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     net_send_queue(connection, state->wire.head, state->wire.head_length);
     state->headers_queued = 1;
     state->request->status = (u_int16_t)state->response_status;
-    vectis_internal_metrics_note_http_status(state->app,
-                                             state->response_status);
-    connection->http_response_count++;
     vectis_kore_proxy_schedule(state);
     return 1;
   }
