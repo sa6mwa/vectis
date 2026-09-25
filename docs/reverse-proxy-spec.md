@@ -21,6 +21,7 @@ the worker's CPU time over 300 ms. It then completes the tunnel. This covers
 the no-data retry behavior and watcher spin without adding a test hook to the
 production transport; it does not prove which internal TLS retry direction
 libcurl requested.
+
 The C and Lua request rewrite hooks now select a configured target and edit
 method, raw path/query, Host, and bounded end-to-end headers before either
 upstream transport starts. C and Lua final-response hooks edit downstream
@@ -28,11 +29,12 @@ status and bounded end-to-end headers before commitment for HTTP, SSE, and
 non-`101` WebSocket rejections; successful upgrades bypass the hook. C and Lua
 preflight hooks now answer at headers time, and gateway-error hooks can answer
 before HTTP or WebSocket response headers are sent. Admission failures outside
-preflight still use fixed local responses; extending the error hook to every
-uncommitted failure remains open. A Kore send-queue test covers the replacement
-decision and local reply bytes before any write attempt. A Linux production-route
-test holds the queued upstream 200 without writing it, closes the upstream,
-and verifies a complete 502 on the wire and a single 5xx metric.
+preflight and request-validation failures use fixed local 400/500/503 responses;
+`on_error` handles uncommitted gateway 502/504 failures. A Kore send-queue test
+covers the replacement decision and local reply bytes before any write attempt.
+A Linux production-route test holds a queued upstream 200 without writing it,
+closes the upstream, and verifies a complete 502 on the wire and a single 5xx
+metric.
 
 HTTP/SSE now enforces the route's no-progress idle deadline: a stalled
 upstream receives a local `504` before commitment, while an idle committed
