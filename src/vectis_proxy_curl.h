@@ -38,5 +38,7 @@ vectis_proxy_curl_handoff_socket(vectis_proxy_curl_transfer *transfer,
 void vectis_proxy_curl_cancel(vectis_proxy_curl_transfer *transfer);
 void vectis_proxy_curl_worker_cleanup(void);
 size_t vectis_proxy_curl_active_count(void);
+/* Check the shared HTTP/WebSocket exchange cap before route allocations. */
+int vectis_proxy_curl_admission_available(void);
 
 #endif

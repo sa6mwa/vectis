@@ -319,7 +319,7 @@ static vectis_status vectis_proxy_curl_submit_internal(
         "proxy curl submission requires easy, callback and output");
     return VECTIS_ERR_INVALID;
   }
-  if (vectis_proxy_curl_active >= VECTIS_PROXY_CURL_ACTIVE_LIMIT) {
+  if (!vectis_proxy_curl_admission_available()) {
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "proxy worker exchange limit reached");
     return VECTIS_ERR_STATE;
@@ -477,3 +477,7 @@ void vectis_proxy_curl_worker_cleanup(void) {
 }
 
 size_t vectis_proxy_curl_active_count(void) { return vectis_proxy_curl_active; }
+
+int vectis_proxy_curl_admission_available(void) {
+  return vectis_proxy_curl_active < VECTIS_PROXY_CURL_ACTIVE_LIMIT;
+}

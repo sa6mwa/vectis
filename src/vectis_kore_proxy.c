@@ -690,6 +690,13 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
     }
     vectis_proxy_local_cleanup(&local);
   }
+  if (!vectis_proxy_curl_admission_available()) {
+    vectis_proxy_headers_cleanup(&outbound);
+    vectis_proxy_headers_cleanup(&inbound);
+    vectis_internal_request_free(route_request);
+    return vectis_kore_proxy_reject(request, 503,
+                                    "proxy worker exchange limit reached\n");
+  }
   header_status = vectis_proxy_headers_sanitize_request(&inbound, &outbound);
   if (header_status != VECTIS_PROXY_HEADER_OK) {
     vectis_proxy_headers_cleanup(&outbound);

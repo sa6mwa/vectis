@@ -28,9 +28,12 @@ and verifies a complete 502 on the wire and a single 5xx metric.
 HTTP/SSE now enforces the route's no-progress idle deadline: a stalled
 upstream receives a local `504` before commitment, while an idle committed
 stream closes without a final success chunk. A live SSE fixture also stays
-open beyond the deadline when periodic events make progress. The remaining
-resource limits, including aggregate worker memory admission, are still in
-progress.
+open beyond the deadline when periodic events make progress. A provisional
+shared 16-exchange cap now rejects excess HTTP and WebSocket requests with
+`503` at header admission, before allocating proxy exchange buffers; a live
+test holds sixteen streams and verifies both rejections without an extra
+upstream connection. The measured aggregate worker memory allowance remains
+open.
 
 The [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
