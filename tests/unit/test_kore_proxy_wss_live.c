@@ -510,15 +510,18 @@ static void run_trusted(unsigned short app_port, tls_origin *origin,
   unsigned long stalled_rss_kb;
   unsigned long current_rss_kb;
   size_t stalled_produced;
+#if defined(__linux__)
   clockid_t worker_clock;
   struct timespec cpu_before;
   struct timespec cpu_after;
   long cpu_ms;
+#endif
 
   slow = origin->slow;
   fd = connect_app(app_port);
   send_all(fd, client_head, sizeof(client_head) - 1u);
   send_all(fd, client_early, sizeof(client_early));
+#if defined(__linux__)
   if (origin->delay_head) {
     for (i = 0u; i < 100u; ++i) {
       if (__sync_fetch_and_add(&origin->head_pending, 0) != 0)
@@ -542,6 +545,7 @@ static void run_trusted(unsigned short app_port, tls_origin *origin,
     fprintf(stderr, "production WSS curl recv CURLE_AGAIN=%lu\n",
             __sync_fetch_and_add(&probe->recv_again, 0u));
   }
+#endif
   used = 0u;
   do {
     got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
