@@ -16,6 +16,7 @@ typedef enum vectis_proxy_header_status {
 } vectis_proxy_header_status;
 
 typedef struct vectis_proxy_header {
+  /* Both strings share one allocation owned by name. */
   char *name;
   char *value;
 } vectis_proxy_header;

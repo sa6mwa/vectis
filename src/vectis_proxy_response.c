@@ -117,7 +117,6 @@ vectis_proxy_response_remove_header(vectis_proxy_response *response,
     length = strlen(response->headers->fields[i].name) +
              strlen(response->headers->fields[i].value);
     free(response->headers->fields[i].name);
-    free(response->headers->fields[i].value);
     if (i + 1u < response->headers->count)
       memmove(&response->headers->fields[i], &response->headers->fields[i + 1u],
               (response->headers->count - i - 1u) *

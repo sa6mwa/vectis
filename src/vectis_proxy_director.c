@@ -244,7 +244,6 @@ vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
     length = strlen(out->headers.fields[i].name) +
              strlen(out->headers.fields[i].value);
     free(out->headers.fields[i].name);
-    free(out->headers.fields[i].value);
     if (i + 1u < out->headers.count)
       memmove(&out->headers.fields[i], &out->headers.fields[i + 1u],
               (out->headers.count - i - 1u) * sizeof(out->headers.fields[0]));

@@ -261,7 +261,6 @@ void vectis_proxy_headers_cleanup(vectis_proxy_headers *headers) {
   }
   for (i = 0u; i < headers->count; ++i) {
     free(headers->fields[i].name);
-    free(headers->fields[i].value);
   }
   vectis_proxy_headers_init(headers);
 }
@@ -300,13 +299,11 @@ vectis_proxy_headers_add(vectis_proxy_headers *headers, const char *name,
       return VECTIS_PROXY_HEADER_INVALID;
     }
   }
-  name_copy = (char *)malloc(name_length + 1u);
-  value_copy = (char *)malloc(value_length + 1u);
-  if (name_copy == NULL || value_copy == NULL) {
-    free(name_copy);
-    free(value_copy);
+  name_copy = (char *)malloc(name_length + value_length + 2u);
+  if (name_copy == NULL) {
     return VECTIS_PROXY_HEADER_NOMEM;
   }
+  value_copy = name_copy + name_length + 1u;
   memcpy(name_copy, name, name_length + 1u);
   memcpy(value_copy, value, value_length + 1u);
   headers->fields[headers->count].name = name_copy;
