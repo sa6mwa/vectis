@@ -66,6 +66,12 @@ static vectis_status invalid_edit(const vectis_proxy_inbound *in,
   if (kind == 9)
     assert(vectis_proxy_outbound_add_header(out, "X-Invalid", "bad\r\nnext",
                                             error) == VECTIS_ERR_INVALID);
+  if (kind == 10)
+    assert(vectis_proxy_outbound_set_method(out, VECTIS_HTTP_ANY, error) ==
+           VECTIS_ERR_INVALID);
+  if (kind == 11)
+    assert(vectis_proxy_outbound_set_method(out, (vectis_http_method)999,
+                                            error) == VECTIS_ERR_INVALID);
   /* Even if the callback ignores the failed setter, admission must fail. */
   return VECTIS_OK;
 }
@@ -139,7 +145,7 @@ static void check_invalid(void) {
   vectis_proxy_headers_init(&sanitized);
   assert(vectis_proxy_headers_add(&inbound, "Host", "client.test") ==
          VECTIS_PROXY_HEADER_OK);
-  for (kind = 1; kind <= 9; ++kind) {
+  for (kind = 1; kind <= 11; ++kind) {
     target = NULL;
     authority = NULL;
     assert(vectis_proxy_director_prepare(

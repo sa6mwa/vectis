@@ -116,7 +116,7 @@ vectis_status vectis_proxy_outbound_select_target(vectis_proxy_outbound *out,
 vectis_status vectis_proxy_outbound_set_method(vectis_proxy_outbound *out,
                                                vectis_http_method method,
                                                vectis_error *error) {
-  if (out == NULL || vectis_http_method_string(method) == NULL ||
+  if (out == NULL || method < VECTIS_HTTP_GET || method > VECTIS_HTTP_MOVE ||
       (out->websocket && method != VECTIS_HTTP_GET)) {
     if (out != NULL)
       out->failure = VECTIS_ERR_INVALID;

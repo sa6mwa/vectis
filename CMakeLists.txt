@@ -1182,6 +1182,7 @@ const unsigned char vectis_cli_lua_sources_data[] = {
 
   set(vectis_binary_runner_sources
     src/vectis_cli.c
+    src/vectis_cli_proxy_lua.c
     src/vectis_smith_cli.c
     src/vectis_main.c
     $<TARGET_OBJECTS:vectis_cli_resources>

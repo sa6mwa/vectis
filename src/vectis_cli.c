@@ -50,6 +50,7 @@
 #endif
 #include <zlib.h>
 
+#include "vectis_cli_proxy_lua.h"
 #include "vectis_opcua_lua.h"
 
 typedef struct vectis_cli_embedded_resource {
@@ -401,6 +402,7 @@ struct vectis_lua_app {
   vectis_lua_app_dsv_route *dsv_routes;
   vectis_lua_app_upload_route *upload_routes;
   vectis_lua_app_websocket_route *websocket_routes;
+  vectis_lua_proxy_route *proxy_routes;
   vectis_lua_app_mcp_route *mcp_routes;
   vectis_lua_app_native_auth *native_auths;
   vectis_lua_app_auth_json_route *auth_json_routes;
@@ -7507,6 +7509,21 @@ static void vectis_lua_app_websocket_route_free_all(vectis_lua_app *server) {
   }
 }
 
+static void vectis_lua_app_proxy_route_free_all(vectis_lua_app *server) {
+  vectis_lua_proxy_route *route;
+  vectis_lua_proxy_route *next;
+
+  if (server == NULL)
+    return;
+  route = server->proxy_routes;
+  server->proxy_routes = NULL;
+  while (route != NULL) {
+    next = route->next;
+    vectis_lua_proxy_route_free(route);
+    route = next;
+  }
+}
+
 static void vectis_lua_app_mcp_tool_free(vectis_lua_app_mcp_tool *tool) {
   if (tool == NULL) {
     return;
@@ -8439,6 +8456,7 @@ static int vectis_lua_app_close(lua_State *lua) {
   vectis_lua_app_dsv_route_free_all(server);
   vectis_lua_app_upload_route_free_all(server);
   vectis_lua_app_websocket_route_free_all(server);
+  vectis_lua_app_proxy_route_free_all(server);
   vectis_lua_app_mcp_route_free_all(server);
   vectis_lua_app_auth_json_route_free_all(server);
   vectis_lua_app_openapi_schema_refs_free_all(server);
@@ -11441,7 +11459,9 @@ static int vectis_lua_app_websocket(lua_State *lua) {
 }
 
 static int vectis_lua_app_proxy(lua_State *lua) {
+  vectis_lua_app *server;
   vectis_app *app;
+  vectis_lua_proxy_route *route_data;
   vectis_proxy_route_config config;
   vectis_error error;
   vectis_status status;
@@ -11452,6 +11472,7 @@ static int vectis_lua_app_proxy(lua_State *lua) {
   size_t ca_length;
   size_t i;
 
+  server = vectis_lua_check_app(lua, 1);
   app = vectis_lua_app_app(lua, 1);
   luaL_checktype(lua, 2, LUA_TTABLE);
   vectis_proxy_route_config_init(&config);
@@ -11544,11 +11565,35 @@ static int vectis_lua_app_proxy(lua_State *lua) {
     config.alternate_target_count = count;
   }
   /* Keep the Lua target table on the stack until registration copies URLs. */
+  route_data = NULL;
+  lua_getfield(lua, 2, "rewrite");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_isfunction(lua, -1)) {
+      lua_pop(lua, 2);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID, "proxy rewrite must be a function");
+    }
+    route_data = vectis_lua_proxy_route_new(lua, -1);
+    if (route_data == NULL) {
+      lua_pop(lua, 2);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_NOMEM, "failed to retain proxy rewrite");
+    }
+    config.rewrite = vectis_lua_proxy_rewrite;
+    config.rewrite_userdata = route_data;
+  }
+  lua_pop(lua, 1);
   vectis_error_clear(&error);
   status = app->proxy_route(app, &config, &error);
   lua_pop(lua, 1);
   if (status != VECTIS_OK) {
+    vectis_lua_proxy_route_free(route_data);
     return vectis_lua_push_error(lua, status, &error);
+  }
+  if (route_data != NULL) {
+    route_data->next = server->proxy_routes;
+    server->proxy_routes = route_data;
+    vectis_lua_app_retain_callback_owner(lua, 1, route_data);
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -13263,6 +13308,7 @@ static int vectis_lua_app_new(lua_State *lua) {
   server->dsv_routes = NULL;
   server->upload_routes = NULL;
   server->websocket_routes = NULL;
+  server->proxy_routes = NULL;
   server->mcp_routes = NULL;
   server->native_auths = NULL;
   server->auth_json_routes = NULL;

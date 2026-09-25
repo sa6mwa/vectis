@@ -320,13 +320,35 @@ HTTP/2 over HTTPS and uses HTTP/1.1 for cleartext.
 `tls_ca_pem` is copied at registration, accepts up to 256 KiB of PEM text,
 and replaces libcurl's default CA bundle for that route. Peer and hostname
 verification remain enabled. Omit it to use the default trust store.
+An optional `rewrite(inbound, outbound)` callback runs synchronously after
+request headers are validated and before the upstream connection. It cannot
+read a request body or yield. `inbound` contains copied `method`, raw
+`path`, raw `query`, `host`, `websocket`, and an ordered `headers` array
+of `{name, value}`; `inbound:param(name)` reads a matched path parameter.
+Changing these copies does not change the request. `outbound` offers
+`select_target(index)`, `set_method(name)`, `set_path(raw_path)`,
+`set_query(raw_query_or_nil)`, `set_host(host_or_nil)`, `add_header(name,
+value)`, `set_header(name, value)`, and `remove_header(name)`. Target indices
+are one based: 1 is `target`, then `alternate_targets` in order. The setters
+return `true` or `nil, error`; any failed setter rejects the request even if
+the callback ignores its result. The callback returns `nil` or `true` to
+continue. Borrowed helper functions expire when it returns. Only end-to-end
+headers may be changed, and invalid destinations are rejected before connect.
+Request and response bodies remain chunk streamed by the proxy.
 
 ```lua
 assert(app:proxy({
   path = "/api",
   target = "https://backend.example/api",
+  alternate_targets = {"https://other.example/api"},
   methods = {"GET", "POST"},
   buffer_limit_bytes = 16384,
+  rewrite = function(inbound, outbound)
+    if inbound.path == "/api/other" then
+      assert(outbound:select_target(2))
+      assert(outbound:set_path("/other"))
+    end
+  end,
 }))
 ```
 
