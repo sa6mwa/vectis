@@ -181,7 +181,13 @@ validate the original raw path before
 policy. Selector unit tests cover mixed-case escapes, escaped slash/percent/
 colon, raw colon, dot segments, malformed escapes, and double-escape attempts;
 the production listener rejects a raw fragment before invoking `preflight`.
-The remaining route-overlap combinations still need live verification.
+A production-route test covers both registration orders for proxy literal and
+ordinary regex routes, proxy regex and ordinary literal routes, proxy regex
+and static or live-upload routes, and an application WebSocket route
+overlapping a proxy regex. It also checks static `405`, valid and malformed
+WebSocket upgrade dispatch, and escaped-slash raw fallback past ordinary,
+static, and live-upload routes. Each proxy selection answers through its real
+preflight hook before any upstream connection.
 
 This follows Go's newer `Rewrite(in, out)` model rather than copying the
 behavior of its older `Director`: sanitize first, then let application code
