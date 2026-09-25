@@ -1,4 +1,6 @@
 #include "vectis_cli_proxy_lua.h"
+#include "vectis_proxy_director.h"
+#include "vectis_proxy_response.h"
 
 #include <lauxlib.h>
 #include <stdio.h>
@@ -132,10 +134,25 @@ static vectis_http_method vectis_lua_proxy_method(lua_State *lua, int index) {
   return VECTIS_HTTP_ANY;
 }
 
-static const char *vectis_lua_proxy_string(lua_State *lua, int index) {
+static const char *vectis_lua_proxy_string(lua_State *lua, int index,
+                                           vectis_lua_proxy_view *view,
+                                           vectis_error *error) {
+  const char *value;
+  size_t length;
+
   if (lua_type(lua, index) != LUA_TSTRING)
     luaL_error(lua, "proxy value must be a string");
-  return lua_tostring(lua, index);
+  value = lua_tolstring(lua, index, &length);
+  if (memchr(value, '\0', length) != NULL) {
+    if (view->out != NULL)
+      view->out->failure = VECTIS_ERR_INVALID;
+    if (view->response != NULL)
+      view->response->failure = VECTIS_ERR_INVALID;
+    vectis_lua_proxy_error(error, VECTIS_ERR_INVALID,
+                           "proxy metadata string contains NUL");
+    return NULL;
+  }
+  return value;
 }
 
 static int vectis_lua_proxy_edit(lua_State *lua) {
@@ -144,6 +161,8 @@ static int vectis_lua_proxy_edit(lua_State *lua) {
   vectis_error error;
   lua_Integer target_index;
   size_t target_slot;
+  const char *first;
+  const char *second;
   int operation;
   int index;
 
@@ -165,34 +184,54 @@ static int vectis_lua_proxy_edit(lua_State *lua) {
         view->out, vectis_lua_proxy_method(lua, index), &error);
     break;
   case VECTIS_LUA_PROXY_PATH:
-    status = vectis_proxy_outbound_set_path(
-        view->out, vectis_lua_proxy_string(lua, index), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    status = first == NULL
+                 ? VECTIS_ERR_INVALID
+                 : vectis_proxy_outbound_set_path(view->out, first, &error);
     break;
   case VECTIS_LUA_PROXY_QUERY:
-    status = vectis_proxy_outbound_set_query(
-        view->out,
-        lua_isnil(lua, index) ? NULL : vectis_lua_proxy_string(lua, index),
-        &error);
+    first = lua_isnil(lua, index)
+                ? NULL
+                : vectis_lua_proxy_string(lua, index, view, &error);
+    status = !lua_isnil(lua, index) && first == NULL
+                 ? VECTIS_ERR_INVALID
+                 : vectis_proxy_outbound_set_query(view->out, first, &error);
     break;
   case VECTIS_LUA_PROXY_HOST:
-    status = vectis_proxy_outbound_set_host(
-        view->out,
-        lua_isnil(lua, index) ? NULL : vectis_lua_proxy_string(lua, index),
-        &error);
+    first = lua_isnil(lua, index)
+                ? NULL
+                : vectis_lua_proxy_string(lua, index, view, &error);
+    status = !lua_isnil(lua, index) && first == NULL
+                 ? VECTIS_ERR_INVALID
+                 : vectis_proxy_outbound_set_host(view->out, first, &error);
     break;
   case VECTIS_LUA_PROXY_ADD_HEADER:
-    status = vectis_proxy_outbound_add_header(
-        view->out, vectis_lua_proxy_string(lua, index),
-        vectis_lua_proxy_string(lua, index + 1), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    if (first == NULL) {
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    second = vectis_lua_proxy_string(lua, index + 1, view, &error);
+    status = second == NULL ? VECTIS_ERR_INVALID
+                            : vectis_proxy_outbound_add_header(view->out, first,
+                                                               second, &error);
     break;
   case VECTIS_LUA_PROXY_SET_HEADER:
-    status = vectis_proxy_outbound_set_header(
-        view->out, vectis_lua_proxy_string(lua, index),
-        vectis_lua_proxy_string(lua, index + 1), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    if (first == NULL) {
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    second = vectis_lua_proxy_string(lua, index + 1, view, &error);
+    status = second == NULL ? VECTIS_ERR_INVALID
+                            : vectis_proxy_outbound_set_header(view->out, first,
+                                                               second, &error);
     break;
   case VECTIS_LUA_PROXY_REMOVE_HEADER:
-    status = vectis_proxy_outbound_remove_header(
-        view->out, vectis_lua_proxy_string(lua, index), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    status = first == NULL ? VECTIS_ERR_INVALID
+                           : vectis_proxy_outbound_remove_header(view->out,
+                                                                 first, &error);
     break;
   default:
     return luaL_error(lua, "unknown proxy rewrite operation");
@@ -278,6 +317,8 @@ static int vectis_lua_proxy_response_edit(lua_State *lua) {
   vectis_error error;
   vectis_status status;
   lua_Integer status_number;
+  const char *first;
+  const char *second;
   int operation;
   int index;
 
@@ -294,18 +335,32 @@ static int vectis_lua_proxy_response_edit(lua_State *lua) {
         &error);
     break;
   case VECTIS_LUA_PROXY_RESPONSE_ADD_HEADER:
-    status = vectis_proxy_response_add_header(
-        view->response, vectis_lua_proxy_string(lua, index),
-        vectis_lua_proxy_string(lua, index + 1), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    if (first == NULL) {
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    second = vectis_lua_proxy_string(lua, index + 1, view, &error);
+    status = second == NULL ? VECTIS_ERR_INVALID
+                            : vectis_proxy_response_add_header(
+                                  view->response, first, second, &error);
     break;
   case VECTIS_LUA_PROXY_RESPONSE_SET_HEADER:
-    status = vectis_proxy_response_set_header(
-        view->response, vectis_lua_proxy_string(lua, index),
-        vectis_lua_proxy_string(lua, index + 1), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    if (first == NULL) {
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    second = vectis_lua_proxy_string(lua, index + 1, view, &error);
+    status = second == NULL ? VECTIS_ERR_INVALID
+                            : vectis_proxy_response_set_header(
+                                  view->response, first, second, &error);
     break;
   case VECTIS_LUA_PROXY_RESPONSE_REMOVE_HEADER:
-    status = vectis_proxy_response_remove_header(
-        view->response, vectis_lua_proxy_string(lua, index), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    status = first == NULL ? VECTIS_ERR_INVALID
+                           : vectis_proxy_response_remove_header(view->response,
+                                                                 first, &error);
     break;
   default:
     return luaL_error(lua, "unknown proxy response operation");
@@ -373,6 +428,8 @@ vectis_lua_proxy_local_result(lua_State *lua, int index,
   const char *value;
   const char *body;
   size_t body_length;
+  size_t name_length;
+  size_t value_length;
   size_t count;
   size_t i;
   lua_Integer status_number;
@@ -454,8 +511,15 @@ vectis_lua_proxy_local_result(lua_State *lua, int index,
         lua_settop(lua, base);
         return VECTIS_ERR_INVALID;
       }
-      name = lua_tostring(lua, -2);
-      value = lua_tostring(lua, -1);
+      name = lua_tolstring(lua, -2, &name_length);
+      value = lua_tolstring(lua, -1, &value_length);
+      if (memchr(name, '\0', name_length) != NULL ||
+          memchr(value, '\0', value_length) != NULL) {
+        vectis_lua_proxy_error(error, VECTIS_ERR_INVALID,
+                               "proxy local header contains NUL");
+        lua_settop(lua, base);
+        return VECTIS_ERR_INVALID;
+      }
       status = vectis_proxy_local_add_header(response, name, value, error);
       lua_pop(lua, 3);
       if (status != VECTIS_OK) {

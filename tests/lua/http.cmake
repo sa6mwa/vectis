@@ -954,6 +954,16 @@ assert(api_server:proxy({
   end,
 }) == true)
 assert(api_server:proxy({
+  path = "/lua-proxy-nul-rewrite",
+  target = "http://127.0.0.1:28484",
+  rewrite = function(_, outbound)
+    local ok, err = outbound:set_path("/plain\0/ignored")
+    assert(ok == nil and type(err) == "string" and
+           err:find("NUL", 1, true))
+    return true
+  end,
+}) == true)
+assert(api_server:proxy({
   path = "/lua-proxy-sse",
   target = "http://127.0.0.1:28484",
   rewrite = function(inbound, outbound)
@@ -975,6 +985,17 @@ assert(api_server:proxy({
   modify_response = function(response)
     local ok, err = response:add_header("Content-Length", "100")
     assert(ok == nil and type(err) == "string")
+    return true
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-nul-response",
+  target = "http://127.0.0.1:28484",
+  rewrite = function(_, outbound)
+    assert(outbound:set_path("/plain"))
+  end,
+  modify_response = function(response)
+    response:set_header("X-Safe", "ok\0bad")
     return true
   end,
 }) == true)
@@ -1032,6 +1053,14 @@ assert(api_server:proxy({
   target = "http://127.0.0.1:9",
   preflight = function()
     return {status = 200, body = string.rep("x", 65537)}
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-nul-local",
+  target = "http://127.0.0.1:9",
+  preflight = function()
+    return {status = 200, body = "safe",
+            headers = {{name = "X-Safe", value = "ok\0bad"}}}
   end,
 }) == true)
 assert(api_server:proxy({
@@ -1110,6 +1139,11 @@ local bad_proxy_response = vectis.http.get(
   no_signal = true,
 })
 assert(bad_proxy_response.status == 400)
+local nul_rewrite_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-nul-rewrite", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(nul_rewrite_response.status == 400)
 local bad_proxy_response_hook = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy-response-bad", {
   timeout_ms = 2000,
@@ -1117,6 +1151,11 @@ local bad_proxy_response_hook = vectis.http.get(
   no_signal = true,
 })
 assert(bad_proxy_response_hook.status == 502)
+local nul_response_hook = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-nul-response", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(nul_response_hook.status == 502)
 local proxy_ws_rejection = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy-ws-reject", {
   headers = {
@@ -1154,6 +1193,11 @@ local bad_local_proxy_response = vectis.http.get(
   timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
 })
 assert(bad_local_proxy_response.status == 500)
+local nul_local_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-nul-local", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(nul_local_response.status == 500)
 local bad_gateway_proxy_response = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy-error-bad", {
   timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,

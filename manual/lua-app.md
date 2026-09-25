@@ -334,6 +334,8 @@ return `true` or `nil, error`; any failed setter rejects the request even if
 the callback ignores its result. The callback returns `nil` or `true` to
 continue. Borrowed helper functions expire when it returns. Only end-to-end
 headers may be changed, and invalid destinations are rejected before connect.
+Proxy metadata strings cannot contain NUL bytes; setters return `nil, error`
+and reject the request if a NUL is present.
 Request and response bodies remain chunk streamed by the proxy.
 
 An optional `modify_response(response)` callback runs after final upstream
@@ -348,6 +350,8 @@ when ignored by the callback. The status must preserve whether the upstream
 response may carry a body; transport, forwarding, and WebSocket handshake
 headers cannot be edited. The callback returns `nil` or `true` to continue,
 cannot yield, and receives no body. Its methods expire when it returns.
+Response metadata strings cannot contain NUL bytes. Local response header
+names and values follow the same rule; local response bodies may contain NUL.
 
 ```lua
 assert(app:proxy({
