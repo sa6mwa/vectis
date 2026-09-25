@@ -82,7 +82,7 @@ int vectis_proxy_inbound_websocket(const vectis_proxy_inbound *in);
 const char *vectis_proxy_inbound_path_param(const vectis_proxy_inbound *in,
                                             const char *name);
 size_t vectis_proxy_inbound_header_count(const vectis_proxy_inbound *in);
-/** Header names and values remain valid only during the rewrite call. */
+/** Header names and values remain valid only during the owning callback. */
 vectis_status vectis_proxy_inbound_header_at(const vectis_proxy_inbound *in,
                                              size_t index, const char **name,
                                              const char **value);

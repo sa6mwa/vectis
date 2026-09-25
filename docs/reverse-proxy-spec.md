@@ -1154,15 +1154,18 @@ descriptors, and worker/cgroup peak memory. Record both absolute results and
 incremental proxy cost relative to the direct path.
 
 Run at least these profiles: small HTTP requests; large streaming download;
-large upload with a slow upstream; full-duplex upload/download; 1, 32, and 256
-concurrent SSE streams; 1, 32, and 256 concurrent WebSocket tunnels; slow
-readers/writers; and HTTPS/WSS upstreams. Measure HTTPS upstreams using both
-HTTP/1.1 and HTTP/2 with multiplexing disabled. Repeat a long-lived soak with
-connection churn and app shutdown. Include both a fast path and intentionally
-backpressured path, because peak throughput alone cannot reveal hidden
-buffering. Record DNS/connect time, upstream connection reuse, event-loop
-latency, and per-worker file-descriptor headroom so a proxy cost cannot be
-hidden in the connection pool or mistaken for scheduler delay.
+large upload with a slow upstream; full-duplex upload/download; 1, 8, and 16
+concurrent SSE streams; 1, 8, and 16 concurrent WebSocket tunnels; slow
+readers/writers; and HTTPS/WSS upstreams. At 16 active exchanges, also send a
+seventeenth request and verify immediate `503` without an upstream connection.
+Treat 32 and 256 concurrent streams as separate scaling studies that require
+a higher admission limit and a new measured worker-memory budget. Measure
+HTTPS upstreams using both HTTP/1.1 and HTTP/2 with multiplexing disabled.
+Repeat a long-lived soak with connection churn and app shutdown. Include both
+a fast path and intentionally backpressured path, because peak throughput alone
+cannot reveal hidden buffering. Record DNS/connect time, upstream connection
+reuse, event-loop latency, and per-worker file-descriptor headroom so a proxy
+cost cannot be hidden in the connection pool or mistaken for scheduler delay.
 
 The hard acceptance criteria are behavioral:
 
