@@ -72,6 +72,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
     test_proxy_http_upstream.c)
   vectis_add_unit_test(vectis_unit_proxy_http_wire test_proxy_http_wire.c)
   vectis_add_unit_test(vectis_unit_proxy_upload test_proxy_upload.c)
+  vectis_add_unit_test(vectis_unit_proxy_ws_handshake
+    test_proxy_ws_handshake.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_live test_kore_proxy_live.c)
   vectis_add_unit_test(vectis_unit_proxy_route_registration
     test_proxy_route_registration.c)

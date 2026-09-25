@@ -16,6 +16,20 @@ vectis_status vectis_proxy_curl_submit(CURL *easy, int force_http1,
                                        void *userdata,
                                        vectis_proxy_curl_transfer **out,
                                        vectis_error *error);
+
+/* Establish a raw TCP/TLS connection on the HTTP/1.1 pool. A successful
+ * completion retains the easy in its multi and consumes one worker exchange
+ * slot until cancel. The owner must call handoff_socket before registering a
+ * raw Kore socket watcher; the fd remains owned by curl. An unsuccessful
+ * completion closes the easy after invoking done, as submit does. */
+vectis_status vectis_proxy_curl_submit_connect(CURL *easy,
+                                               vectis_proxy_curl_done_fn done,
+                                               void *userdata,
+                                               vectis_proxy_curl_transfer **out,
+                                               vectis_error *error);
+vectis_status
+vectis_proxy_curl_handoff_socket(vectis_proxy_curl_transfer *transfer,
+                                 curl_socket_t *out, vectis_error *error);
 void vectis_proxy_curl_cancel(vectis_proxy_curl_transfer *transfer);
 void vectis_proxy_curl_worker_cleanup(void);
 size_t vectis_proxy_curl_active_count(void);

@@ -309,6 +309,24 @@ int main(void) {
 
   fd = connect_app(app_port);
   send_all(fd,
+           "GET /proxy/ws HTTP/1.1\r\nHost: localhost\r\n"
+           "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+           strlen("GET /proxy/ws HTTP/1.1\r\nHost: localhost\r\n"
+                  "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n"));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+    response[used] = '\0';
+  }
+  assert(strstr(response, "400 Bad Request") != NULL);
+  assert(close(fd) == 0);
+
+  fd = connect_app(app_port);
+  send_all(fd,
            "GET /proxy/a%2Fb?q=1&q=2 HTTP/1.1\r\nHost: localhost\r\n"
            "X-Trace: stream-test\r\nConnection: close\r\n\r\n",
            strlen("GET /proxy/a%2Fb?q=1&q=2 HTTP/1.1\r\n"

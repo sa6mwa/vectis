@@ -9,6 +9,7 @@
 #include "vectis_proxy_select.h"
 #include "vectis_proxy_upload.h"
 #include "vectis_proxy_url.h"
+#include "vectis_proxy_ws_handshake.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -531,9 +532,15 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
                                     "invalid proxy request headers\n");
   }
   if (head.websocket_upgrade) {
+    int valid_ws;
+
+    valid_ws = vectis_proxy_ws_request_valid(method, &inbound, &reason);
     vectis_proxy_headers_cleanup(&outbound);
     vectis_proxy_headers_cleanup(&inbound);
     vectis_internal_request_free(route_request);
+    if (!valid_ws)
+      return vectis_kore_proxy_reject(request, 400,
+                                      "invalid proxy WebSocket handshake\n");
     return vectis_kore_proxy_reject(request, 501,
                                     "proxy request mode pending\n");
   }

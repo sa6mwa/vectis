@@ -19,10 +19,12 @@ typedef struct vectis_proxy_curl_pool vectis_proxy_curl_pool;
 typedef struct vectis_proxy_curl_watch {
   struct kore_event event;
   vectis_proxy_curl_pool *pool;
+  struct vectis_proxy_curl_watch *next;
   struct vectis_proxy_curl_watch *retired_next;
   curl_socket_t fd;
   int interest;
   int retired;
+  int handed_off;
 } vectis_proxy_curl_watch;
 
 struct vectis_proxy_curl_transfer {
@@ -32,12 +34,15 @@ struct vectis_proxy_curl_transfer {
   void *userdata;
   CURL *easy;
   int active;
+  int retain_completed;
+  int completed;
 };
 
 struct vectis_proxy_curl_pool {
   CURLM *multi;
   struct kore_timer *timer;
   vectis_proxy_curl_transfer *transfers;
+  vectis_proxy_curl_watch *watches;
   int running;
 };
 
@@ -50,6 +55,17 @@ static int vectis_proxy_curl_shutting_down;
 
 static void vectis_proxy_curl_drive(vectis_proxy_curl_pool *pool,
                                     curl_socket_t fd, int flags);
+
+static void vectis_proxy_curl_watch_unlink(vectis_proxy_curl_watch *watch) {
+  vectis_proxy_curl_watch **slot;
+
+  slot = &watch->pool->watches;
+  while (*slot != NULL && *slot != watch)
+    slot = &(*slot)->next;
+  if (*slot == watch)
+    *slot = watch->next;
+  watch->next = NULL;
+}
 
 static void vectis_proxy_curl_reap(void *arg, u_int64_t now) {
   vectis_proxy_curl_watch *watch;
@@ -68,7 +84,7 @@ static void vectis_proxy_curl_event(void *arg, int error) {
   int flags;
 
   watch = (vectis_proxy_curl_watch *)arg;
-  if (watch->retired || vectis_proxy_curl_shutting_down) {
+  if (watch->retired || watch->handed_off || vectis_proxy_curl_shutting_down) {
     return;
   }
   flags = error ? CURL_CSELECT_ERR : 0;
@@ -93,8 +109,11 @@ static int vectis_proxy_curl_socket(CURL *easy, curl_socket_t fd, int what,
   watch = (vectis_proxy_curl_watch *)socket_userdata;
   if (what == CURL_POLL_REMOVE) {
     if (watch != NULL) {
-      vectis_proxy_event_update((int)fd, &watch->event, watch->interest, 0, 0);
+      if (!watch->handed_off)
+        vectis_proxy_event_update((int)fd, &watch->event, watch->interest, 0,
+                                  0);
       watch->interest = 0;
+      vectis_proxy_curl_watch_unlink(watch);
       watch->retired = 1;
       watch->retired_next = vectis_proxy_curl_retired;
       vectis_proxy_curl_retired = watch;
@@ -119,7 +138,11 @@ static int vectis_proxy_curl_socket(CURL *easy, curl_socket_t fd, int what,
       free(watch);
       return -1;
     }
+    watch->next = pool->watches;
+    pool->watches = watch;
   }
+  if (watch->handed_off)
+    return 0;
   desired = (what & CURL_POLL_IN ? VECTIS_PROXY_EVENT_READ : 0) |
             (what & CURL_POLL_OUT ? VECTIS_PROXY_EVENT_WRITE : 0);
   vectis_proxy_event_update((int)fd, &watch->event, watch->interest, desired,
@@ -189,6 +212,11 @@ static void vectis_proxy_curl_drive(vectis_proxy_curl_pool *pool,
       continue;
     }
     result = message->data.result;
+    if (transfer->retain_completed && result == CURLE_OK) {
+      transfer->completed = 1;
+      transfer->done(transfer->easy, result, transfer->userdata);
+      continue;
+    }
     transfer->active = 0;
     vectis_proxy_curl_unlink(transfer);
     (void)curl_multi_remove_handle(pool->multi, transfer->easy);
@@ -248,11 +276,10 @@ static int vectis_proxy_curl_worker_init(vectis_error *error) {
   return 1;
 }
 
-vectis_status vectis_proxy_curl_submit(CURL *easy, int force_http1,
-                                       vectis_proxy_curl_done_fn done,
-                                       void *userdata,
-                                       vectis_proxy_curl_transfer **out,
-                                       vectis_error *error) {
+static vectis_status vectis_proxy_curl_submit_internal(
+    CURL *easy, int force_http1, int retain_completed,
+    vectis_proxy_curl_done_fn done, void *userdata,
+    vectis_proxy_curl_transfer **out, vectis_error *error) {
   vectis_proxy_curl_transfer *transfer;
   vectis_proxy_curl_pool *pool;
 
@@ -285,6 +312,7 @@ vectis_status vectis_proxy_curl_submit(CURL *easy, int force_http1,
   transfer->done = done;
   transfer->userdata = userdata;
   transfer->easy = easy;
+  transfer->retain_completed = retain_completed;
   if (curl_easy_setopt(easy, CURLOPT_PRIVATE, transfer) != CURLE_OK ||
       curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
                        force_http1 ? CURL_HTTP_VERSION_1_1
@@ -316,6 +344,66 @@ vectis_status vectis_proxy_curl_submit(CURL *easy, int force_http1,
   return VECTIS_OK;
 }
 
+vectis_status vectis_proxy_curl_submit(CURL *easy, int force_http1,
+                                       vectis_proxy_curl_done_fn done,
+                                       void *userdata,
+                                       vectis_proxy_curl_transfer **out,
+                                       vectis_error *error) {
+  return vectis_proxy_curl_submit_internal(easy, force_http1, 0, done, userdata,
+                                           out, error);
+}
+
+vectis_status vectis_proxy_curl_submit_connect(CURL *easy,
+                                               vectis_proxy_curl_done_fn done,
+                                               void *userdata,
+                                               vectis_proxy_curl_transfer **out,
+                                               vectis_error *error) {
+  if (easy == NULL ||
+      curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 1L) != CURLE_OK ||
+      curl_easy_setopt(easy, CURLOPT_SSL_ENABLE_ALPN, 0L) != CURLE_OK ||
+      curl_easy_setopt(easy, CURLOPT_FRESH_CONNECT, 1L) != CURLE_OK) {
+    if (out != NULL)
+      *out = NULL;
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "failed to configure raw proxy connection");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_proxy_curl_submit_internal(easy, 1, 1, done, userdata, out,
+                                           error);
+}
+
+vectis_status
+vectis_proxy_curl_handoff_socket(vectis_proxy_curl_transfer *transfer,
+                                 curl_socket_t *out, vectis_error *error) {
+  vectis_proxy_curl_watch *watch;
+  curl_socket_t fd;
+
+  if (out != NULL)
+    *out = CURL_SOCKET_BAD;
+  if (transfer == NULL || out == NULL || !transfer->active ||
+      !transfer->completed || !transfer->retain_completed ||
+      curl_easy_getinfo(transfer->easy, CURLINFO_ACTIVESOCKET, &fd) !=
+          CURLE_OK ||
+      fd == CURL_SOCKET_BAD) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "raw proxy socket is not ready for handoff");
+    return VECTIS_ERR_STATE;
+  }
+  for (watch = transfer->pool->watches; watch != NULL; watch = watch->next) {
+    if (watch->fd != fd)
+      continue;
+    if (!watch->handed_off) {
+      vectis_proxy_event_update((int)fd, &watch->event, watch->interest, 0, 0);
+      watch->interest = 0;
+      watch->handed_off = 1;
+    }
+    break;
+  }
+  *out = fd;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 void vectis_proxy_curl_cancel(vectis_proxy_curl_transfer *transfer) {
   if (transfer == NULL || !transfer->active) {
     return;
@@ -332,6 +420,7 @@ void vectis_proxy_curl_cancel(vectis_proxy_curl_transfer *transfer) {
 void vectis_proxy_curl_worker_cleanup(void) {
   size_t i;
   vectis_proxy_curl_transfer *transfer;
+  vectis_proxy_curl_watch *watch;
 
   vectis_proxy_curl_shutting_down = 1;
   for (i = 0u; i < 2u; ++i) {
@@ -345,6 +434,10 @@ void vectis_proxy_curl_worker_cleanup(void) {
     if (vectis_proxy_curl_pools[i].multi != NULL) {
       curl_multi_cleanup(vectis_proxy_curl_pools[i].multi);
       vectis_proxy_curl_pools[i].multi = NULL;
+    }
+    while ((watch = vectis_proxy_curl_pools[i].watches) != NULL) {
+      vectis_proxy_curl_pools[i].watches = watch->next;
+      free(watch);
     }
   }
   if (vectis_proxy_curl_retire_timer != NULL) {

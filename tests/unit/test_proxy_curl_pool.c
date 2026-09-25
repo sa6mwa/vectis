@@ -25,6 +25,9 @@ struct pool_observation {
   volatile unsigned max_active;
   volatile unsigned rejected;
   volatile unsigned cancelled;
+  volatile unsigned raw_ready;
+  volatile unsigned raw_failed;
+  volatile unsigned raw_cancelled;
 };
 
 static struct pool_observation *observation;
@@ -33,6 +36,7 @@ static unsigned short stalled_port;
 static char received[2][16];
 static size_t received_size[2];
 static vectis_proxy_curl_transfer *stalled[16];
+static vectis_proxy_curl_transfer *raw;
 
 extern void vectis_kore_set_prebody_probe(int (*probe)(struct http_request *,
                                                        const void *, size_t));
@@ -68,6 +72,22 @@ static void transfer_done(CURL *easy, CURLcode result, void *userdata) {
   observation->completed++;
 }
 
+static void connect_done(CURL *easy, CURLcode result, void *userdata) {
+  vectis_error error;
+  curl_socket_t fd;
+  size_t sent;
+
+  (void)userdata;
+  if (result != CURLE_OK || raw == NULL ||
+      vectis_proxy_curl_handoff_socket(raw, &fd, &error) != VECTIS_OK ||
+      fd == CURL_SOCKET_BAD ||
+      curl_easy_send(easy, "p", 1u, &sent) != CURLE_OK || sent != 1u) {
+    observation->raw_failed++;
+  } else {
+    observation->raw_ready++;
+  }
+}
+
 static int trigger(struct http_request *request, const void *data, size_t len) {
   vectis_proxy_curl_transfer *transfer;
   vectis_error error;
@@ -77,6 +97,29 @@ static int trigger(struct http_request *request, const void *data, size_t len) {
 
   (void)data;
   (void)len;
+  if (strcmp(request->path, "/connect_cancel") == 0) {
+    assert(raw != NULL);
+    vectis_proxy_curl_cancel(raw);
+    raw = NULL;
+    assert(vectis_proxy_curl_active_count() == 0u);
+    observation->raw_cancelled++;
+    return KORE_RESULT_OK;
+  }
+  if (strcmp(request->path, "/connect") == 0) {
+    assert(raw == NULL);
+    assert(snprintf(url, sizeof(url), "http://127.0.0.1:%u/raw",
+                    (unsigned)stalled_port) > 0);
+    easy = curl_easy_init();
+    assert(easy != NULL);
+    assert(curl_easy_setopt(easy, CURLOPT_URL, url) == CURLE_OK);
+    assert(curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
+    assert(curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 2000L) ==
+           CURLE_OK);
+    assert(vectis_proxy_curl_submit_connect(easy, connect_done, NULL, &raw,
+                                            &error) == VECTIS_OK);
+    assert(raw != NULL);
+    return KORE_RESULT_OK;
+  }
   if (strcmp(request->path, "/cancel") == 0) {
     for (i = 0u; i < 16u; ++i) {
       assert(stalled[i] != NULL);
@@ -251,6 +294,10 @@ int main(void) {
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/cancel", reply, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/connect", reply, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/connect_cancel", reply, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   if (app->start(app, &error) != VECTIS_OK) {
     fprintf(stderr, "proxy curl pool startup: %s\n", error.message);
     assert(0);
@@ -264,6 +311,15 @@ int main(void) {
   assert(observation->failed == 0u);
   assert(observation->bytes == 8u);
   assert(observation->max_active == 2u);
+  send_trigger("/connect");
+  for (i = 0;
+       i < 500 && observation->raw_ready == 0u && observation->raw_failed == 0u;
+       ++i)
+    usleep(10000u);
+  assert(observation->raw_ready == 1u);
+  assert(observation->raw_failed == 0u);
+  send_trigger("/connect_cancel");
+  assert(observation->raw_cancelled == 1u);
   send_trigger("/saturate");
   assert(observation->rejected == 1u);
   assert(observation->max_active == 16u);
