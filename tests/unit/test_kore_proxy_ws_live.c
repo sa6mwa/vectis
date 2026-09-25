@@ -376,6 +376,8 @@ int main(void) {
                        sizeof(early_server_frame)) &&
            used < sizeof(response));
   assert(boundary != NULL);
+  if (strstr((const char *)response, "101 Switching Protocols") == NULL)
+    fprintf(stderr, "proxy ws response: %.512s\n", response);
   assert(strstr((const char *)response, "101 Switching Protocols") != NULL);
   assert(strstr((const char *)response, "Sec-WebSocket-Protocol: chat\r\n") !=
          NULL);

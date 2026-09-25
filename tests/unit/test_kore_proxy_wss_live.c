@@ -558,6 +558,8 @@ static void run_trusted(unsigned short app_port, tls_origin *origin,
                        sizeof(server_early)) &&
            used < sizeof(response));
   assert(boundary != NULL);
+  if (strstr((const char *)response, "HTTP/1.1 101 ") == NULL)
+    fprintf(stderr, "proxy wss response: %.512s\n", response);
   assert(strstr((const char *)response, "HTTP/1.1 101 ") != NULL);
   frame = (const unsigned char *)boundary + 4u;
   assert(memcmp(frame, server_early, sizeof(server_early)) == 0);

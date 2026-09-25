@@ -465,8 +465,12 @@ int main(void) {
                   "Host: localhost\r\nX-Trace: stream-test\r\n"
                   "Connection: close\r\n\r\n"));
   used = 0u;
+  response[0] = '\0';
   do {
     got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    if (got <= 0)
+      fprintf(stderr, "proxy live recv=%ld errno=%d used=%lu head=%.512s\n",
+              (long)got, errno, (unsigned long)used, response);
     assert(got > 0);
     used += (size_t)got;
     response[used] = '\0';

@@ -218,6 +218,8 @@ static void test_fixed(unsigned short port, int resume_pipe) {
   used = read_head(fd, head, sizeof(head));
   boundary = strstr(head, "\r\n\r\n");
   assert(boundary != NULL);
+  if (strstr(head, "HTTP/1.1 401 ") != head)
+    fprintf(stderr, "proxy ws rejection response: %.512s\n", head);
   assert(strstr(head, "HTTP/1.1 401 ") == head);
   assert(strstr(head, "X-Modified: yes\r\n") != NULL);
   assert(strstr(head, "Content-Length: 1048576\r\n") != NULL);

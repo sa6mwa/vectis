@@ -389,6 +389,9 @@ int main(void) {
                        "GET /proxy/preflight/allow HTTP/1.1\r\n"
                        "Host: localhost\r\n\r\n",
                        response, sizeof(response) - 1u);
+  if (length == 0u || strstr(response, "200 ") == NULL)
+    fprintf(stderr, "proxy allow response (%lu bytes): %.512s\n",
+            (unsigned long)length, response);
   assert(length != 0u && strstr(response, "200 ") != NULL);
   assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
   assert(strstr(response, "\r\n\r\n2\r\nok\r\n0\r\n\r\n") != NULL);
