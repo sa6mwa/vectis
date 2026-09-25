@@ -16,13 +16,25 @@ ASAN_PRESET := asan
 COVERAGE_PRESET := coverage
 FUZZ_PRESET := fuzz
 PROXY_FAST_TESTS := \
-	vectis_unit_proxy_route_selection \
+	vectis_unit_proxy_route_selection vectis_unit_proxy_url \
+	vectis_unit_proxy_framing vectis_unit_proxy_headers \
 	vectis_unit_proxy_http vectis_unit_proxy_http_upstream \
+	vectis_unit_proxy_http_wire vectis_unit_proxy_upload \
 	vectis_unit_proxy_ws_handshake vectis_unit_proxy_ws_wire \
-	vectis_unit_kore_proxy_live vectis_unit_kore_proxy_ws_live \
-	vectis_unit_proxy_curl_tls_floor \
-	vectis_unit_proxy_curl_http2_pause
-PROXY_FAST_TEST_REGEX := ^vectis_unit_(proxy_(route_selection|http|http_upstream|ws_handshake|ws_wire|curl_(http2_pause|tls_floor))|kore_proxy_(live|ws_live))$$
+	vectis_unit_proxy_ws_rejection vectis_unit_proxy_route_registration \
+	vectis_unit_proxy_director vectis_unit_proxy_response \
+	vectis_unit_proxy_local vectis_unit_proxy_select \
+	vectis_unit_kore_proxy_live vectis_unit_kore_proxy_local_live \
+	vectis_unit_kore_proxy_ws_live vectis_unit_kore_proxy_ws_rejection_live \
+	vectis_unit_kore_proxy_wss_live
+ifeq ($(shell uname -s),Linux)
+PROXY_FAST_TESTS += \
+	vectis_unit_kore_proxy_admission_live \
+	vectis_unit_proxy_curl_tls_floor vectis_unit_proxy_curl_http2_pause
+endif
+empty :=
+space := $(empty) $(empty)
+PROXY_FAST_TEST_REGEX := ^($(subst $(space),|,$(strip $(PROXY_FAST_TESTS))))$$
 
 .PHONY: \
 	help \
@@ -41,7 +53,7 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run all debug CTest tests with the pinned Bootlin runtime.' \
-		'make test-proxy-fast    Build and run nine focused proxy tests in Debug.' \
+		'make test-proxy-fast    Build and run focused proxy tests in Debug.' \
 		'make test-proxy-asan-fast Build and run the same focused proxy tests under ASan/UBSan.' \
 		'make run-example EXAMPLE=mdf_render [ARGS=...]  Run a built example.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
