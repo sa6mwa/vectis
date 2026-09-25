@@ -4,6 +4,10 @@
 #include "vectis_proxy_local.h"
 
 struct http_request;
+struct connection;
+
+/* Replace queued bytes only when Kore has not attempted any send. */
+int vectis_kore_proxy_drop_unwritten(struct connection *connection);
 
 /* Queue a bounded local reply, close after send, and count its HTTP status. */
 int vectis_kore_proxy_local_send(struct http_request *request, vectis_app *app,

@@ -44,6 +44,7 @@ typedef struct vectis_kore_proxy_state {
   vectis_error failure;
   struct curl_slist *request_headers;
   struct kore_timer *wake_timer;
+  struct kore_timer *idle_timer;
   char *request_target;
   char *authority;
   char *final_wire;
@@ -57,6 +58,7 @@ typedef struct vectis_kore_proxy_state {
   size_t surplus_length;
   size_t surplus_offset;
   size_t final_length;
+  u_int64_t last_progress_ms;
   int interest;
   int headers_ready;
   int response_status;
@@ -75,6 +77,7 @@ static vectis_kore_proxy_state *vectis_kore_proxy_states;
 
 static void vectis_kore_proxy_event(void *userdata, int error);
 static void vectis_kore_proxy_wake(void *userdata, u_int64_t now);
+static void vectis_kore_proxy_idle(void *userdata, u_int64_t now);
 static int vectis_kore_proxy_upload_drive(vectis_kore_proxy_state *state);
 
 static void vectis_kore_proxy_unlink(vectis_kore_proxy_state *state) {
@@ -94,6 +97,10 @@ static void vectis_kore_proxy_free(vectis_kore_proxy_state *state) {
   if (state->wake_timer != NULL) {
     kore_timer_remove(state->wake_timer);
     state->wake_timer = NULL;
+  }
+  if (state->idle_timer != NULL) {
+    kore_timer_remove(state->idle_timer);
+    state->idle_timer = NULL;
   }
   if (state->transfer != NULL) {
     vectis_proxy_curl_cancel(state->transfer);
@@ -136,14 +143,15 @@ static void vectis_kore_proxy_schedule(vectis_kore_proxy_state *state) {
   connection = state->connection;
   if (connection->state == CONN_STATE_DISCONNECTING)
     return;
-  desired = state->has_upload && !state->upload.complete &&
+  desired = !state->failed && state->has_upload && !state->upload.complete &&
                     vectis_proxy_upload_full(&state->upload)
                 ? 0
                 : VECTIS_PROXY_EVENT_READ;
-  if (state->read_want_write)
+  if (state->failed)
+    desired = 0;
+  if (!state->failed && state->read_want_write)
     desired |= VECTIS_PROXY_EVENT_WRITE;
-  if (!TAILQ_EMPTY(&connection->send_queue) ||
-      (state->failed && !state->headers_queued) ||
+  if (!TAILQ_EMPTY(&connection->send_queue) || state->failed ||
       (state->headers_ready && !state->headers_queued) ||
       (state->headers_queued &&
        (vectis_proxy_http_upstream_body(&state->upstream, NULL) != NULL ||
@@ -166,19 +174,61 @@ static void vectis_kore_proxy_request_wake(vectis_kore_proxy_state *state) {
       kore_timer_add(vectis_kore_proxy_wake, 1u, state, KORE_TIMER_ONESHOT);
 }
 
+static void vectis_kore_proxy_progress(vectis_kore_proxy_state *state) {
+  if (!state->active)
+    return;
+  state->last_progress_ms = kore_time_ms();
+  if (state->idle_timer == NULL)
+    state->idle_timer = kore_timer_add(vectis_kore_proxy_idle,
+                                       (u_int64_t)state->route->idle_timeout_ms,
+                                       state, KORE_TIMER_ONESHOT);
+}
+
+static void vectis_kore_proxy_idle(void *userdata, u_int64_t now) {
+  vectis_kore_proxy_state *state;
+  u_int64_t timeout;
+  u_int64_t elapsed;
+
+  state = (vectis_kore_proxy_state *)userdata;
+  state->idle_timer = NULL;
+  if (!state->active || state->failed)
+    return;
+  timeout = (u_int64_t)state->route->idle_timeout_ms;
+  elapsed = now >= state->last_progress_ms ? now - state->last_progress_ms : 0u;
+  if (elapsed < timeout) {
+    state->idle_timer = kore_timer_add(
+        vectis_kore_proxy_idle, timeout - elapsed, state, KORE_TIMER_ONESHOT);
+    return;
+  }
+  state->failed = 1;
+  state->error_status = 504;
+  vectis_set_error(&state->failure, VECTIS_ERR_TIMEOUT,
+                   "proxy stream made no progress before idle deadline");
+  if (state->transfer != NULL) {
+    vectis_proxy_curl_cancel(state->transfer);
+    state->transfer = NULL;
+  }
+  vectis_kore_proxy_request_wake(state);
+}
+
 static void vectis_kore_proxy_wake(void *userdata, u_int64_t now) {
   vectis_kore_proxy_state *state;
 
   (void)now;
   state = (vectis_kore_proxy_state *)userdata;
   state->wake_timer = NULL;
-  if (state->has_upload && !vectis_kore_proxy_upload_drive(state))
+  if (!state->failed && state->has_upload &&
+      !vectis_kore_proxy_upload_drive(state))
     return;
   vectis_kore_proxy_schedule(state);
 }
 
 static void vectis_kore_proxy_upload_consumed(void *userdata) {
-  vectis_kore_proxy_request_wake((vectis_kore_proxy_state *)userdata);
+  vectis_kore_proxy_state *state;
+
+  state = (vectis_kore_proxy_state *)userdata;
+  vectis_kore_proxy_progress(state);
+  vectis_kore_proxy_request_wake(state);
 }
 
 static int vectis_kore_proxy_upload_drive(vectis_kore_proxy_state *state) {
@@ -232,6 +282,7 @@ static int vectis_kore_proxy_upload_drive(vectis_kore_proxy_state *state) {
         }
       }
       state->read_want_write = 0;
+      vectis_kore_proxy_progress(state);
       state->read_length = (size_t)got;
       state->read_offset = 0u;
       continue;
@@ -262,6 +313,7 @@ static void vectis_kore_proxy_ready(vectis_proxy_http_upstream *upstream,
   vectis_error error;
 
   state = (vectis_kore_proxy_state *)userdata;
+  vectis_kore_proxy_progress(state);
   if (event == VECTIS_PROXY_HTTP_FINAL) {
     if (vectis_proxy_response_apply(
             &upstream->response, &upstream->outbound_headers,
@@ -312,21 +364,6 @@ static void vectis_kore_proxy_done(CURL *easy, CURLcode result,
   vectis_kore_proxy_request_wake(state);
 }
 
-static int vectis_kore_proxy_drop_unwritten(struct connection *connection) {
-  struct netbuf *buffer;
-
-  if (connection->snb != NULL || TAILQ_EMPTY(&connection->send_queue))
-    return 0;
-  TAILQ_FOREACH(buffer, &connection->send_queue, list) {
-    if (buffer->s_off != 0u ||
-        (buffer->flags & (NETBUF_MUST_RESEND | NETBUF_IS_STREAM)) != 0)
-      return 0;
-  }
-  while ((buffer = TAILQ_FIRST(&connection->send_queue)) != NULL)
-    net_remove_netbuf(connection, buffer);
-  return 1;
-}
-
 static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   struct connection *connection;
   vectis_proxy_local_response local;
@@ -334,6 +371,8 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   vectis_error error;
   size_t body_length;
   size_t written;
+  size_t prior_offset;
+  struct netbuf *prior_buffer;
 
   connection = state->connection;
   if (state->failed && state->headers_queued) {
@@ -345,6 +384,8 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     state->final_queued = 0;
   }
   if (!TAILQ_EMPTY(&connection->send_queue)) {
+    prior_buffer = TAILQ_FIRST(&connection->send_queue);
+    prior_offset = prior_buffer->s_off;
     if (state->headers_queued && !state->response_accounted) {
       vectis_internal_metrics_note_http_status(state->app,
                                                state->response_status);
@@ -358,6 +399,9 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     }
     if (connection->state == CONN_STATE_DISCONNECTING)
       return 0;
+    if (TAILQ_FIRST(&connection->send_queue) != prior_buffer ||
+        (prior_buffer != NULL && prior_buffer->s_off > prior_offset))
+      vectis_kore_proxy_progress(state);
     if (!TAILQ_EMPTY(&connection->send_queue)) {
       vectis_kore_proxy_schedule(state);
       return 1;
@@ -459,9 +503,9 @@ static void vectis_kore_proxy_event(void *userdata, int error) {
     kore_connection_disconnect(connection);
     return;
   }
-  if ((connection->evt.flags & KORE_EVENT_READ) != 0 ||
-      (state->read_want_write &&
-       (connection->evt.flags & KORE_EVENT_WRITE) != 0)) {
+  if (!state->failed && ((connection->evt.flags & KORE_EVENT_READ) != 0 ||
+                         (state->read_want_write &&
+                          (connection->evt.flags & KORE_EVENT_WRITE) != 0))) {
     if (state->has_upload && !state->upload.complete) {
       if (!vectis_kore_proxy_upload_drive(state))
         return;
@@ -837,6 +881,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   state->next = vectis_kore_proxy_states;
   vectis_kore_proxy_states = state;
   state->active = 1;
+  vectis_kore_proxy_progress(state);
   request->owner->hdlr_extra = state;
   request->owner->disconnect = vectis_kore_proxy_disconnect;
   request->owner->evt.handle = vectis_kore_proxy_event;
@@ -858,6 +903,10 @@ void vectis_kore_proxy_worker_cleanup(void) {
     if (state->wake_timer != NULL) {
       kore_timer_remove(state->wake_timer);
       state->wake_timer = NULL;
+    }
+    if (state->idle_timer != NULL) {
+      kore_timer_remove(state->idle_timer);
+      state->idle_timer = NULL;
     }
     if (state->transfer != NULL) {
       vectis_proxy_curl_cancel(state->transfer);

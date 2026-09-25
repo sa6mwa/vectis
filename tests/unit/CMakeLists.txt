@@ -80,6 +80,10 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_kore_proxy_live test_kore_proxy_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_local_live
     test_kore_proxy_local_live.c)
+  vectis_add_unit_test(vectis_unit_kore_proxy_unwritten
+    test_kore_proxy_unwritten.c)
+  target_include_directories(vectis_unit_kore_proxy_unwritten PRIVATE
+    "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
   vectis_add_unit_test(vectis_unit_kore_proxy_ws_live
     test_kore_proxy_ws_live.c)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -13,6 +13,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+int vectis_kore_proxy_drop_unwritten(struct connection *connection) {
+  struct netbuf *buffer;
+
+  if (connection == NULL || connection->snb != NULL ||
+      TAILQ_EMPTY(&connection->send_queue))
+    return 0;
+  TAILQ_FOREACH(buffer, &connection->send_queue, list) {
+    if (buffer->s_off != 0u ||
+        (buffer->flags & (NETBUF_MUST_RESEND | NETBUF_IS_STREAM)) != 0)
+      return 0;
+  }
+  while ((buffer = TAILQ_FIRST(&connection->send_queue)) != NULL)
+    net_remove_netbuf(connection, buffer);
+  return 1;
+}
+
 int vectis_kore_proxy_local_send(struct http_request *request, vectis_app *app,
                                  const vectis_proxy_local_response *response) {
   struct connection *connection;

@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <assert.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -17,6 +18,13 @@ typedef struct origin_server {
   unsigned short port;
   pthread_t thread;
 } origin_server;
+
+typedef struct stall_server {
+  int listener;
+  unsigned short port;
+  pthread_t thread;
+  int mode;
+} stall_server;
 
 static void send_all(int fd, const char *data, size_t length) {
   ssize_t amount;
@@ -91,6 +99,9 @@ static size_t request_app(unsigned short port, const char *request,
   used = 0u;
   while (used < capacity) {
     amount = recv(fd, response + used, capacity - used, 0);
+    if (amount < 0)
+      fprintf(stderr, "proxy test recv failed for %.80s: errno=%d\n", request,
+              errno);
     assert(amount >= 0);
     if (amount == 0)
       break;
@@ -150,6 +161,44 @@ static void *origin_main(void *userdata) {
   return NULL;
 }
 
+static void *stall_main(void *userdata) {
+  stall_server *server;
+  char request[1024];
+  size_t used;
+  ssize_t amount;
+  int i;
+  int fd;
+
+  server = (stall_server *)userdata;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0u;
+  do {
+    amount = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(amount > 0);
+    used += (size_t)amount;
+    request[used] = '\0';
+  } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
+  if (server->mode != 0) {
+    send_all(fd,
+             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+             "Content-Type: text/event-stream\r\n\r\n1\r\nx\r\n",
+             strlen("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+                    "Content-Type: text/event-stream\r\n\r\n1\r\nx\r\n"));
+  }
+  if (server->mode == 2) {
+    for (i = 0; i < 6; ++i) {
+      usleep(50000u);
+      send_all(fd, "1\r\ny\r\n", 6u);
+    }
+    send_all(fd, "0\r\n\r\n", 5u);
+  } else {
+    usleep(300000u);
+  }
+  assert(close(fd) == 0);
+  return NULL;
+}
+
 static vectis_status preflight(const vectis_proxy_inbound *in,
                                vectis_proxy_local_response *response,
                                void *userdata, vectis_error *error) {
@@ -190,8 +239,20 @@ static vectis_status on_error(const vectis_error *cause, int default_status,
   return vectis_proxy_local_add_header(response, "X-Local", "gateway", error);
 }
 
+static vectis_status on_timeout(const vectis_error *cause, int default_status,
+                                vectis_proxy_local_response *response,
+                                void *userdata, vectis_error *error) {
+  (void)userdata;
+  assert(cause != NULL && cause->code == VECTIS_ERR_TIMEOUT);
+  assert(default_status == 504);
+  return vectis_proxy_local_respond(response, 504, "idle deadline", 13u, error);
+}
+
 int main(void) {
   origin_server origin;
+  stall_server idle_before;
+  stall_server idle_after;
+  stall_server heartbeat;
   vectis_proxy_route_config proxy;
   vectis_metrics_config metrics;
   vectis_app_config config;
@@ -201,6 +262,9 @@ int main(void) {
   unsigned short dead_port;
   char target[128];
   char dead_target[128];
+  char idle_before_target[128];
+  char idle_after_target[128];
+  char heartbeat_target[128];
   char response[2048];
   const char *boundary;
   size_t length;
@@ -208,6 +272,12 @@ int main(void) {
   unsigned long prior_5xx;
 
   origin.port = listen_port(&origin.listener);
+  idle_before.port = listen_port(&idle_before.listener);
+  idle_before.mode = 0;
+  idle_after.port = listen_port(&idle_after.listener);
+  idle_after.mode = 1;
+  heartbeat.port = listen_port(&heartbeat.listener);
+  heartbeat.mode = 2;
   app_port = unused_port();
   do {
     dead_port = unused_port();
@@ -216,6 +286,12 @@ int main(void) {
                   (unsigned)origin.port) > 0);
   assert(snprintf(dead_target, sizeof(dead_target), "http://127.0.0.1:%u",
                   (unsigned)dead_port) > 0);
+  assert(snprintf(idle_before_target, sizeof(idle_before_target),
+                  "http://127.0.0.1:%u", (unsigned)idle_before.port) > 0);
+  assert(snprintf(idle_after_target, sizeof(idle_after_target),
+                  "http://127.0.0.1:%u", (unsigned)idle_after.port) > 0);
+  assert(snprintf(heartbeat_target, sizeof(heartbeat_target),
+                  "http://127.0.0.1:%u", (unsigned)heartbeat.port) > 0);
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -240,10 +316,28 @@ int main(void) {
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   proxy.path = "/proxy/ws";
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
+  proxy.path = "/proxy/idle-before";
+  proxy.target = idle_before_target;
+  proxy.on_error = on_timeout;
+  proxy.idle_timeout_ms = 100L;
+  assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
+  proxy.path = "/proxy/idle-after";
+  proxy.target = idle_after_target;
+  proxy.on_error = NULL;
+  assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
+  proxy.path = "/proxy/heartbeat";
+  proxy.target = heartbeat_target;
+  proxy.idle_timeout_ms = 200L;
+  assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   vectis_metrics_config_init(&metrics);
   assert(app->metrics(app, &metrics, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
+  assert(pthread_create(&idle_before.thread, NULL, stall_main, &idle_before) ==
+         0);
+  assert(pthread_create(&idle_after.thread, NULL, stall_main, &idle_after) ==
+         0);
+  assert(pthread_create(&heartbeat.thread, NULL, stall_main, &heartbeat) == 0);
 
   length = request_app(app_port,
                        "POST /proxy/preflight/deny HTTP/1.1\r\n"
@@ -313,9 +407,40 @@ int main(void) {
   assert(strstr(response, "\r\n\r\nupstream down") != NULL);
   assert(metric_bucket(app, "5xx") == prior_5xx + 2u);
 
+  length = request_app(app_port,
+                       "GET /proxy/idle-before HTTP/1.1\r\n"
+                       "Host: localhost\r\n\r\n",
+                       response, sizeof(response) - 1u);
+  assert(length != 0u && strstr(response, "HTTP/1.1 504 ") == response);
+  assert(strstr(response, "\r\n\r\nidle deadline") != NULL);
+  assert(metric_bucket(app, "5xx") == prior_5xx + 3u);
+
+  length = request_app(app_port,
+                       "GET /proxy/idle-after HTTP/1.1\r\n"
+                       "Host: localhost\r\n\r\n",
+                       response, sizeof(response) - 1u);
+  assert(length != 0u && strstr(response, "HTTP/1.1 200 ") == response);
+  assert(strstr(response, "\r\n\r\n1\r\nx\r\n") != NULL);
+  assert(strstr(response, "0\r\n\r\n") == NULL);
+
+  length = request_app(app_port,
+                       "GET /proxy/heartbeat HTTP/1.1\r\n"
+                       "Host: localhost\r\n\r\n",
+                       response, sizeof(response) - 1u);
+  assert(length != 0u && strstr(response, "HTTP/1.1 200 ") == response);
+  assert(strstr(response, "\r\n\r\n1\r\nx\r\n") != NULL);
+  assert(strstr(response, "1\r\ny\r\n") != NULL);
+  assert(strstr(response, "0\r\n\r\n") != NULL);
+
   assert(pthread_join(origin.thread, NULL) == 0);
+  assert(pthread_join(idle_before.thread, NULL) == 0);
+  assert(pthread_join(idle_after.thread, NULL) == 0);
+  assert(pthread_join(heartbeat.thread, NULL) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   assert(close(origin.listener) == 0);
+  assert(close(idle_before.listener) == 0);
+  assert(close(idle_after.listener) == 0);
+  assert(close(heartbeat.listener) == 0);
   return 0;
 }

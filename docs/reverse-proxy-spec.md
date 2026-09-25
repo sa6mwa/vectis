@@ -20,9 +20,18 @@ non-`101` WebSocket rejections; successful upgrades bypass the hook. C and Lua
 preflight hooks now answer at headers time, and gateway-error hooks can answer
 before HTTP or WebSocket response headers are sent. Admission failures outside
 preflight still use fixed local responses; extending the error hook to every
-uncommitted failure and proving queued-but-unwritten replacement remain open.
-The remaining resource limits are also in progress. The
-[transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
+uncommitted failure and proving queued-but-unwritten replacement in a live
+production route remain open. A Kore send-queue test covers the replacement
+decision and local reply bytes before any write attempt.
+
+HTTP/SSE now enforces the route's no-progress idle deadline: a stalled
+upstream receives a local `504` before commitment, while an idle committed
+stream closes without a final success chunk. A live SSE fixture also stays
+open beyond the deadline when periodic events make progress. The remaining
+resource limits, including aggregate worker memory admission, are still in
+progress.
+
+The [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
 
 ## Objective
