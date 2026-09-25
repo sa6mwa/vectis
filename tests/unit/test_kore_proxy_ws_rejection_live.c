@@ -172,6 +172,23 @@ static int connect_app(unsigned short port) {
   return fd;
 }
 
+static vectis_status modify_rejection(vectis_proxy_response *response,
+                                      void *userdata, vectis_error *error) {
+  int status;
+
+  (void)userdata;
+  status = vectis_proxy_response_status(response);
+  if (status == 403) {
+    if (vectis_proxy_response_set_status(response, 401, error) != VECTIS_OK)
+      return error->code;
+    return vectis_proxy_response_add_header(response, "X-Modified", "yes",
+                                            error);
+  }
+  if (status == 503)
+    return vectis_proxy_response_set_status(response, 504, error);
+  return VECTIS_OK;
+}
+
 static size_t read_head(int fd, char *buffer, size_t capacity) {
   size_t used;
   ssize_t got;
@@ -201,7 +218,8 @@ static void test_fixed(unsigned short port, int resume_pipe) {
   used = read_head(fd, head, sizeof(head));
   boundary = strstr(head, "\r\n\r\n");
   assert(boundary != NULL);
-  assert(strstr(head, "HTTP/1.1 403 ") == head);
+  assert(strstr(head, "HTTP/1.1 401 ") == head);
+  assert(strstr(head, "X-Modified: yes\r\n") != NULL);
   assert(strstr(head, "Content-Length: 1048576\r\n") != NULL);
   assert(strstr(head, "X-Reason: denied\r\n") != NULL);
   received = used - (size_t)(boundary + 4u - head);
@@ -250,7 +268,7 @@ static void test_small(unsigned short port, int sequence) {
   } else {
     assert(strstr(response, "HTTP/1.1 103 ") == response);
     assert(strstr(response, "Link: </next>; rel=preload\r\n") != NULL);
-    assert(strstr(response, "HTTP/1.1 503 ") != NULL);
+    assert(strstr(response, "HTTP/1.1 504 ") != NULL);
     assert(strstr(response, "4\r\nslow\r\n0\r\n\r\n") != NULL);
   }
   assert(close(fd) == 0);
@@ -281,6 +299,7 @@ int main(void) {
   proxy.path = "/ws";
   proxy.methods = VECTIS_HTTP_METHODS_GET;
   proxy.target = target;
+  proxy.modify_response = modify_rejection;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);

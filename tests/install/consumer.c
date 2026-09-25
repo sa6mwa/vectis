@@ -43,7 +43,9 @@ int main(void) {
   if (proxy_config.path != NULL ||
       proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO ||
       proxy_config.tls_ca_pem != NULL || proxy_config.rewrite != NULL ||
+      proxy_config.modify_response != NULL ||
       vectis_proxy_inbound_header_count(NULL) != 0u ||
+      vectis_proxy_response_header_count(NULL) != 0u ||
       vectis_proxy_outbound_select_target(NULL, 0u, &error) !=
           VECTIS_ERR_INVALID) {
     return 11;

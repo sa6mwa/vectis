@@ -252,6 +252,8 @@ vectis_register_proxy_route(vectis_app *app,
   data->total_timeout_ms = config->total_timeout_ms;
   data->rewrite = config->rewrite;
   data->rewrite_userdata = config->rewrite_userdata;
+  data->modify_response = config->modify_response;
+  data->modify_response_userdata = config->modify_response_userdata;
   data->buffer_limit_bytes = config->buffer_limit_bytes != 0u
                                  ? config->buffer_limit_bytes
                                  : VECTIS_PROXY_DEFAULT_BUFFER_LIMIT_BYTES;

@@ -295,6 +295,29 @@ static vectis_status rewrite_first(const vectis_proxy_inbound *in,
   return vectis_proxy_outbound_add_header(out, "X-Director", "yes", error);
 }
 
+static vectis_status modify_stream_response(vectis_proxy_response *response,
+                                            void *userdata,
+                                            vectis_error *error) {
+  const char *name;
+  const char *value;
+  size_t i;
+
+  (void)userdata;
+  for (i = 0u; i < vectis_proxy_response_header_count(response); ++i) {
+    assert(vectis_proxy_response_header_at(response, i, &name, &value) ==
+           VECTIS_OK);
+    if (strcmp(name, "Content-Type") == 0 &&
+        strcmp(value, "text/event-stream") == 0) {
+      assert(vectis_proxy_response_status(response) == 200);
+      if (vectis_proxy_response_set_status(response, 202, error) != VECTIS_OK)
+        return error->code;
+      return vectis_proxy_response_add_header(response, "X-Modified", "yes",
+                                              error);
+    }
+  }
+  return VECTIS_OK;
+}
+
 int main(void) {
   struct origin_server origin;
   vectis_proxy_route_config proxy;
@@ -334,6 +357,7 @@ int main(void) {
   proxy.alternate_targets = alternates;
   proxy.alternate_target_count = 1u;
   proxy.rewrite = rewrite_first;
+  proxy.modify_response = modify_stream_response;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/plain", plain, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
@@ -406,7 +430,8 @@ int main(void) {
   } while (strstr(response, "hello\r\n") == NULL &&
            used < sizeof(response) - 1u);
   assert(origin.first_sent);
-  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  assert(strstr(response, "HTTP/1.1 202 ") != NULL);
+  assert(strstr(response, "X-Modified: yes\r\n") != NULL);
   assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
   assert(strstr(response, "Set-Cookie: a=1\r\n") != NULL);
   assert(strstr(response, "Set-Cookie: b=2\r\n") != NULL);

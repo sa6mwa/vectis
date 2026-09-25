@@ -1037,6 +1037,11 @@ do
     rewrite = "not a function",
   })
   assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
+    modify_response = "not a function",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
   assert(server:proxy({
     path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
     alternate_targets = {"https://example.invalid"},
@@ -1046,6 +1051,13 @@ do
     tls_ca_pem = "-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----\n",
   }) == true)
   assert(server:route_count() == 1)
+  assert(server:proxy({
+    path = "/lua-smoke-response-only", target = "http://127.0.0.1:9",
+    modify_response = function(response)
+      return response:set_status(202)
+    end,
+  }) == true)
+  assert(server:route_count() == 2)
 end
 assert(type(server.dsv) == "function")
 assert(type(server.upload) == "function")

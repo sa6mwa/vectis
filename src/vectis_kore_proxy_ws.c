@@ -332,9 +332,10 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
   }
   if (status != 101u) {
     wire = NULL;
-    if (vectis_proxy_ws_rejection_head(&state->rejection, state->response_head,
-                                       head_length, &final, &wire, &wire_length,
-                                       &error) != VECTIS_OK) {
+    if (vectis_proxy_ws_rejection_head(
+            &state->rejection, state->response_head, head_length, &final, &wire,
+            &wire_length, state->route->modify_response,
+            state->route->modify_response_userdata, &error) != VECTIS_OK) {
       state->error_status = 502;
       state->phase = VECTIS_KORE_WS_ERROR;
       vectis_proxy_headers_cleanup(&headers);
@@ -347,8 +348,9 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
     net_send_queue(state->downstream, wire, wire_length);
     free(wire);
     if (final) {
-      state->request->status = (u_int16_t)status;
-      vectis_internal_metrics_note_http_status(state->app, (int)status);
+      state->request->status = (u_int16_t)state->rejection.downstream_status;
+      vectis_internal_metrics_note_http_status(
+          state->app, state->rejection.downstream_status);
       state->downstream->http_response_count++;
       state->phase = VECTIS_KORE_WS_REJECTION;
     }

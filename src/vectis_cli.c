@@ -11567,22 +11567,35 @@ static int vectis_lua_app_proxy(lua_State *lua) {
   /* Keep the Lua target table on the stack until registration copies URLs. */
   route_data = NULL;
   lua_getfield(lua, 2, "rewrite");
-  if (!lua_isnil(lua, -1)) {
-    if (!lua_isfunction(lua, -1)) {
-      lua_pop(lua, 2);
-      return vectis_lua_push_error_text(
-          lua, VECTIS_ERR_INVALID, "proxy rewrite must be a function");
-    }
-    route_data = vectis_lua_proxy_route_new(lua, -1);
-    if (route_data == NULL) {
-      lua_pop(lua, 2);
-      return vectis_lua_push_error_text(
-          lua, VECTIS_ERR_NOMEM, "failed to retain proxy rewrite");
-    }
-    config.rewrite = vectis_lua_proxy_rewrite;
-    config.rewrite_userdata = route_data;
+  lua_getfield(lua, 2, "modify_response");
+  if (!lua_isnil(lua, -2) && !lua_isfunction(lua, -2)) {
+    lua_pop(lua, 3);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID, "proxy rewrite must be a function");
   }
-  lua_pop(lua, 1);
+  if (!lua_isnil(lua, -1) && !lua_isfunction(lua, -1)) {
+    lua_pop(lua, 3);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "proxy modify_response must be a function");
+  }
+  if (lua_isfunction(lua, -2) || lua_isfunction(lua, -1)) {
+    route_data = vectis_lua_proxy_route_new(lua, -2, -1);
+    if (route_data == NULL) {
+      lua_pop(lua, 3);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_NOMEM, "failed to retain proxy callback");
+    }
+    if (route_data->rewrite_ref != LUA_NOREF) {
+      config.rewrite = vectis_lua_proxy_rewrite;
+      config.rewrite_userdata = route_data;
+    }
+    if (route_data->response_ref != LUA_NOREF) {
+      config.modify_response = vectis_lua_proxy_modify_response;
+      config.modify_response_userdata = route_data;
+    }
+  }
+  lua_pop(lua, 2);
   vectis_error_clear(&error);
   status = app->proxy_route(app, &config, &error);
   lua_pop(lua, 1);

@@ -490,6 +490,13 @@ int vectis_proxy_request_header_editable(const char *name) {
          !vectis_proxy_ascii_prefix(name, "sec-websocket-");
 }
 
+int vectis_proxy_response_header_editable(const char *name) {
+  if (name == NULL || name[0] == '\0')
+    return 0;
+  return !vectis_proxy_hop_field(name) &&
+         !vectis_proxy_ascii_prefix(name, "sec-websocket-");
+}
+
 vectis_proxy_header_status
 vectis_proxy_headers_sanitize_request(const vectis_proxy_headers *source,
                                       vectis_proxy_headers *destination) {

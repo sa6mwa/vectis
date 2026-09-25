@@ -45,8 +45,12 @@ Major groups:
   trust store. Its optional `rewrite` callback receives borrowed inbound
   metadata and changes the configured target index, method, raw path/query,
   Host, and end-to-end headers through `vectis_proxy_outbound_*` helpers.
-  Invalid rewrites fail before an upstream connection. The public interface
-  compiles as C89.
+  Invalid rewrites fail before an upstream connection. The optional
+  `modify_response` callback edits final downstream status and end-to-end
+  headers through a borrowed `vectis_proxy_response` view before headers are
+  committed. It receives no body, and a successful WebSocket `101` bypasses
+  it. `libvectis` sources and public headers compile as strict C89; vendored
+  Kore and the embedded CLI dependency modules have separate C99 targets.
 - TLS/server hardening: `vectis_tls_config` supports manual/ACME material,
   client CA verification, protocol version selection, and OpenSSL cipher lists;
   `vectis_server_config` covers listener backlog, processing budget, and HSTS

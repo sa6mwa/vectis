@@ -59,6 +59,7 @@ vectis_proxy_headers_sanitize_request(const vectis_proxy_headers *source,
 /* Director edits may change end-to-end fields only. WebSocket handshake
  * negotiation fields remain tied to the validated inbound opening request. */
 int vectis_proxy_request_header_editable(const char *name);
+int vectis_proxy_response_header_editable(const char *name);
 
 /* Copy upstream end-to-end response fields into an empty destination.
  * The response writer reconstructs framing and Connection fields. */

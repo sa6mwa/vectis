@@ -31,6 +31,8 @@ static size_t vectis_proxy_http_upstream_header(char *data, size_t size,
   if (event != VECTIS_PROXY_HTTP_MORE && upstream->ready != NULL) {
     upstream->ready(upstream, event, upstream->userdata);
   }
+  if (upstream->failed)
+    return 0u;
   return length;
 }
 

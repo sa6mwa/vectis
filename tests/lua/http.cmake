@@ -906,6 +906,7 @@ assert(api_server:metrics({
   snapshot_interval_seconds = 300,
 }) == true)
 local previous_proxy_set_path
+local previous_proxy_set_status
 assert(api_server:proxy({
   path = "/lua-proxy",
   target = "http://127.0.0.1:9/unused",
@@ -930,12 +931,36 @@ assert(api_server:proxy({
     assert(outbound:set_header("X-Vectis-Trace", "lua-rewrite"))
     return true
   end,
+  modify_response = function(response)
+    if previous_proxy_set_status ~= nil then
+      local usable, expired = pcall(previous_proxy_set_status, 203)
+      assert(usable == false and tostring(expired):find("expired", 1, true))
+    end
+    previous_proxy_set_status = response.set_status
+    assert(response.status == 200)
+    assert(#response.headers > 0)
+    assert(response:set_status(202))
+    assert(response:set_header("X-Lua-Response", "edited"))
+    return true
+  end,
 }) == true)
 assert(api_server:proxy({
   path = "/lua-proxy-bad",
   target = "http://127.0.0.1:9/unused",
   rewrite = function(_, outbound)
     local ok, err = outbound:set_header("Connection", "close")
+    assert(ok == nil and type(err) == "string")
+    return true
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-response-bad",
+  target = "http://127.0.0.1:28484",
+  rewrite = function(_, outbound)
+    assert(outbound:set_path("/plain"))
+  end,
+  modify_response = function(response)
+    local ok, err = response:add_header("Content-Length", "100")
     assert(ok == nil and type(err) == "string")
     return true
   end,
@@ -976,15 +1001,16 @@ local proxy_response = vectis.http.get(
 })
 assert(proxy_response.ok == true,
        proxy_response.error and proxy_response.error.message)
-assert(proxy_response.status == 200)
+assert(proxy_response.status == 202)
 assert(proxy_response.body == "alice-ok:lua-rewrite\n")
+assert(proxy_response.headers:lower():find("x-lua-response: edited", 1, true))
 local repeated_proxy_response = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy?q=1&q=2", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,
   no_signal = true,
 })
-assert(repeated_proxy_response.status == 200)
+assert(repeated_proxy_response.status == 202)
 assert(repeated_proxy_response.body == "alice-ok:lua-rewrite\n")
 local bad_proxy_response = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy-bad", {
@@ -993,6 +1019,13 @@ local bad_proxy_response = vectis.http.get(
   no_signal = true,
 })
 assert(bad_proxy_response.status == 400)
+local bad_proxy_response_hook = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-response-bad", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(bad_proxy_response_hook.status == 502)
 local redirect_response = vectis.http.get("http://127.0.0.1:28484/go", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

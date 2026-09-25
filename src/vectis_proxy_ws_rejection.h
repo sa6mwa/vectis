@@ -4,6 +4,8 @@
 #include "vectis_proxy_framing.h"
 #include "vectis_proxy_http_wire.h"
 
+#include <vectis/proxy.h>
+
 typedef enum vectis_proxy_ws_rejection_mode {
   VECTIS_PROXY_WS_REJECTION_HEAD = 0,
   VECTIS_PROXY_WS_REJECTION_FIXED = 1,
@@ -17,6 +19,7 @@ typedef struct vectis_proxy_ws_rejection {
   vectis_proxy_http_wire_plan wire;
   vectis_proxy_body_framer framer;
   vectis_proxy_ws_rejection_mode mode;
+  int downstream_status;
 } vectis_proxy_ws_rejection;
 
 void vectis_proxy_ws_rejection_init(vectis_proxy_ws_rejection *rejection);
@@ -29,7 +32,8 @@ vectis_status
 vectis_proxy_ws_rejection_head(vectis_proxy_ws_rejection *rejection,
                                const unsigned char *head, size_t head_length,
                                int *final, char **wire, size_t *wire_length,
-                               vectis_error *error);
+                               vectis_proxy_modify_response_fn modify,
+                               void *modify_userdata, vectis_error *error);
 
 /* Consume at most one bounded body chunk per call. The caller must drain the
  * output before calling again. COMPLETE may leave a suffix unconsumed. */

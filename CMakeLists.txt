@@ -552,6 +552,7 @@ set(vectis_sources
   src/vectis_embedded_fs.c
   src/vectis_proxy_route.c
   src/vectis_proxy_director.c
+  src/vectis_proxy_response.c
   src/vectis_proxy_headers.c
   src/vectis_proxy_framing.c
   src/vectis_proxy_url.c

@@ -1,6 +1,7 @@
 #include "vectis_proxy_ws_rejection.h"
 
 #include "vectis_internal.h"
+#include "vectis_proxy_response.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,8 +97,10 @@ vectis_status
 vectis_proxy_ws_rejection_head(vectis_proxy_ws_rejection *rejection,
                                const unsigned char *head, size_t head_length,
                                int *final, char **wire, size_t *wire_length,
-                               vectis_error *error) {
+                               vectis_proxy_modify_response_fn modify,
+                               void *modify_userdata, vectis_error *error) {
   vectis_proxy_headers sanitized;
+  vectis_proxy_http_response downstream;
   vectis_proxy_http_event event;
   vectis_proxy_header_status parsed;
   const char *reason;
@@ -209,8 +212,15 @@ vectis_proxy_ws_rejection_head(vectis_proxy_ws_rejection *rejection,
                      "invalid upstream rejection hop-by-hop fields");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_proxy_http_wire_plan_build(&rejection->response, &sanitized,
-                                             0, &rejection->wire, error);
+  status = vectis_proxy_response_apply(&rejection->response, &sanitized, modify,
+                                       modify_userdata,
+                                       &rejection->downstream_status, error);
+  if (status == VECTIS_OK) {
+    downstream = rejection->response;
+    downstream.status = rejection->downstream_status;
+    status = vectis_proxy_http_wire_plan_build(&downstream, &sanitized, 0,
+                                               &rejection->wire, error);
+  }
   vectis_proxy_headers_cleanup(&sanitized);
   if (status != VECTIS_OK)
     return status;

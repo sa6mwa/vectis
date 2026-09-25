@@ -212,6 +212,16 @@ static vectis_status rewrite_ws(const vectis_proxy_inbound *in,
                                           error);
 }
 
+static vectis_status reject_modified_handshake(vectis_proxy_response *response,
+                                               void *userdata,
+                                               vectis_error *error) {
+  (void)response;
+  (void)userdata;
+  (void)error;
+  assert(0 && "successful WebSocket handshakes bypass response hooks");
+  return VECTIS_ERR_INVALID;
+}
+
 int main(void) {
   origin_server origin;
   vectis_proxy_route_config proxy;
@@ -254,6 +264,7 @@ int main(void) {
   proxy.alternate_targets = alternates;
   proxy.alternate_target_count = 1u;
   proxy.rewrite = rewrite_ws;
+  proxy.modify_response = reject_modified_handshake;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   if (app->start(app, &error) != VECTIS_OK) {
     fprintf(stderr, "WebSocket proxy startup: %s\n", error.message);

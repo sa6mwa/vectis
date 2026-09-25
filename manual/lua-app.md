@@ -336,6 +336,19 @@ continue. Borrowed helper functions expire when it returns. Only end-to-end
 headers may be changed, and invalid destinations are rejected before connect.
 Request and response bodies remain chunk streamed by the proxy.
 
+An optional `modify_response(response)` callback runs after final upstream
+headers are sanitized and before downstream headers are sent. It runs for
+HTTP, SSE, and rejected WebSocket handshakes; a successful WebSocket `101`
+bypasses it. The response has a copied `status` and ordered `headers` array
+of `{name, value}` entries. Editing those copies has no effect. Use
+`set_status(number)`, `add_header(name, value)`, `set_header(name, value)`,
+and `remove_header(name)` to change downstream metadata. Each setter returns
+`true` or `nil, error`. A failed setter rejects the upstream response even
+when ignored by the callback. The status must preserve whether the upstream
+response may carry a body; transport, forwarding, and WebSocket handshake
+headers cannot be edited. The callback returns `nil` or `true` to continue,
+cannot yield, and receives no body. Its methods expire when it returns.
+
 ```lua
 assert(app:proxy({
   path = "/api",
@@ -348,6 +361,9 @@ assert(app:proxy({
       assert(outbound:select_target(2))
       assert(outbound:set_path("/other"))
     end
+  end,
+  modify_response = function(response)
+    assert(response:set_header("X-Proxy", "vectis"))
   end,
 }))
 ```

@@ -20,9 +20,9 @@ static void fixed_body(void) {
   int final;
 
   vectis_proxy_ws_rejection_init(&rejection);
-  assert(vectis_proxy_ws_rejection_head(&rejection, (const unsigned char *)head,
-                                        sizeof(head) - 1u, &final, &wire,
-                                        &wire_length, &error) == VECTIS_OK);
+  assert(vectis_proxy_ws_rejection_head(
+             &rejection, (const unsigned char *)head, sizeof(head) - 1u, &final,
+             &wire, &wire_length, NULL, NULL, &error) == VECTIS_OK);
   assert(final);
   assert(strstr(wire, "HTTP/1.1 403 ") == wire);
   assert(strstr(wire, "Content-Length: 1048576\r\n") != NULL);
@@ -63,9 +63,9 @@ static void chunked_trailer(void) {
   int saw_body;
 
   vectis_proxy_ws_rejection_init(&rejection);
-  assert(vectis_proxy_ws_rejection_head(&rejection, (const unsigned char *)head,
-                                        sizeof(head) - 1u, &final, &wire,
-                                        &wire_length, &error) == VECTIS_OK);
+  assert(vectis_proxy_ws_rejection_head(
+             &rejection, (const unsigned char *)head, sizeof(head) - 1u, &final,
+             &wire, &wire_length, NULL, NULL, &error) == VECTIS_OK);
   assert(final);
   assert(strstr(wire, "Transfer-Encoding: chunked\r\n") != NULL);
   assert(strstr(wire, "Trailer: Digest\r\n") != NULL);
@@ -112,15 +112,15 @@ static void informational_and_close_body(void) {
   vectis_proxy_ws_rejection_init(&rejection);
   assert(vectis_proxy_ws_rejection_head(
              &rejection, (const unsigned char *)interim, sizeof(interim) - 1u,
-             &final, &wire, &wire_length, &error) == VECTIS_OK);
+             &final, &wire, &wire_length, NULL, NULL, &error) == VECTIS_OK);
   assert(!final);
   assert(strstr(wire, "HTTP/1.1 103 ") == wire);
   assert(strstr(wire, "Link: </next>; rel=preload\r\n") != NULL);
   free(wire);
-  assert(vectis_proxy_ws_rejection_head(&rejection,
-                                        (const unsigned char *)final_head,
-                                        sizeof(final_head) - 1u, &final, &wire,
-                                        &wire_length, &error) == VECTIS_OK);
+  assert(vectis_proxy_ws_rejection_head(
+             &rejection, (const unsigned char *)final_head,
+             sizeof(final_head) - 1u, &final, &wire, &wire_length, NULL, NULL,
+             &error) == VECTIS_OK);
   assert(final);
   assert(strstr(wire, "HTTP/1.1 503 ") == wire);
   assert(strstr(wire, "Transfer-Encoding: chunked\r\n") != NULL);
@@ -151,9 +151,9 @@ static void truncated_fixed_body(void) {
   int final;
 
   vectis_proxy_ws_rejection_init(&rejection);
-  assert(vectis_proxy_ws_rejection_head(&rejection, (const unsigned char *)head,
-                                        sizeof(head) - 1u, &final, &wire,
-                                        &wire_length, &error) == VECTIS_OK);
+  assert(vectis_proxy_ws_rejection_head(
+             &rejection, (const unsigned char *)head, sizeof(head) - 1u, &final,
+             &wire, &wire_length, NULL, NULL, &error) == VECTIS_OK);
   free(wire);
   assert(vectis_proxy_ws_rejection_feed(
              &rejection, (const unsigned char *)"abc", 3u, &consumed, output,
@@ -178,9 +178,9 @@ static void undeclared_trailer(void) {
   int final;
 
   vectis_proxy_ws_rejection_init(&rejection);
-  assert(vectis_proxy_ws_rejection_head(&rejection, (const unsigned char *)head,
-                                        sizeof(head) - 1u, &final, &wire,
-                                        &wire_length, &error) == VECTIS_OK);
+  assert(vectis_proxy_ws_rejection_head(
+             &rejection, (const unsigned char *)head, sizeof(head) - 1u, &final,
+             &wire, &wire_length, NULL, NULL, &error) == VECTIS_OK);
   assert(final);
   free(wire);
   pos = 0u;

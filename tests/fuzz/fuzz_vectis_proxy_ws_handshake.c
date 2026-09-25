@@ -84,7 +84,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     vectis_proxy_ws_rejection_init(&rejection);
     wire = NULL;
     if (vectis_proxy_ws_rejection_head(&rejection, data + 1u, parsed_length,
-                                       &final, &wire, &wire_length,
+                                       &final, &wire, &wire_length, NULL, NULL,
                                        &error) == VECTIS_OK &&
         final) {
       free(wire);

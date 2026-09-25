@@ -14,8 +14,10 @@ untrusted peer, and shares its optional CA bundle with ordinary HTTPS. TLS
 retry, backpressure, and shutdown cases need production-route tests.
 The C and Lua request rewrite hooks now select a configured target and edit
 method, raw path/query, Host, and bounded end-to-end headers before either
-upstream transport starts. Admission, response, and error hooks and the
-remaining resource limits are still in progress. The
+upstream transport starts. C and Lua final-response hooks edit downstream
+status and bounded end-to-end headers before commitment for HTTP, SSE, and
+non-`101` WebSocket rejections; successful upgrades bypass the hook. Admission
+and error hooks and the remaining resource limits are still in progress. The
 [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
 
@@ -45,8 +47,10 @@ The installed libvectis C headers and the proxy route API must compile under
 strict C89. Kore and libcurl types stay out of the public proxy API; their
 language mode must not leak into installed headers or consumer compile flags.
 The installed SDK consumer is a C89 compilation and link gate for this API.
-The private vendored Kore runtime and its bridge may use GNU99; proxy sources
-and the public libvectis interface compile in C89 mode.
+The private vendored Kore runtime uses GNU99; the embedded CLI and dependency
+modules use C99. All project-owned `libvectis` sources, including the Kore
+proxy bridge, compile in strict C89 mode. Neither C99 target imposes its
+language mode on installed headers or downstream consumers.
 
 The C registration is `app->proxy_route(app, &config, &error)` with a
 corresponding Lua `app:proxy(opts)`. The current route configuration fields and

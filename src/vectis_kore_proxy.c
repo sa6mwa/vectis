@@ -8,6 +8,7 @@
 #include "vectis_proxy_headers.h"
 #include "vectis_proxy_http_upstream.h"
 #include "vectis_proxy_http_wire.h"
+#include "vectis_proxy_response.h"
 #include "vectis_proxy_select.h"
 #include "vectis_proxy_upload.h"
 #include "vectis_proxy_url.h"
@@ -55,6 +56,7 @@ typedef struct vectis_kore_proxy_state {
   size_t final_length;
   int interest;
   int headers_ready;
+  int response_status;
   int headers_queued;
   int final_queued;
   int done;
@@ -251,17 +253,30 @@ static void vectis_kore_proxy_ready(vectis_proxy_http_upstream *upstream,
                                     vectis_proxy_http_event event,
                                     void *userdata) {
   vectis_kore_proxy_state *state;
+  vectis_proxy_http_response downstream;
   vectis_error error;
 
   state = (vectis_kore_proxy_state *)userdata;
   if (event == VECTIS_PROXY_HTTP_FINAL) {
-    if (vectis_proxy_http_wire_plan_build(
+    if (vectis_proxy_response_apply(
             &upstream->response, &upstream->outbound_headers,
-            state->route->upstream_http_version == VECTIS_PROXY_HTTP_AUTO,
-            &state->wire, &error) != VECTIS_OK)
+            state->route->modify_response,
+            state->route->modify_response_userdata, &state->response_status,
+            &error) != VECTIS_OK) {
       state->failed = 1;
-    else
-      state->headers_ready = 1;
+    } else {
+      downstream = upstream->response;
+      downstream.status = state->response_status;
+      if (vectis_proxy_http_wire_plan_build(
+              &downstream, &upstream->outbound_headers,
+              state->route->upstream_http_version == VECTIS_PROXY_HTTP_AUTO,
+              &state->wire, &error) != VECTIS_OK)
+        state->failed = 1;
+      else
+        state->headers_ready = 1;
+    }
+    if (state->failed)
+      upstream->failed = 1;
   }
   vectis_kore_proxy_request_wake(state);
 }
@@ -325,9 +340,9 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   if (state->headers_ready && !state->headers_queued) {
     net_send_queue(connection, state->wire.head, state->wire.head_length);
     state->headers_queued = 1;
-    state->request->status = (u_int16_t)state->upstream.response.status;
+    state->request->status = (u_int16_t)state->response_status;
     vectis_internal_metrics_note_http_status(state->app,
-                                             state->upstream.response.status);
+                                             state->response_status);
     connection->http_response_count++;
     vectis_kore_proxy_schedule(state);
     return 1;

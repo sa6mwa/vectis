@@ -18,6 +18,7 @@ typedef enum vectis_proxy_http_version {
 
 typedef struct vectis_proxy_inbound vectis_proxy_inbound;
 typedef struct vectis_proxy_outbound vectis_proxy_outbound;
+typedef struct vectis_proxy_response vectis_proxy_response;
 
 /**
  * Synchronous request rewrite, called after Vectis validates and sanitizes
@@ -78,6 +79,46 @@ vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
                                                   vectis_error *error);
 
 /**
+ * Synchronous final-response metadata hook, before downstream headers are
+ * committed. Receives no body. Called for HTTP, SSE, and non-101 WebSocket
+ * rejections; a validated 101 handshake bypasses it. The view is borrowed
+ * only for this call and must not be retained or used to block the worker.
+ * Returning an error rejects the upstream response before commitment.
+ */
+typedef vectis_status (*vectis_proxy_modify_response_fn)(
+    vectis_proxy_response *response, void *userdata, vectis_error *error);
+
+/** Inspect the current downstream status and sanitized end-to-end headers. */
+int vectis_proxy_response_status(const vectis_proxy_response *response);
+size_t
+vectis_proxy_response_header_count(const vectis_proxy_response *response);
+vectis_status
+vectis_proxy_response_header_at(const vectis_proxy_response *response,
+                                size_t index, const char **name,
+                                const char **value);
+
+/**
+ * Edit downstream metadata through bounded copies. The status must remain a
+ * final non-101 status and preserve the upstream body eligibility (including
+ * HEAD and the 204/304 rules). Transport framing, hop-by-hop, forwarding,
+ * and WebSocket handshake fields are owned by Vectis and cannot be edited.
+ * Any failed setter rejects the response even if the hook ignores its error.
+ */
+vectis_status vectis_proxy_response_set_status(vectis_proxy_response *response,
+                                               int status, vectis_error *error);
+vectis_status vectis_proxy_response_add_header(vectis_proxy_response *response,
+                                               const char *name,
+                                               const char *value,
+                                               vectis_error *error);
+vectis_status vectis_proxy_response_set_header(vectis_proxy_response *response,
+                                               const char *name,
+                                               const char *value,
+                                               vectis_error *error);
+vectis_status
+vectis_proxy_response_remove_header(vectis_proxy_response *response,
+                                    const char *name, vectis_error *error);
+
+/**
  * Registration input for one in-process reverse proxy route.
  *
  * Zero-initialize or call vectis_proxy_route_config_init(). Vectis copies the
@@ -119,6 +160,9 @@ struct vectis_proxy_route_config {
   /* Optional synchronous rewrite hook and borrowed application context. */
   vectis_proxy_rewrite_fn rewrite;
   void *rewrite_userdata;
+  /* Optional final response hook and borrowed application context. */
+  vectis_proxy_modify_response_fn modify_response;
+  void *modify_response_userdata;
 };
 
 /** Set the documented zero-value defaults. NULL is ignored. */
