@@ -243,6 +243,14 @@ if(VECTIS_WITH_KORE_RUNTIME)
         15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
     set_tests_properties(vectis_unit_kore_proxy_wss_cancel_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
+    add_test(NAME vectis_unit_kore_proxy_wss_shutdown_live
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
+        VECTIS_PROXY_WSS_SLOW=1 VECTIS_PROXY_WSS_CANCEL=1
+        VECTIS_PROXY_WSS_SHUTDOWN=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
+    set_tests_properties(vectis_unit_kore_proxy_wss_shutdown_live PROPERTIES
+      LABELS "unit;local" TIMEOUT 180)
   endif()
   vectis_add_unit_test(vectis_unit_proxy_route_registration
     test_proxy_route_registration.c)

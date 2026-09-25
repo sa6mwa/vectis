@@ -12,9 +12,9 @@ trailers, and `103` followed by a close-delimited final response. A verified
 local WSS route now relays 128 KiB frames in both directions, rejects an
 untrusted peer, and shares its optional CA bundle with ordinary HTTPS. A
 slow-peer mTLS variant covers larger frames, bounded worker RSS, and
-downstream cancellation during a partial TLS response. Explicit libcurl TLS
-retry and worker shutdown during a live tunnel still need production-route
-tests.
+downstream cancellation during a partial TLS response. A separate variant
+stops the app during that live tunnel. Explicit libcurl TLS `CURLE_AGAIN`
+retry remains uninstrumented in production-route tests.
 The C and Lua request rewrite hooks now select a configured target and edit
 method, raw path/query, Host, and bounded end-to-end headers before either
 upstream transport starts. C and Lua final-response hooks edit downstream
@@ -818,8 +818,10 @@ A cancellation variant closes the downstream client during that partial
 32 MiB response. The TLS origin observes a write failure before finishing
 the frame; the worker then serves a rejected untrusted WSS request and a
 successful HTTPS request before clean app shutdown. Debug and ASan runs pass.
-This covers downstream cancellation while the TLS origin is blocked, but
-does not simulate worker shutdown while the tunnel is still active.
+This covers downstream cancellation while the TLS origin is blocked. A
+separate variant calls `vectis_stop()` during the same blocked
+response. With a 2-second configured grace, the worker exits, the origin's
+partial write fails, and app shutdown completes; Debug and ASan runs pass.
 
 The mixed production-route smoke holds eight certificate-verified HTTP/2
 slow-reader downloads and eight cleartext WebSocket tunnels in the same worker.

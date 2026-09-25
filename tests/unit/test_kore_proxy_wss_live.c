@@ -51,6 +51,7 @@ typedef struct tls_origin {
   int require_client_cert;
   int slow;
   int cancel;
+  int shutdown;
   volatile int response_started;
   volatile size_t produced;
   volatile int write_failed;
@@ -297,6 +298,8 @@ static void *origin_main(void *userdata) {
   }
   SSL_free(ssl);
   assert(close(fd) == 0);
+  if (origin->shutdown)
+    return NULL;
 
   /* The same certificate must fail without the route's trusted CA bundle. */
   fd = accept(origin->listener, NULL, NULL);
@@ -421,7 +424,8 @@ static unsigned short available_port(void) {
 }
 
 static void run_trusted(unsigned short app_port, tls_origin *origin,
-                        test_probe *probe) {
+                        test_probe *probe, vectis_app *app,
+                        vectis_error *error) {
   unsigned char response[2048];
   unsigned char chunk[4096];
   unsigned char header[sizeof(server_big_head)];
@@ -489,6 +493,11 @@ static void run_trusted(unsigned short app_port, tls_origin *origin,
             probe->baseline_rss_kb, stalled_rss_kb,
             (unsigned long)stalled_produced, (unsigned long)payload_bytes);
     assert(stalled_rss_kb <= probe->baseline_rss_kb + WSS_MAX_RSS_DELTA_KB);
+    if (origin->shutdown) {
+      assert(vectis_stop(app, error) == VECTIS_OK);
+      assert(close(fd) == 0);
+      return;
+    }
     if (origin->cancel) {
       assert(close(fd) == 0);
       return;
@@ -576,7 +585,9 @@ int main(void) {
   origin.require_client_cert = mtls;
   origin.slow = getenv("VECTIS_PROXY_WSS_SLOW") != NULL;
   origin.cancel = getenv("VECTIS_PROXY_WSS_CANCEL") != NULL;
+  origin.shutdown = getenv("VECTIS_PROXY_WSS_SHUTDOWN") != NULL;
   assert(!origin.cancel || origin.slow);
+  assert(!origin.shutdown || (origin.slow && origin.cancel));
   probe = NULL;
   if (origin.slow) {
     probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
@@ -628,6 +639,8 @@ int main(void) {
   app_config.tls.bind = "127.0.0.1";
   app_config.tls.port = app_port;
   app_config.server.worker_count = 1u;
+  if (origin.shutdown)
+    app_config.shutdown_grace_ms = 2000L;
   app = vectis_app_new(&app_config, &error);
   assert(app != NULL);
   vectis_proxy_route_config_init(&proxy);
@@ -656,18 +669,22 @@ int main(void) {
   }
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
-  run_trusted(app_port, &origin, probe);
-  run_untrusted(app_port);
-  run_http(app_port);
+  run_trusted(app_port, &origin, probe, app, &error);
+  if (!origin.shutdown) {
+    run_untrusted(app_port);
+    run_http(app_port);
+  }
   assert(pthread_join(origin.thread, NULL) == 0);
   if (origin.cancel) {
     assert(__sync_fetch_and_add(&origin.write_failed, 0) == 1);
     assert(__sync_fetch_and_add(&origin.produced, 0u) < WSS_SLOW_PAYLOAD_BYTES);
   }
-  assert(origin.hello_count == 3);
+  assert(origin.hello_count == (origin.shutdown ? 1 : 3));
   assert(!origin.ws_offered_alpn);
-  assert(origin.http_offered_alpn);
-  assert(vectis_stop(app, &error) == VECTIS_OK);
+  if (!origin.shutdown) {
+    assert(origin.http_offered_alpn);
+    assert(vectis_stop(app, &error) == VECTIS_OK);
+  }
   app->close(app);
   assert(close(origin.listener) == 0);
   SSL_CTX_free(origin.ctx);
