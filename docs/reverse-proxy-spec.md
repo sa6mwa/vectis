@@ -835,12 +835,22 @@ the HTTP/2 origins generated 49,840,128 bytes while upload clients had sent
 simultaneous pressure across exchanges, not a full-duplex exchange with both
 directions active in the same HTTP request.
 
+The mixed maximum-configuration variant runs eight certificate-verified H2
+slow downloads and eight forced-HTTP/1.1 TLS uploads in the same worker.
+Both routes use maximum-size copied CA/client certificate/client key PEM
+values and 1 MiB chunk limits; inbound requests carry near-64 KiB headers.
+Two x86-64 Linux Debug runs measured 8,856-8,864 KiB at preflight and
+68,656-69,140 KiB at the sampled peak, or 59,800-60,276 KiB additional
+RSS. The later plateau, `503` admission, and FD recovery passed; the ASan
+variant passed too. These runs establish simultaneous maximum-configuration
+pressure in both libcurl protocol pools for these two transfer profiles.
+
 The full admission reserve still needs a worst-case full-duplex HTTP exchange,
-maximum configuration sizes with active transfers in both protocol pools,
 and a deployment worker-memory budget. Both idle caches have been warmed in
 the live test above; the active HTTP/2 pool evicts its four cached idle
-connections as it fills. The bidirectional WebSocket case is covered
-separately above.
+connections as it fills. Maximum configuration sizes with active transfers
+in both protocol pools are covered by the mixed variant. The bidirectional
+WebSocket case is covered separately above.
 The existing 16-slot exchange cap remains provisional until that gate is
 complete.
 

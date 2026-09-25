@@ -85,13 +85,16 @@ typedef struct test_ws_origin {
 } test_ws_origin;
 
 typedef struct test_h1_origin {
+  SSL_CTX *ctx;
   int listener;
   int clients[TEST_MIXED_CONNECTIONS];
+  SSL *client_ssl[TEST_MIXED_CONNECTIONS];
   unsigned short port;
   pthread_t thread;
   volatile unsigned accepted;
   volatile unsigned uploads_started;
   int warmup_mode;
+  int tls_mode;
   volatile int release;
 } test_h1_origin;
 
@@ -555,7 +558,7 @@ static void *h1_origin_main(void *userdata) {
   test_h1_origin *origin;
   static const char warmup_response[] =
       "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
-  char request[2048];
+  char request[65536];
   char *head_end;
   int body_started[TEST_MIXED_CONNECTIONS];
   size_t used;
@@ -570,15 +573,24 @@ static void *h1_origin_main(void *userdata) {
        ++i) {
     origin->clients[i] = accept(origin->listener, NULL, NULL);
     assert(origin->clients[i] >= 0);
-    receive_buffer = 4096;
+    if (origin->tls_mode) {
+      origin->client_ssl[i] = SSL_new(origin->ctx);
+      assert(origin->client_ssl[i] != NULL);
+      assert(SSL_set_fd(origin->client_ssl[i], origin->clients[i]) == 1);
+      assert(SSL_accept(origin->client_ssl[i]) == 1);
+    }
+    receive_buffer = origin->tls_mode ? 65536 : 4096;
     assert(setsockopt(origin->clients[i], SOL_SOCKET, SO_RCVBUF,
                       &receive_buffer, sizeof(receive_buffer)) == 0);
     used = 0u;
     request[0] = '\0';
     while ((head_end = strstr(request, "\r\n\r\n")) == NULL) {
       assert(used < sizeof(request) - 1u);
-      amount = recv(origin->clients[i], request + used,
-                    sizeof(request) - used - 1u, 0);
+      amount = origin->tls_mode
+                   ? SSL_read(origin->client_ssl[i], request + used,
+                              (int)(sizeof(request) - used - 1u))
+                   : recv(origin->clients[i], request + used,
+                          sizeof(request) - used - 1u, 0);
       assert(amount > 0);
       used += (size_t)amount;
       request[used] = '\0';
@@ -611,37 +623,46 @@ static void *h1_origin_main(void *userdata) {
   for (i = 0; i < TEST_MIXED_CONNECTIONS; ++i) {
     if (body_started[i])
       continue;
-    amount = recv(origin->clients[i], request, 1u, 0);
+    amount = origin->tls_mode ? SSL_read(origin->client_ssl[i], request, 1)
+                              : recv(origin->clients[i], request, 1u, 0);
     assert(amount == 1);
     (void)__sync_add_and_fetch(&origin->uploads_started, 1u);
   }
   while (__sync_fetch_and_add(&origin->release, 0) == 0)
     usleep(1000u);
-  for (i = 0; i < TEST_MIXED_CONNECTIONS; ++i)
+  for (i = 0; i < TEST_MIXED_CONNECTIONS; ++i) {
+    if (origin->tls_mode)
+      SSL_free(origin->client_ssl[i]);
     assert(close(origin->clients[i]) == 0);
+  }
   return NULL;
 }
 
-static void send_max_header_request(int fd) {
-  static const char prefix[] = "GET /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n";
-  char field[2830];
+static void send_max_header_request(int fd, const char *prefix, int field_count,
+                                    size_t field_size) {
+  char field[3030];
   int length;
   int i;
 
-  send_all(fd, prefix, sizeof(prefix) - 1u);
-  for (i = 0; i < 22; ++i) {
+  send_all(fd, prefix, strlen(prefix));
+  for (i = 0; i < field_count; ++i) {
     length = snprintf(field, sizeof(field), "X-Stress-%02d: ", i);
-    assert(length > 0 && (size_t)length + 2802u <= sizeof(field));
-    memset(field + length, 'h', 2800u);
-    field[length + 2800] = '\r';
-    field[length + 2801] = '\n';
-    send_all(fd, field, (size_t)length + 2802u);
+    assert(length > 0 && (size_t)length + field_size + 2u <= sizeof(field));
+    memset(field + length, 'h', field_size);
+    field[length + field_size] = '\r';
+    field[length + field_size + 1u] = '\n';
+    send_all(fd, field, (size_t)length + field_size + 2u);
   }
   send_all(fd, "\r\n", 2u);
 }
 
 static int connect_app(unsigned short port, int route_kind, int upload_mode,
                        int max_headers) {
+  static const char max_h2_prefix[] =
+      "GET /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n";
+  static const char max_h1_prefix[] =
+      "POST /proxy/h1 HTTP/1.1\r\nHost: localhost\r\n"
+      "Content-Length: 67108864\r\n";
   static const char http_request[] =
       "GET /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char upload_request[] =
@@ -693,12 +714,15 @@ static int connect_app(unsigned short port, int route_kind, int upload_mode,
     send_all(fd, warm_h2_request, sizeof(warm_h2_request) - 1u);
   else if (route_kind == TEST_ROUTE_WARM_H1)
     send_all(fd, warm_h1_request, sizeof(warm_h1_request) - 1u);
-  else if (route_kind == TEST_ROUTE_H1)
-    send_all(fd, h1_upload_request, sizeof(h1_upload_request) - 1u);
-  else if (upload_mode)
+  else if (route_kind == TEST_ROUTE_H1) {
+    if (max_headers)
+      send_max_header_request(fd, max_h1_prefix, 20, 3000u);
+    else
+      send_all(fd, h1_upload_request, sizeof(h1_upload_request) - 1u);
+  } else if (upload_mode)
     send_all(fd, upload_request, sizeof(upload_request) - 1u);
   else if (max_headers)
-    send_max_header_request(fd);
+    send_max_header_request(fd, max_h2_prefix, 22, 2800u);
   else
     send_all(fd, http_request, sizeof(http_request) - 1u);
   return fd;
@@ -946,6 +970,10 @@ int main(void) {
     ws_origin.port = listen_port(&ws_origin.listener);
   if (mixed_upload || mixed_transfer)
     h1_origin.port = listen_port(&h1_origin.listener);
+  if (mixed_transfer && large_identity) {
+    h1_origin.ctx = origin.ctx;
+    h1_origin.tls_mode = 1;
+  }
   app_port = unused_port();
   assert(snprintf(target, sizeof(target), "https://localhost:%u",
                   (unsigned)origin.port) > 0);
@@ -1009,7 +1037,9 @@ int main(void) {
     assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   }
   if (mixed_upload || mixed_transfer) {
-    assert(snprintf(h1_target, sizeof(h1_target), "http://127.0.0.1:%u",
+    assert(snprintf(h1_target, sizeof(h1_target),
+                    h1_origin.tls_mode ? "https://localhost:%u"
+                                       : "http://127.0.0.1:%u",
                     (unsigned)h1_origin.port) > 0);
     vectis_proxy_route_config_init(&proxy);
     proxy.path = "/proxy/h1";
@@ -1017,6 +1047,11 @@ int main(void) {
     proxy.target = h1_target;
     proxy.upstream_http_version = VECTIS_PROXY_HTTP_1_1;
     proxy.buffer_limit_bytes = 1048576u;
+    if (h1_origin.tls_mode) {
+      proxy.tls_ca_pem = ca_pem;
+      proxy.tls_client_cert_pem = ca_pem;
+      proxy.tls_client_key_pem = client_key_pem;
+    }
     assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   }
   free(ca_pem);
@@ -1091,7 +1126,7 @@ int main(void) {
   }
   if (mixed_upload || mixed_transfer) {
     for (i = h2_connections; i < TEST_CONNECTIONS; ++i)
-      clients[i] = connect_app(app_port, TEST_ROUTE_H1, 1, 0);
+      clients[i] = connect_app(app_port, TEST_ROUTE_H1, 1, large_identity);
   }
   upload_sent = (upload_mode || mixed_transfer)
                     ? send_uploads(clients, mixed_transfer ? h2_connections : 0)
@@ -1121,6 +1156,10 @@ int main(void) {
         break;
       usleep(10000u);
     }
+    if (i == 500)
+      fprintf(stderr, "h1 origin startup: accepted=%u uploads=%u\n",
+              __sync_fetch_and_add(&h1_origin.accepted, 0u),
+              __sync_fetch_and_add(&h1_origin.uploads_started, 0u));
     assert(i < 500);
   }
   at_headers = process_rss_kb(probe->worker_pid);
@@ -1196,7 +1235,7 @@ int main(void) {
     assert(close(overflow) == 0);
   }
   if (mixed_upload || mixed_transfer) {
-    overflow = connect_app(app_port, TEST_ROUTE_H1, 1, 0);
+    overflow = connect_app(app_port, TEST_ROUTE_H1, 1, large_identity);
     read_head(overflow, head, sizeof(head));
     assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
     assert(close(overflow) == 0);
