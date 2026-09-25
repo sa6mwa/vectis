@@ -20,22 +20,45 @@ static const unsigned char later_client_frame[] = {
 static const unsigned char early_server_frame[] = {0x81u, 0x02u, 'o', 'k'};
 static const unsigned char later_server_frame[] = {0x81u, 0x03u, 'b', 'y', 'e'};
 #define BIG_PAYLOAD_SIZE (1024u * 1024u)
-static const unsigned char big_client_header[] = {0x82u, 0xffu, 0u,    0u,   0u,
+static const unsigned char big_client_header[] = {0x02u, 0xffu, 0u,    0u,   0u,
                                                   0u,    0u,    0x10u, 0u,   0u,
                                                   0x12u, 0x34u, 0x56u, 0x78u};
-static const unsigned char big_server_header[] = {0x82u, 0x7fu, 0u,    0u, 0u,
+static const unsigned char big_client_final[] = {0x80u, 0x81u, 0x12u,     0x34u,
+                                                 0x56u, 0x78u, '!' ^ 0x12};
+static const unsigned char big_server_header[] = {0x02u, 0x7fu, 0u,    0u, 0u,
                                                   0u,    0u,    0x10u, 0u, 0u};
+static const unsigned char big_server_final[] = {0x80u, 0x01u, '!'};
 static const unsigned char big_mask[] = {0x12u, 0x34u, 0x56u, 0x78u};
+static const unsigned char client_fragment[] = {
+    0x01u, 0x82u, 0x12u, 0x34u, 0x56u, 0x78u, 'h' ^ 0x12, 'e' ^ 0x34};
+static const unsigned char client_ping[] = {0x89u, 0x81u, 0x12u,     0x34u,
+                                            0x56u, 0x78u, '?' ^ 0x12};
+static const unsigned char client_continuation[] = {
+    0x80u, 0x83u,      0x12u,      0x34u,     0x56u,
+    0x78u, 'l' ^ 0x12, 'l' ^ 0x34, 'o' ^ 0x56};
+static const unsigned char client_close[] = {
+    0x88u,       0x86u,       0x12u,         0x34u,
+    0x56u,       0x78u,       0x03u ^ 0x12u, 0xe8u ^ 0x34u,
+    'd' ^ 0x56u, 'o' ^ 0x78u, 'n' ^ 0x12u,   'e' ^ 0x34u};
+static const unsigned char server_fragment[] = {0x01u, 0x02u, 'o', 'k'};
+static const unsigned char server_pong[] = {0x8au, 0x01u, '?'};
+static const unsigned char server_continuation[] = {0x80u, 0x01u, '!'};
+static const unsigned char server_close[] = {0x88u, 0x05u, 0x03u, 0xe8u,
+                                             'b',   'y',   'e'};
 static const char client_head[] =
     "GET /ws?q=1&q=2 HTTP/1.1\r\nHost: localhost\r\n"
     "Connection: Upgrade\r\nUpgrade: websocket\r\n"
     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: chat\r\n\r\n";
+    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: chat\r\n"
+    "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover"
+    "\r\n\r\n";
 static const char upstream_head[] =
     "HTTP/1.1 101 Switching Protocols\r\n"
     "Connection: Upgrade\r\nUpgrade: websocket\r\n"
     "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
-    "Sec-WebSocket-Protocol: chat\r\n\r\n";
+    "Sec-WebSocket-Protocol: chat\r\n"
+    "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover"
+    "\r\n\r\n";
 
 typedef struct origin_server {
   int listener;
@@ -74,6 +97,7 @@ static void *origin_main(void *userdata) {
   unsigned char frame[sizeof(early_client_frame)];
   unsigned char big_header[sizeof(big_client_header)];
   unsigned char big_chunk[4096];
+  unsigned char control[sizeof(client_close)];
   unsigned char
       response[sizeof(upstream_head) - 1u + sizeof(early_server_frame)];
   size_t used;
@@ -105,6 +129,12 @@ static void *origin_main(void *userdata) {
   assert(strstr((const char *)request, "X-Director: websocket\r\n") != NULL);
   assert(strstr((const char *)request, "Sec-WebSocket-Key: ") != NULL ||
          strstr((const char *)request, "sec-websocket-key: ") != NULL);
+  assert(strstr((const char *)request,
+                "Sec-WebSocket-Extensions: permessage-deflate; "
+                "client_no_context_takeover\r\n") != NULL ||
+         strstr((const char *)request,
+                "sec-websocket-extensions: permessage-deflate; "
+                "client_no_context_takeover\r\n") != NULL);
   assert(used == strlen((const char *)request));
   memcpy(response, upstream_head, sizeof(upstream_head) - 1u);
   memcpy(response + sizeof(upstream_head) - 1u, early_server_frame,
@@ -123,10 +153,26 @@ static void *origin_main(void *userdata) {
       assert(big_chunk[i] ==
              (unsigned char)('A' ^ big_mask[(offset + i) % 4u]));
   }
+  read_exact(fd, control, sizeof(big_client_final));
+  assert(memcmp(control, big_client_final, sizeof(big_client_final)) == 0);
   send_all(fd, big_server_header, sizeof(big_server_header));
   memset(big_chunk, 'B', sizeof(big_chunk));
   for (offset = 0u; offset < BIG_PAYLOAD_SIZE; offset += sizeof(big_chunk))
     send_all(fd, big_chunk, sizeof(big_chunk));
+  send_all(fd, big_server_final, sizeof(big_server_final));
+  read_exact(fd, control, sizeof(client_fragment));
+  assert(memcmp(control, client_fragment, sizeof(client_fragment)) == 0);
+  read_exact(fd, control, sizeof(client_ping));
+  assert(memcmp(control, client_ping, sizeof(client_ping)) == 0);
+  read_exact(fd, control, sizeof(client_continuation));
+  assert(memcmp(control, client_continuation, sizeof(client_continuation)) ==
+         0);
+  send_all(fd, server_fragment, sizeof(server_fragment));
+  send_all(fd, server_pong, sizeof(server_pong));
+  send_all(fd, server_continuation, sizeof(server_continuation));
+  read_exact(fd, control, sizeof(client_close));
+  assert(memcmp(control, client_close, sizeof(client_close)) == 0);
+  send_all(fd, server_close, sizeof(server_close));
   assert(close(fd) == 0);
   return NULL;
 }
@@ -304,6 +350,9 @@ int main(void) {
   assert(strstr((const char *)response, "101 Switching Protocols") != NULL);
   assert(strstr((const char *)response, "Sec-WebSocket-Protocol: chat\r\n") !=
          NULL);
+  assert(strstr((const char *)response,
+                "Sec-WebSocket-Extensions: permessage-deflate; "
+                "server_no_context_takeover\r\n") != NULL);
   frame = (const unsigned char *)boundary + 4u;
   assert(memcmp(frame, early_server_frame, sizeof(early_server_frame)) == 0);
   send_all(fd, later_client_frame, sizeof(later_client_frame));
@@ -315,6 +364,7 @@ int main(void) {
       big_chunk[i] = (unsigned char)('A' ^ big_mask[(offset + i) % 4u]);
     send_all(fd, big_chunk, sizeof(big_chunk));
   }
+  send_all(fd, big_client_final, sizeof(big_client_final));
   read_exact(fd, big_head, sizeof(big_head));
   assert(memcmp(big_head, big_server_header, sizeof(big_head)) == 0);
   for (offset = 0u; offset < BIG_PAYLOAD_SIZE; offset += sizeof(big_chunk)) {
@@ -322,6 +372,21 @@ int main(void) {
     for (i = 0u; i < sizeof(big_chunk); ++i)
       assert(big_chunk[i] == 'B');
   }
+  read_exact(fd, response, sizeof(big_server_final));
+  assert(memcmp(response, big_server_final, sizeof(big_server_final)) == 0);
+  send_all(fd, client_fragment, sizeof(client_fragment));
+  send_all(fd, client_ping, sizeof(client_ping));
+  send_all(fd, client_continuation, sizeof(client_continuation));
+  read_exact(fd, response, sizeof(server_fragment));
+  assert(memcmp(response, server_fragment, sizeof(server_fragment)) == 0);
+  read_exact(fd, response, sizeof(server_pong));
+  assert(memcmp(response, server_pong, sizeof(server_pong)) == 0);
+  read_exact(fd, response, sizeof(server_continuation));
+  assert(memcmp(response, server_continuation, sizeof(server_continuation)) ==
+         0);
+  send_all(fd, client_close, sizeof(client_close));
+  read_exact(fd, response, sizeof(server_close));
+  assert(memcmp(response, server_close, sizeof(server_close)) == 0);
   assert(close(fd) == 0);
   assert(pthread_join(origin.thread, NULL) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);

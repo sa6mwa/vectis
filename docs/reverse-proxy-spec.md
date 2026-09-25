@@ -5,10 +5,11 @@ registration, target construction, worker curl integration, and bounded live
 HTTP/SSE request and response streaming are implemented. A successful
 HTTP/1.1 WebSocket upgrade now uses a retained connect-only transfer and a
 bounded raw relay; a cleartext live test covers coalesced handshake/frame bytes
-and 1 MiB streaming in both directions. Non-`101` replies now use an
-incremental HTTP/1.1 rejection path; a cleartext live test covers a 1 MiB
-fixed-length rejection that starts before the origin finishes sending, chunked
-trailers, and `103` followed by a close-delimited final response. A verified
+and a fragmented message above 1 MiB in both directions, negotiated extension
+headers, interleaved ping/pong, and close code/reason bytes. Non-`101` replies
+use an incremental HTTP/1.1 rejection path. A cleartext live test covers a
+1 MiB fixed-length rejection that starts before the origin finishes sending,
+chunked trailers, and `103` followed by a close-delimited final response. A verified
 local WSS route now relays 128 KiB frames in both directions, rejects an
 untrusted peer, and shares its optional CA bundle with ordinary HTTPS. A
 slow-peer mTLS variant covers larger frames, bounded worker RSS, and
