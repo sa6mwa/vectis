@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <assert.h>
+#include <curl/curl.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <openssl/bio.h>
@@ -39,7 +40,42 @@
 typedef struct test_probe {
   volatile pid_t worker_pid;
   volatile unsigned long baseline_rss_kb;
+  volatile unsigned long recv_again;
+  volatile unsigned long send_again;
 } test_probe;
+
+#if defined(__linux__)
+static test_probe *active_probe;
+
+extern CURLcode __real_curl_easy_recv(CURL *easy, void *buffer, size_t capacity,
+                                      size_t *received);
+extern CURLcode __real_curl_easy_send(CURL *easy, const void *buffer,
+                                      size_t length, size_t *sent);
+CURLcode __wrap_curl_easy_recv(CURL *easy, void *buffer, size_t capacity,
+                               size_t *received);
+CURLcode __wrap_curl_easy_send(CURL *easy, const void *buffer, size_t length,
+                               size_t *sent);
+
+CURLcode __wrap_curl_easy_recv(CURL *easy, void *buffer, size_t capacity,
+                               size_t *received) {
+  CURLcode code;
+
+  code = __real_curl_easy_recv(easy, buffer, capacity, received);
+  if (code == CURLE_AGAIN && active_probe != NULL)
+    (void)__sync_add_and_fetch(&active_probe->recv_again, 1u);
+  return code;
+}
+
+CURLcode __wrap_curl_easy_send(CURL *easy, const void *buffer, size_t length,
+                               size_t *sent) {
+  CURLcode code;
+
+  code = __real_curl_easy_send(easy, buffer, length, sent);
+  if (code == CURLE_AGAIN && active_probe != NULL)
+    (void)__sync_add_and_fetch(&active_probe->send_again, 1u);
+  return code;
+}
+#endif
 
 typedef struct tls_origin {
   SSL_CTX *ctx;
@@ -476,6 +512,9 @@ static void run_trusted(unsigned short app_port, tls_origin *origin,
     fprintf(stderr, "production WSS idle handshake worker CPU=%ldms/300ms\n",
             cpu_ms);
     assert(cpu_ms < 150L);
+    assert(__sync_fetch_and_add(&probe->recv_again, 0u) > 0u);
+    fprintf(stderr, "production WSS curl recv CURLE_AGAIN=%lu\n",
+            __sync_fetch_and_add(&probe->recv_again, 0u));
   }
   used = 0u;
   do {
@@ -520,9 +559,12 @@ static void run_trusted(unsigned short app_port, tls_origin *origin,
     assert(stalled_produced < payload_bytes);
     fprintf(stderr,
             "production WSS slow peer: baseline=%luKB sampled_peak=%luKB "
-            "origin_sent=%lu/%lu\n",
+            "origin_sent=%lu/%lu send_again=%lu recv_again=%lu\n",
             probe->baseline_rss_kb, stalled_rss_kb,
-            (unsigned long)stalled_produced, (unsigned long)payload_bytes);
+            (unsigned long)stalled_produced, (unsigned long)payload_bytes,
+            __sync_fetch_and_add(&probe->send_again, 0u),
+            __sync_fetch_and_add(&probe->recv_again, 0u));
+    assert(__sync_fetch_and_add(&probe->send_again, 0u) > 0u);
     assert(stalled_rss_kb <= probe->baseline_rss_kb + WSS_MAX_RSS_DELTA_KB);
     if (origin->shutdown) {
       assert(vectis_stop(app, error) == VECTIS_OK);
@@ -627,6 +669,9 @@ int main(void) {
     assert(probe != MAP_FAILED);
     memset(probe, 0, sizeof(*probe));
   }
+#if defined(__linux__)
+  active_probe = probe;
+#endif
   key = make_key();
   cert = make_cert(key);
   origin.ctx = SSL_CTX_new(TLS_server_method());

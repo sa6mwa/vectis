@@ -225,6 +225,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_kore_proxy_wss_live
     test_kore_proxy_wss_live.c)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(vectis_unit_kore_proxy_wss_live PRIVATE
+      -Wl,--wrap=curl_easy_recv -Wl,--wrap=curl_easy_send)
     add_test(NAME vectis_unit_kore_proxy_wss_mtls_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
         bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"

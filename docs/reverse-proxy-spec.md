@@ -14,13 +14,15 @@ untrusted peer, and shares its optional CA bundle with ordinary HTTPS. A
 slow-peer mTLS variant covers larger frames, bounded worker RSS, and
 downstream cancellation during a partial TLS response. A separate variant
 stops the app during that live tunnel. Explicit libcurl TLS `CURLE_AGAIN`
-return values remain uninstrumented in production-route tests. A delayed WSS
-handshake test holds the verified mTLS origin silent for 600 ms after receiving
-the request, checks that no response arrives during that window, and measures
-the worker's CPU time over 300 ms. It then completes the tunnel. This covers
-the no-data retry behavior and watcher spin without adding a test hook to the
-production transport; it does not prove which internal TLS retry direction
-libcurl requested.
+results are counted through a link wrapper in the Linux test executable,
+without a production transport hook. A delayed WSS handshake test holds the
+verified mTLS origin silent for 600 ms after receiving the request, asserts a
+`curl_easy_recv()` `CURLE_AGAIN` during that window, checks that no response
+arrives, and measures the worker's CPU time over 300 ms. It then completes the
+tunnel. This proves the no-data retry branch and absence of watcher spin in
+that scenario. The slow-peer mTLS variant also asserts a `curl_easy_send()`
+`CURLE_AGAIN` while the origin stops reading. Libcurl's hidden TLS retry
+direction is not exposed by its connect-only API.
 
 The C and Lua request rewrite hooks now select a configured target and edit
 method, raw path/query, Host, and bounded end-to-end headers before either
