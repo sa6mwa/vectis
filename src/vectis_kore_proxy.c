@@ -373,6 +373,7 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   size_t written;
   size_t prior_offset;
   struct netbuf *prior_buffer;
+  int flush_result;
 
   connection = state->connection;
   if (state->failed && state->headers_queued) {
@@ -386,14 +387,18 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   if (!TAILQ_EMPTY(&connection->send_queue)) {
     prior_buffer = TAILQ_FIRST(&connection->send_queue);
     prior_offset = prior_buffer->s_off;
-    if (state->headers_queued && !state->response_accounted) {
+    connection->evt.flags |= KORE_EVENT_WRITE;
+    flush_result = net_send_flush(connection);
+    if (state->headers_queued && !state->response_accounted &&
+        (connection->snb != NULL ||
+         TAILQ_FIRST(&connection->send_queue) != prior_buffer ||
+         prior_buffer->s_off > prior_offset)) {
       vectis_internal_metrics_note_http_status(state->app,
                                                state->response_status);
       connection->http_response_count++;
       state->response_accounted = 1;
     }
-    connection->evt.flags |= KORE_EVENT_WRITE;
-    if (net_send_flush(connection) != KORE_RESULT_OK) {
+    if (flush_result != KORE_RESULT_OK) {
       kore_connection_disconnect(connection);
       return 0;
     }
