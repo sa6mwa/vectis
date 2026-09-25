@@ -732,6 +732,10 @@ more than 4 MiB growth after the first two seconds. It does not measure each
 connection's allocation separately. The ASan build uses a 256 MiB aggregate
 RSS ceiling for instrumentation redzones and quarantine while retaining the
 same streaming, plateau, and teardown checks.
+The maximum-identity variants use an 80 MiB incremental RSS regression
+ceiling in ordinary builds to leave headroom above their observed peaks;
+they retain the 256 MiB ASan ceiling. These are test thresholds, not a
+deployment worker budget.
 
 The live mTLS variant also fills each copied CA bundle, client certificate,
 and client key to the allowed 256 KiB with PEM whitespace, sends 22 additional
@@ -742,7 +746,20 @@ measured 7,896 to 8,244 KiB at the preflight baseline and 65,516 to
 60,100 KiB; both runs held a stable later plateau and recovered descriptors.
 The same case passed under ASan. This tests maximum configured identity
 sizes and a near-maximum inbound header block for this one response profile;
-it does not account for retained idle connections or all route combinations.
+it does not cover all route combinations.
+
+The idle-cache variant first completes four certificate-verified HTTP/2
+requests and four HTTP/1.1 requests to distinct keepalive origins, then
+starts the same sixteen max-configuration slow HTTP/2 downloads. The worker
+held eight idle upstream sockets before the downloads. Four HTTP/2 idle
+sockets were evicted when that pool filled; four idle HTTP/1.1 sockets remained
+alongside sixteen active downstream and sixteen active upstream sockets. In
+three local x86-64 Linux Debug runs, worker RSS rose from 8,536-8,904 KiB at the
+preflight baseline to a sampled peak of 65,776-71,520 KiB. The highest
+incremental peak was 62,984 KiB. The later RSS plateau, seventeenth-request
+`503`, and FD recovery passed. The same variant passed under ASan. These are
+measured peaks under the pinned bundle and test workload, not a proof of a
+universal allocator bound.
 
 The Linux production-route WebSocket smoke holds sixteen HTTP/1.1 upgraded
 connections with 1 MiB route chunk limits and idle clients for four seconds.
@@ -819,9 +836,11 @@ simultaneous pressure across exchanges, not a full-duplex exchange with both
 directions active in the same HTTP request.
 
 The full admission reserve still needs a worst-case full-duplex HTTP exchange,
-both idle caches, maximum configuration sizes across both protocol pools,
-and a deployment worker-memory budget. The bidirectional WebSocket case is
-covered separately above.
+maximum configuration sizes with active transfers in both protocol pools,
+and a deployment worker-memory budget. Both idle caches have been warmed in
+the live test above; the active HTTP/2 pool evicts its four cached idle
+connections as it fills. The bidirectional WebSocket case is covered
+separately above.
 The existing 16-slot exchange cap remains provisional until that gate is
 complete.
 
