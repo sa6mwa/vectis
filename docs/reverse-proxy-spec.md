@@ -34,8 +34,10 @@ shared 16-exchange cap now rejects excess HTTP and WebSocket requests with
 test holds sixteen streams and verifies both rejections without an extra
 upstream connection. A pinned Release production-route HTTP/2 slow-reader
 smoke now measures worker RSS and descriptors at both the minimum and maximum
-route chunk settings. The mixed-protocol aggregate worker allowance remains
-open.
+route chunk settings. Linux live tests now cover retained idle pools, mixed
+maximum-configuration TLS transfers, and same-exchange HTTP/2 full duplex;
+their measurements support a conditional 256 MiB per-worker planning target
+at the existing 16-exchange admission limit.
 
 The [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
@@ -405,7 +407,7 @@ Keep the Vectis implementation split along its ownership boundaries:
 | `vectis_proxy_curl.c` | Per-worker libcurl multi pools, socket/timer readiness, admission, and easy-handle lifetime. |
 | `vectis_proxy_events.c` | Linux and BSD readiness translation shared by curl sockets and taken-over connections. |
 | `vectis_proxy_http.c` | Incremental upstream response status, header, body-length, and trailer validation. |
-| `vectis_proxy_http_upstream.c` | Libcurl HTTP callbacks, one bounded pending download chunk, and pause/resume flow control. Upload callbacks still need production integration. |
+| `vectis_proxy_http_upstream.c` | Libcurl HTTP callbacks, one bounded pending download chunk, upload callbacks, and pause/resume flow control. |
 | `vectis_proxy_ws_handshake.c`, `vectis_proxy_ws_wire.c` | HTTP/1.1 WebSocket handshake validation and bounded opening wire blocks. |
 | `vectis_proxy_ws_rejection.c` | Incremental non-`101` response framing, body and trailer validation, and bounded downstream chunks. |
 | `vectis_kore_proxy_ws.c` | Connect-only WebSocket lifecycle, Kore readiness, and opaque duplex relay. |
