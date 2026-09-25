@@ -41,8 +41,8 @@ metric.
 HTTP/SSE now enforces the route's no-progress idle deadline: a stalled
 upstream receives a local `504` before commitment, while an idle committed
 stream closes without a final success chunk. A live SSE fixture also stays
-open beyond the deadline when periodic events make progress. A provisional
-shared 16-exchange cap now rejects excess HTTP and WebSocket requests with
+open beyond the deadline when periodic events make progress. A shared
+16-exchange cap rejects excess HTTP and WebSocket requests with
 `503` at header admission, before allocating proxy exchange buffers; a live
 test holds sixteen streams and verifies both rejections without an extra
 upstream connection. A pinned Release production-route HTTP/2 slow-reader
@@ -729,9 +729,12 @@ adding its easy handle to the multi; reject saturation with `503` at header
 admission instead of building an unbounded libcurl waiting queue. Count
 retained connect-only WebSocket handles, both protocol pools, and idle cached
 connections against the worker budget. Release exchange reservations only
-after their easy handles and owned buffers are retired. Choose the numerical
-limits from the pinned-bundle memory gate; the sixteen-connection probe does
-not establish a release-wide allowance.
+after their easy handles and owned buffers are retired. The current limit is
+sixteen active exchanges across both pools, with at most four idle cached
+connections per pool. The measured worker target below includes those idle
+caches. Raising either limit requires a new memory gate; the target is
+conditional on the pinned bundle and configuration, not a release-wide
+allocator guarantee.
 
 The Linux production-route HTTP/2 memory smoke uses sixteen independent,
 certificate-verified TLS connections to a local `h2` origin, one Vectis worker,

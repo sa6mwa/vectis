@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The tested 256 MiB worker planning target reserves 11 MiB for each active
+ * exchange and 80 MiB for the worker plus both idle connection caches. */
 #define VECTIS_PROXY_CURL_ACTIVE_LIMIT 16u
 #define VECTIS_PROXY_CURL_IDLE_LIMIT 4L
 
