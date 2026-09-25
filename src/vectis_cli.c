@@ -11458,6 +11458,53 @@ static int vectis_lua_app_websocket(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_proxy_value_has_nul(lua_State *lua, int index) {
+  const char *value;
+  size_t length;
+
+  if (lua_type(lua, index) != LUA_TSTRING)
+    return 0;
+  value = lua_tolstring(lua, index, &length);
+  return memchr(value, '\0', length) != NULL;
+}
+
+static int vectis_lua_proxy_config_has_nul(lua_State *lua, int index) {
+  static const char *const fields[] = {"path",      "target",
+                                       "method",    "methods",
+                                       "path_kind", "upstream_http_version"};
+  static const char *const arrays[] = {"methods", "alternate_targets"};
+  size_t count;
+  size_t i;
+  size_t j;
+  int found;
+
+  index = lua_absindex(lua, index);
+  for (i = 0u; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+    lua_getfield(lua, index, fields[i]);
+    found = vectis_lua_proxy_value_has_nul(lua, -1);
+    lua_pop(lua, 1);
+    if (found)
+      return 1;
+  }
+  for (i = 0u; i < sizeof(arrays) / sizeof(arrays[0]); ++i) {
+    lua_getfield(lua, index, arrays[i]);
+    if (lua_istable(lua, -1)) {
+      count = lua_rawlen(lua, -1);
+      for (j = 0u; j < count; ++j) {
+        lua_rawgeti(lua, -1, (lua_Integer)j + 1);
+        found = vectis_lua_proxy_value_has_nul(lua, -1);
+        lua_pop(lua, 1);
+        if (found) {
+          lua_pop(lua, 1);
+          return 1;
+        }
+      }
+    }
+    lua_pop(lua, 1);
+  }
+  return 0;
+}
+
 static int vectis_lua_app_proxy(lua_State *lua) {
   vectis_lua_app *server;
   vectis_app *app;
@@ -11476,6 +11523,9 @@ static int vectis_lua_app_proxy(lua_State *lua) {
   server = vectis_lua_check_app(lua, 1);
   app = vectis_lua_app_app(lua, 1);
   luaL_checktype(lua, 2, LUA_TTABLE);
+  if (vectis_lua_proxy_config_has_nul(lua, 2))
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID, "proxy configuration string contains NUL");
   vectis_proxy_route_config_init(&config);
   config.path = vectis_lua_table_string(lua, 2, "path");
   config.target = vectis_lua_table_string(lua, 2, "target");

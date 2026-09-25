@@ -907,6 +907,24 @@ assert(api_server:metrics({
 }) == true)
 local previous_proxy_set_path
 local previous_proxy_set_status
+for _, config in ipairs({
+  {path = "/nul-target", target = "http://127.0.0.1:28484\0/ignored"},
+  {path = "/nul-path\0/ignored", target = "http://127.0.0.1:28484"},
+  {path = "/nul-method", target = "http://127.0.0.1:28484",
+   method = "GET\0POST"},
+  {path = "/nul-methods", target = "http://127.0.0.1:28484",
+   methods = {"GET\0POST"}},
+  {path = "/nul-kind", target = "http://127.0.0.1:28484",
+   path_kind = "literal\0params"},
+  {path = "/nul-version", target = "http://127.0.0.1:28484",
+   upstream_http_version = "auto\0http1"},
+  {path = "/nul-alternate", target = "http://127.0.0.1:28484",
+   alternate_targets = {"http://127.0.0.1:28484\0/ignored"}},
+}) do
+  local ok, err = api_server:proxy(config)
+  assert(ok == nil and type(err) == "table" and
+         tostring(err.message):find("NUL", 1, true))
+end
 assert(api_server:proxy({
   path = "/lua-proxy",
   target = "http://127.0.0.1:9/unused",
@@ -958,6 +976,16 @@ assert(api_server:proxy({
   target = "http://127.0.0.1:28484",
   rewrite = function(_, outbound)
     local ok, err = outbound:set_path("/plain\0/ignored")
+    assert(ok == nil and type(err) == "string" and
+           err:find("NUL", 1, true))
+    return true
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-nul-method",
+  target = "http://127.0.0.1:28484",
+  rewrite = function(_, outbound)
+    local ok, err = outbound:set_method("GET\0POST")
     assert(ok == nil and type(err) == "string" and
            err:find("NUL", 1, true))
     return true
@@ -1144,6 +1172,11 @@ local nul_rewrite_response = vectis.http.get(
   timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
 })
 assert(nul_rewrite_response.status == 400)
+local nul_method_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-nul-method", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(nul_method_response.status == 400)
 local bad_proxy_response_hook = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy-response-bad", {
   timeout_ms = 2000,

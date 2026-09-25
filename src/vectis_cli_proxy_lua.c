@@ -121,11 +121,9 @@ static int vectis_lua_proxy_param(lua_State *lua) {
   return 1;
 }
 
-static vectis_http_method vectis_lua_proxy_method(lua_State *lua, int index) {
-  const char *name;
+static vectis_http_method vectis_lua_proxy_method(const char *name) {
   vectis_http_method method;
 
-  name = luaL_checkstring(lua, index);
   for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_MOVE;
        method = (vectis_http_method)(method + 1)) {
     if (strcmp(name, vectis_http_method_string(method)) == 0)
@@ -180,8 +178,11 @@ static int vectis_lua_proxy_edit(lua_State *lua) {
         vectis_proxy_outbound_select_target(view->out, target_slot, &error);
     break;
   case VECTIS_LUA_PROXY_METHOD:
-    status = vectis_proxy_outbound_set_method(
-        view->out, vectis_lua_proxy_method(lua, index), &error);
+    first = vectis_lua_proxy_string(lua, index, view, &error);
+    status = first == NULL
+                 ? VECTIS_ERR_INVALID
+                 : vectis_proxy_outbound_set_method(
+                       view->out, vectis_lua_proxy_method(first), &error);
     break;
   case VECTIS_LUA_PROXY_PATH:
     first = vectis_lua_proxy_string(lua, index, view, &error);

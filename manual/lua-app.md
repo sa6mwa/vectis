@@ -317,6 +317,8 @@ permit all supported HTTP methods. Targets must be HTTP or HTTPS base URLs;
 Vectis copies them at registration. Zero-valued timeouts and buffer limit use
 the C API defaults. The upstream HTTP version defaults to `auto`, which prefers
 HTTP/2 over HTTPS and uses HTTP/1.1 for cleartext.
+Proxy path, target, method, path kind, HTTP version, and alternate-target
+strings cannot contain NUL bytes; registration rejects such configuration.
 `tls_ca_pem` is copied at registration, accepts up to 256 KiB of PEM text,
 and replaces libcurl's default CA bundle for that route. Peer and hostname
 verification remain enabled. Omit it to use the default trust store.
