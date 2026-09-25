@@ -7,22 +7,33 @@
 typedef struct vectis_lua_proxy_route {
   lua_State *lua;
   int rewrite_ref;
+  int preflight_ref;
   int response_ref;
+  int error_ref;
   struct vectis_lua_proxy_route *next;
 } vectis_lua_proxy_route;
 
 /* Retain a Lua rewrite function until the owning app closes. */
 vectis_lua_proxy_route *vectis_lua_proxy_route_new(lua_State *lua,
                                                    int rewrite_index,
-                                                   int response_index);
+                                                   int preflight_index,
+                                                   int response_index,
+                                                   int error_index);
 void vectis_lua_proxy_route_free(vectis_lua_proxy_route *route);
 
 /* Bridge the public C callback to the owning Kore worker's Lua VM. */
 vectis_status vectis_lua_proxy_rewrite(const vectis_proxy_inbound *in,
                                        vectis_proxy_outbound *out,
                                        void *userdata, vectis_error *error);
+vectis_status vectis_lua_proxy_preflight(const vectis_proxy_inbound *in,
+                                         vectis_proxy_local_response *response,
+                                         void *userdata, vectis_error *error);
 vectis_status vectis_lua_proxy_modify_response(vectis_proxy_response *response,
                                                void *userdata,
                                                vectis_error *error);
+vectis_status vectis_lua_proxy_on_error(const vectis_error *cause,
+                                        int default_status,
+                                        vectis_proxy_local_response *response,
+                                        void *userdata, vectis_error *error);
 
 #endif

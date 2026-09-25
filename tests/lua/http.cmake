@@ -965,6 +965,53 @@ assert(api_server:proxy({
     return true
   end,
 }) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-local/:id",
+  path_kind = "params",
+  target = "http://127.0.0.1:9",
+  preflight = function(inbound)
+    assert(inbound.method == "GET")
+    assert(inbound:param("id") == "deny")
+    return {
+      status = 401,
+      body = "den\0y",
+      headers = {
+        {name = "Set-Cookie", value = "a=1"},
+        {name = "Set-Cookie", value = "b=2"},
+        {name = "X-Lua-Local", value = "preflight"},
+      },
+    }
+  end,
+  rewrite = function()
+    error("denied proxy must not rewrite or connect upstream")
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-error",
+  target = "http://127.0.0.1:9",
+  on_error = function(failure)
+    assert(failure.status == 502)
+    assert(type(failure.code) == "number")
+    assert(type(failure.message) == "string" and #failure.message > 0)
+    return {status = 503, body = "Lua gateway down",
+            headers = {{name = "X-Lua-Local", value = "gateway"}}}
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-local-bad",
+  target = "http://127.0.0.1:9",
+  preflight = function()
+    return {status = 200, body = string.rep("x", 65537)}
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-error-bad",
+  target = "http://127.0.0.1:9",
+  on_error = function()
+    return {status = 503, body = "bad",
+            headers = {{name = "Content-Length", value = "3"}}}
+  end,
+}) == true)
 local started, start_error = api_server:start()
 assert(started == true, start_error and start_error.message)
 local api_response
@@ -1026,6 +1073,33 @@ local bad_proxy_response_hook = vectis.http.get(
   no_signal = true,
 })
 assert(bad_proxy_response_hook.status == 502)
+local local_proxy_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-local/deny", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(local_proxy_response.status == 401)
+assert(local_proxy_response.body == "den\0y")
+assert(local_proxy_response.headers:find("Set-Cookie: a=1", 1, true))
+assert(local_proxy_response.headers:find("Set-Cookie: b=2", 1, true))
+assert(local_proxy_response.headers:find("X-Lua-Local: preflight", 1, true))
+local gateway_proxy_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-error", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(gateway_proxy_response.status == 503)
+assert(gateway_proxy_response.body == "Lua gateway down")
+assert(gateway_proxy_response.headers:find("X-Lua-Local: gateway", 1, true))
+local bad_local_proxy_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-local-bad", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(bad_local_proxy_response.status == 500)
+local bad_gateway_proxy_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-error-bad", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(bad_gateway_proxy_response.status == 502)
+assert(bad_gateway_proxy_response.body == "bad gateway")
 local redirect_response = vectis.http.get("http://127.0.0.1:28484/go", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

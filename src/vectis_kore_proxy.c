@@ -1,4 +1,5 @@
 #include "vectis_kore_proxy.h"
+#include "vectis_kore_proxy_local.h"
 #include "vectis_kore_proxy_ws.h"
 
 #include "vectis_internal.h"
@@ -8,6 +9,7 @@
 #include "vectis_proxy_headers.h"
 #include "vectis_proxy_http_upstream.h"
 #include "vectis_proxy_http_wire.h"
+#include "vectis_proxy_local.h"
 #include "vectis_proxy_response.h"
 #include "vectis_proxy_select.h"
 #include "vectis_proxy_upload.h"
@@ -39,6 +41,7 @@ typedef struct vectis_kore_proxy_state {
   vectis_proxy_http_wire_plan wire;
   vectis_proxy_upload_buffer upload;
   vectis_proxy_curl_transfer *transfer;
+  vectis_error failure;
   struct curl_slist *request_headers;
   struct kore_timer *wake_timer;
   char *request_target;
@@ -57,6 +60,7 @@ typedef struct vectis_kore_proxy_state {
   int interest;
   int headers_ready;
   int response_status;
+  int error_status;
   int headers_queued;
   int final_queued;
   int done;
@@ -264,6 +268,7 @@ static void vectis_kore_proxy_ready(vectis_proxy_http_upstream *upstream,
             state->route->modify_response_userdata, &state->response_status,
             &error) != VECTIS_OK) {
       state->failed = 1;
+      state->failure = error;
     } else {
       downstream = upstream->response;
       downstream.status = state->response_status;
@@ -274,6 +279,8 @@ static void vectis_kore_proxy_ready(vectis_proxy_http_upstream *upstream,
         state->failed = 1;
       else
         state->headers_ready = 1;
+      if (state->failed)
+        state->failure = error;
     }
     if (state->failed)
       upstream->failed = 1;
@@ -291,23 +298,51 @@ static void vectis_kore_proxy_done(CURL *easy, CURLcode result,
   state->transfer = NULL;
   reason = NULL;
   if (vectis_proxy_http_upstream_finish(&state->upstream, result, &reason) !=
-      VECTIS_PROXY_HEADER_OK)
+      VECTIS_PROXY_HEADER_OK) {
     state->failed = 1;
+    state->error_status = result == CURLE_OPERATION_TIMEDOUT ? 504 : 502;
+    if (state->failure.code == VECTIS_OK)
+      vectis_set_error(&state->failure,
+                       state->error_status == 504 ? VECTIS_ERR_TIMEOUT
+                                                  : VECTIS_ERR_STATE,
+                       reason != NULL ? reason : "proxy upstream failed");
+  }
   state->done = 1;
   vectis_kore_proxy_request_wake(state);
 }
 
+static int vectis_kore_proxy_drop_unwritten(struct connection *connection) {
+  struct netbuf *buffer;
+
+  if (connection->snb != NULL || TAILQ_EMPTY(&connection->send_queue))
+    return 0;
+  TAILQ_FOREACH(buffer, &connection->send_queue, list) {
+    if (buffer->s_off != 0u ||
+        (buffer->flags & (NETBUF_MUST_RESEND | NETBUF_IS_STREAM)) != 0)
+      return 0;
+  }
+  while ((buffer = TAILQ_FIRST(&connection->send_queue)) != NULL)
+    net_remove_netbuf(connection, buffer);
+  return 1;
+}
+
 static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
-  static const char gateway_error[] =
-      "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 11\r\n"
-      "Connection: close\r\n\r\nbad gateway";
   struct connection *connection;
+  vectis_proxy_local_response local;
   const unsigned char *body;
   vectis_error error;
   size_t body_length;
   size_t written;
 
   connection = state->connection;
+  if (state->failed && state->headers_queued) {
+    if (!vectis_kore_proxy_drop_unwritten(connection)) {
+      kore_connection_disconnect(connection);
+      return 0;
+    }
+    state->headers_queued = 0;
+    state->final_queued = 0;
+  }
   if (!TAILQ_EMPTY(&connection->send_queue)) {
     connection->evt.flags |= KORE_EVENT_WRITE;
     if (net_send_flush(connection) != KORE_RESULT_OK) {
@@ -322,18 +357,21 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     }
   }
   if (state->failed) {
-    if (state->headers_queued) {
+    if (state->failure.code == VECTIS_OK)
+      vectis_set_error(&state->failure, VECTIS_ERR_STATE,
+                       "proxy upstream failed");
+    vectis_proxy_local_error(state->route, &state->failure,
+                             state->error_status == 504 ? 504 : 502, &local);
+    if (!vectis_kore_proxy_local_send(state->request, state->app, &local)) {
+      vectis_proxy_local_cleanup(&local);
       kore_connection_disconnect(connection);
       return 0;
     }
-    net_send_queue(connection, gateway_error, sizeof(gateway_error) - 1u);
+    vectis_proxy_local_cleanup(&local);
     state->headers_queued = 1;
     state->final_queued = 1;
     state->done = 1;
     state->failed = 0;
-    state->request->status = 502;
-    vectis_internal_metrics_note_http_status(state->app, 502);
-    connection->http_response_count++;
     vectis_kore_proxy_schedule(state);
     return 1;
   }
@@ -501,6 +539,8 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   vectis_proxy_headers inbound;
   vectis_proxy_headers outbound;
   vectis_proxy_outbound directed;
+  vectis_proxy_inbound input;
+  vectis_proxy_local_response local;
   vectis_proxy_request_head head;
   vectis_proxy_header_status header_status;
   vectis_request *route_request;
@@ -544,8 +584,6 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   reason = NULL;
   if (header_status == VECTIS_PROXY_HEADER_OK)
     header_status = vectis_proxy_request_head_parse(&inbound, &head, &reason);
-  if (header_status == VECTIS_PROXY_HEADER_OK)
-    header_status = vectis_proxy_headers_sanitize_request(&inbound, &outbound);
   if (header_status != VECTIS_PROXY_HEADER_OK ||
       (request->flags & HTTP_VERSION_1_0) != 0) {
     vectis_proxy_headers_cleanup(&outbound);
@@ -565,6 +603,46 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
       return vectis_kore_proxy_reject(request, 400,
                                       "invalid proxy WebSocket handshake\n");
     }
+  }
+  if (route->preflight != NULL) {
+    input.method = method;
+    input.path = request->path;
+    input.query = request->query_string;
+    input.host = head.host;
+    input.headers = &inbound;
+    input.matched_request = route_request;
+    input.websocket = head.websocket_upgrade;
+    vectis_proxy_local_init(&local);
+    status =
+        route->preflight(&input, &local, route->preflight_userdata, &error);
+    if (status == VECTIS_OK && local.failure == VECTIS_OK &&
+        local.status != 0) {
+      result = vectis_kore_proxy_local_send(request, app, &local);
+      vectis_proxy_local_cleanup(&local);
+      vectis_proxy_headers_cleanup(&outbound);
+      vectis_proxy_headers_cleanup(&inbound);
+      vectis_internal_request_free(route_request);
+      return result ? KORE_RESULT_ERROR
+                    : vectis_kore_proxy_reject(request, 500,
+                                               "proxy local response failed\n");
+    }
+    if (status != VECTIS_OK || local.failure != VECTIS_OK ||
+        local.headers.count != 0u) {
+      vectis_proxy_local_cleanup(&local);
+      vectis_proxy_headers_cleanup(&outbound);
+      vectis_proxy_headers_cleanup(&inbound);
+      vectis_internal_request_free(route_request);
+      return vectis_kore_proxy_reject(request, 500, "proxy preflight failed\n");
+    }
+    vectis_proxy_local_cleanup(&local);
+  }
+  header_status = vectis_proxy_headers_sanitize_request(&inbound, &outbound);
+  if (header_status != VECTIS_PROXY_HEADER_OK) {
+    vectis_proxy_headers_cleanup(&outbound);
+    vectis_proxy_headers_cleanup(&inbound);
+    vectis_internal_request_free(route_request);
+    return vectis_kore_proxy_reject(request, 400,
+                                    "invalid proxy request headers\n");
   }
   memset(&directed, 0, sizeof(directed));
   request_target = NULL;

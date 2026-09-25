@@ -14,7 +14,7 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|ws_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
+      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|local_live|ws_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
     set(kore_test_deadline 15)
     if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
       set(kore_test_deadline 30)
@@ -78,6 +78,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_proxy_ws_rejection
     test_proxy_ws_rejection.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_live test_kore_proxy_live.c)
+  vectis_add_unit_test(vectis_unit_kore_proxy_local_live
+    test_kore_proxy_local_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_ws_live
     test_kore_proxy_ws_live.c)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -114,6 +116,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
     test_proxy_director.c)
   vectis_add_unit_test(vectis_unit_proxy_response
     test_proxy_response.c)
+  vectis_add_unit_test(vectis_unit_proxy_local test_proxy_local.c)
   vectis_add_unit_test(vectis_unit_proxy_select test_proxy_select.c)
 else()
   vectis_add_unit_test(vectis_unit_proxy_no_kore test_proxy_no_kore.c)

@@ -42,18 +42,24 @@ static void vectis_lua_proxy_error(vectis_error *error, vectis_status status,
 
 vectis_lua_proxy_route *vectis_lua_proxy_route_new(lua_State *lua,
                                                    int rewrite_index,
-                                                   int response_index) {
+                                                   int preflight_index,
+                                                   int response_index,
+                                                   int error_index) {
   vectis_lua_proxy_route *route;
 
   if (lua == NULL || (lua_type(lua, rewrite_index) != LUA_TFUNCTION &&
-                      lua_type(lua, response_index) != LUA_TFUNCTION))
+                      lua_type(lua, preflight_index) != LUA_TFUNCTION &&
+                      lua_type(lua, response_index) != LUA_TFUNCTION &&
+                      lua_type(lua, error_index) != LUA_TFUNCTION))
     return NULL;
   route = (vectis_lua_proxy_route *)calloc(1u, sizeof(*route));
   if (route == NULL)
     return NULL;
   route->lua = lua;
   route->rewrite_ref = LUA_NOREF;
+  route->preflight_ref = LUA_NOREF;
   route->response_ref = LUA_NOREF;
+  route->error_ref = LUA_NOREF;
   if (lua_type(lua, rewrite_index) == LUA_TFUNCTION) {
     lua_pushvalue(lua, rewrite_index);
     route->rewrite_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
@@ -61,6 +67,14 @@ vectis_lua_proxy_route *vectis_lua_proxy_route_new(lua_State *lua,
   if (lua_type(lua, response_index) == LUA_TFUNCTION) {
     lua_pushvalue(lua, response_index);
     route->response_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  }
+  if (lua_type(lua, preflight_index) == LUA_TFUNCTION) {
+    lua_pushvalue(lua, preflight_index);
+    route->preflight_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  }
+  if (lua_type(lua, error_index) == LUA_TFUNCTION) {
+    lua_pushvalue(lua, error_index);
+    route->error_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
   }
   return route;
 }
@@ -70,8 +84,12 @@ void vectis_lua_proxy_route_free(vectis_lua_proxy_route *route) {
     return;
   if (route->lua != NULL && route->rewrite_ref != LUA_NOREF)
     luaL_unref(route->lua, LUA_REGISTRYINDEX, route->rewrite_ref);
+  if (route->lua != NULL && route->preflight_ref != LUA_NOREF)
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->preflight_ref);
   if (route->lua != NULL && route->response_ref != LUA_NOREF)
     luaL_unref(route->lua, LUA_REGISTRYINDEX, route->response_ref);
+  if (route->lua != NULL && route->error_ref != LUA_NOREF)
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->error_ref);
   free(route);
 }
 
@@ -345,6 +363,197 @@ vectis_lua_proxy_push_response(lua_State *lua, int view_index,
   vectis_lua_proxy_response_method_field(
       lua, view_index, "remove_header",
       VECTIS_LUA_PROXY_RESPONSE_REMOVE_HEADER);
+}
+
+static vectis_status
+vectis_lua_proxy_local_result(lua_State *lua, int index,
+                              vectis_proxy_local_response *response,
+                              vectis_error *error) {
+  const char *name;
+  const char *value;
+  const char *body;
+  size_t body_length;
+  size_t count;
+  size_t i;
+  lua_Integer status_number;
+  int base;
+  int headers_index;
+  vectis_status status;
+
+  if (lua_isnil(lua, index) ||
+      (lua_isboolean(lua, index) && lua_toboolean(lua, index))) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (!lua_istable(lua, index)) {
+    vectis_lua_proxy_error(
+        error, VECTIS_ERR_INVALID,
+        "proxy local hook must return nil, true, or a response table");
+    return VECTIS_ERR_INVALID;
+  }
+  base = lua_gettop(lua);
+  index = lua_absindex(lua, index);
+  lua_getfield(lua, index, "status");
+  if (!lua_isinteger(lua, -1)) {
+    vectis_lua_proxy_error(error, VECTIS_ERR_INVALID,
+                           "proxy local response status must be an integer");
+    lua_settop(lua, base);
+    return VECTIS_ERR_INVALID;
+  }
+  status_number = lua_tointeger(lua, -1);
+  lua_pop(lua, 1);
+  lua_getfield(lua, index, "body");
+  if (!lua_isnil(lua, -1) && lua_type(lua, -1) != LUA_TSTRING) {
+    vectis_lua_proxy_error(error, VECTIS_ERR_INVALID,
+                           "proxy local response body must be a string");
+    lua_settop(lua, base);
+    return VECTIS_ERR_INVALID;
+  }
+  body_length = 0u;
+  body = lua_isnil(lua, -1) ? NULL : lua_tolstring(lua, -1, &body_length);
+  status = vectis_proxy_local_respond(
+      response,
+      status_number < 0 || status_number > 599 ? 600 : (int)status_number, body,
+      body_length, error);
+  lua_pop(lua, 1);
+  if (status != VECTIS_OK) {
+    lua_settop(lua, base);
+    return status;
+  }
+  lua_getfield(lua, index, "headers");
+  if (!lua_isnil(lua, -1) && !lua_istable(lua, -1)) {
+    vectis_lua_proxy_error(error, VECTIS_ERR_INVALID,
+                           "proxy local response headers must be an array");
+    lua_settop(lua, base);
+    return VECTIS_ERR_INVALID;
+  }
+  if (lua_istable(lua, -1)) {
+    headers_index = lua_absindex(lua, -1);
+    count = lua_rawlen(lua, headers_index);
+    if (count > 100u) {
+      vectis_lua_proxy_error(error, VECTIS_ERR_INVALID,
+                             "proxy local response has too many headers");
+      lua_settop(lua, base);
+      return VECTIS_ERR_INVALID;
+    }
+    for (i = 0u; i < count; ++i) {
+      lua_rawgeti(lua, headers_index, (lua_Integer)i + 1);
+      if (!lua_istable(lua, -1)) {
+        vectis_lua_proxy_error(error, VECTIS_ERR_INVALID,
+                               "proxy local header entry must be a table");
+        lua_settop(lua, base);
+        return VECTIS_ERR_INVALID;
+      }
+      lua_getfield(lua, -1, "name");
+      lua_getfield(lua, -2, "value");
+      if (lua_type(lua, -2) != LUA_TSTRING ||
+          lua_type(lua, -1) != LUA_TSTRING) {
+        vectis_lua_proxy_error(
+            error, VECTIS_ERR_INVALID,
+            "proxy local header requires name and value strings");
+        lua_settop(lua, base);
+        return VECTIS_ERR_INVALID;
+      }
+      name = lua_tostring(lua, -2);
+      value = lua_tostring(lua, -1);
+      status = vectis_proxy_local_add_header(response, name, value, error);
+      lua_pop(lua, 3);
+      if (status != VECTIS_OK) {
+        lua_settop(lua, base);
+        return status;
+      }
+    }
+  }
+  lua_settop(lua, base);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_lua_proxy_preflight(const vectis_proxy_inbound *in,
+                                         vectis_proxy_local_response *response,
+                                         void *userdata, vectis_error *error) {
+  vectis_lua_proxy_route *route;
+  vectis_lua_proxy_view *view;
+  lua_State *lua;
+  const char *message;
+  vectis_status status;
+  int base;
+  int result;
+
+  route = (vectis_lua_proxy_route *)userdata;
+  if (route == NULL || route->lua == NULL ||
+      route->preflight_ref == LUA_NOREF) {
+    vectis_lua_proxy_error(error, VECTIS_ERR_STATE,
+                           "Lua proxy preflight is not configured");
+    return VECTIS_ERR_STATE;
+  }
+  lua = route->lua;
+  base = lua_gettop(lua);
+  view = (vectis_lua_proxy_view *)lua_newuserdatauv(lua, sizeof(*view), 0);
+  view->in = in;
+  view->out = NULL;
+  view->response = NULL;
+  view->active = 1;
+  vectis_lua_proxy_push_in(lua, lua_absindex(lua, -1), in);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->preflight_ref);
+  lua_pushvalue(lua, -2);
+  result = lua_pcall(lua, 1, 1, 0);
+  view->active = 0;
+  view->in = NULL;
+  if (result != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    vectis_lua_proxy_error(error, VECTIS_ERR_STATE,
+                           message != NULL ? message
+                                           : "Lua proxy preflight failed");
+    lua_settop(lua, base);
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_lua_proxy_local_result(lua, -1, response, error);
+  lua_settop(lua, base);
+  return status;
+}
+
+vectis_status vectis_lua_proxy_on_error(const vectis_error *cause,
+                                        int default_status,
+                                        vectis_proxy_local_response *response,
+                                        void *userdata, vectis_error *error) {
+  vectis_lua_proxy_route *route;
+  lua_State *lua;
+  const char *message;
+  vectis_status status;
+  int base;
+  int result;
+
+  route = (vectis_lua_proxy_route *)userdata;
+  if (route == NULL || route->lua == NULL || route->error_ref == LUA_NOREF) {
+    vectis_lua_proxy_error(error, VECTIS_ERR_STATE,
+                           "Lua proxy on_error is not configured");
+    return VECTIS_ERR_STATE;
+  }
+  lua = route->lua;
+  base = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->error_ref);
+  lua_createtable(lua, 0, 3);
+  lua_pushinteger(lua, default_status);
+  lua_setfield(lua, -2, "status");
+  if (cause != NULL) {
+    lua_pushinteger(lua, cause->code);
+    lua_setfield(lua, -2, "code");
+    lua_pushstring(lua, cause->message);
+    lua_setfield(lua, -2, "message");
+  }
+  result = lua_pcall(lua, 1, 1, 0);
+  if (result != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    vectis_lua_proxy_error(error, VECTIS_ERR_STATE,
+                           message != NULL ? message
+                                           : "Lua proxy on_error failed");
+    lua_settop(lua, base);
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_lua_proxy_local_result(lua, -1, response, error);
+  lua_settop(lua, base);
+  return status;
 }
 
 vectis_status vectis_lua_proxy_rewrite(const vectis_proxy_inbound *in,

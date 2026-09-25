@@ -1,5 +1,7 @@
 #include "vectis_kore_proxy_ws.h"
 
+#include "vectis_kore_proxy_local.h"
+
 #include "vectis_internal.h"
 #include "vectis_proxy_curl.h"
 #include "vectis_proxy_events.h"
@@ -464,14 +466,8 @@ static int vectis_kore_ws_rejection_step(vectis_kore_ws_state *state) {
 }
 
 static int vectis_kore_ws_write_error(vectis_kore_ws_state *state) {
-  static const char bad_gateway[] =
-      "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 11\r\n"
-      "Connection: close\r\n\r\nbad gateway";
-  static const char timeout[] =
-      "HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 15\r\n"
-      "Connection: close\r\n\r\ngateway timeout";
-  const char *wire;
-  size_t length;
+  vectis_proxy_local_response local;
+  vectis_error cause;
 
   if (state->transfer != NULL) {
     if (state->upstream_interest != 0) {
@@ -484,17 +480,18 @@ static int vectis_kore_ws_write_error(vectis_kore_ws_state *state) {
     state->easy = NULL;
     state->upstream_fd = CURL_SOCKET_BAD;
   }
-  if (state->error_status == 504) {
-    wire = timeout;
-    length = sizeof(timeout) - 1u;
-  } else {
-    wire = bad_gateway;
-    length = sizeof(bad_gateway) - 1u;
+  vectis_set_error(&cause,
+                   state->error_status == 504 ? VECTIS_ERR_TIMEOUT
+                                              : VECTIS_ERR_STATE,
+                   state->error_status == 504 ? "proxy upstream timed out"
+                                              : "proxy upstream failed");
+  vectis_proxy_local_error(state->route, &cause, state->error_status, &local);
+  if (!vectis_kore_proxy_local_send(state->request, state->app, &local)) {
+    vectis_proxy_local_cleanup(&local);
+    state->closing = 1;
+    return 1;
   }
-  net_send_queue(state->downstream, wire, length);
-  state->request->status = (u_int16_t)state->error_status;
-  vectis_internal_metrics_note_http_status(state->app, state->error_status);
-  state->downstream->http_response_count++;
+  vectis_proxy_local_cleanup(&local);
   state->closing = 1;
   return 1;
 }

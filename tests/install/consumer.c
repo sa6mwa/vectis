@@ -43,9 +43,14 @@ int main(void) {
   if (proxy_config.path != NULL ||
       proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO ||
       proxy_config.tls_ca_pem != NULL || proxy_config.rewrite != NULL ||
-      proxy_config.modify_response != NULL ||
+      proxy_config.preflight != NULL || proxy_config.modify_response != NULL ||
+      proxy_config.on_error != NULL ||
       vectis_proxy_inbound_header_count(NULL) != 0u ||
       vectis_proxy_response_header_count(NULL) != 0u ||
+      vectis_proxy_local_respond(NULL, 200, NULL, 0u, &error) !=
+          VECTIS_ERR_INVALID ||
+      vectis_proxy_local_add_header(NULL, "X-Test", "yes", &error) !=
+          VECTIS_ERR_INVALID ||
       vectis_proxy_outbound_select_target(NULL, 0u, &error) !=
           VECTIS_ERR_INVALID) {
     return 11;

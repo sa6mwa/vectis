@@ -16,8 +16,12 @@ The C and Lua request rewrite hooks now select a configured target and edit
 method, raw path/query, Host, and bounded end-to-end headers before either
 upstream transport starts. C and Lua final-response hooks edit downstream
 status and bounded end-to-end headers before commitment for HTTP, SSE, and
-non-`101` WebSocket rejections; successful upgrades bypass the hook. Admission
-and error hooks and the remaining resource limits are still in progress. The
+non-`101` WebSocket rejections; successful upgrades bypass the hook. C and Lua
+preflight hooks now answer at headers time, and gateway-error hooks can answer
+before HTTP or WebSocket response headers are sent. Admission failures outside
+preflight still use fixed local responses; extending the error hook to every
+uncommitted failure and proving queued-but-unwritten replacement remain open.
+The remaining resource limits are also in progress. The
 [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
 
@@ -63,14 +67,34 @@ planned callback phases have the following contract:
 | `target` | Required configured `http://` or `https://` base URL. Its scheme and authority are fixed for the route. |
 | `upstream_http_version` | `auto` by default: prefer HTTP/2 over HTTPS for ordinary HTTP/SSE, with HTTP/1.1 fallback; use HTTP/1.1 for cleartext HTTP and every WebSocket upgrade. `http1` forces HTTP/1.1 for the whole route. Neither mode uses h2c. |
 | `tls_ca_pem` | Optional copied PEM CA bundle for HTTPS and WSS origin verification. Omit it to use libcurl's default trust store. The bundle replaces that store for the route; peer and hostname checks stay enabled. Limit: 256 KiB. |
-| `auth` or `preflight(in)` | Optional admission decision at headers time. It may proxy or send a local response before any upstream transfer. It sees headers and route metadata only; it cannot consume the body. |
+| `preflight(in)` | Optional admission decision at headers time, including authentication policy. It may proxy or send a local response before any upstream transfer. It sees headers and route metadata only; it cannot consume the body. |
 | `rewrite(in, out)` | Optional synchronous, borrowed callback. `in` is immutable inbound metadata; `out` is sanitized mutable outbound metadata. It may select an explicitly configured target, change method/path/query/Host and edit end-to-end headers. |
 | `modify_response(response)` | Optional status/header decision after final upstream headers and before downstream headers are committed, for ordinary HTTP/SSE and non-`101` WebSocket rejections. A successful WebSocket `101` bypasses this hook so the validated handshake cannot be altered. The hook does not receive a materialized body. The transport owns framing fields and validates bodyless final statuses. |
-| `on_error(error)` | Optional local error response while headers are uncommitted. Later errors abort the stream and are logged. |
+| `on_error(error)` | Optional local error response while headers are uncommitted. It receives a borrowed failure cause and default 502/504 status. Later errors abort the stream and are logged. |
 | `connect_timeout`, `idle_timeout`, `total_timeout`, `buffer_limit` | Explicit per-route resource policy. Total timeout defaults to disabled for an established SSE or WebSocket stream; connect and idle limits remain active. |
 
-The normal flow is: match route; run authentication and `preflight`; copy and
-sanitize inbound metadata; apply default target/path rewrite; run `rewrite`;
+For C, `preflight` and `on_error` receive an opaque local-response builder.
+`vectis_proxy_local_respond()` sets a final status and copies at most 64 KiB of
+body; `vectis_proxy_local_add_header()` copies validated end-to-end headers,
+including repeated `Set-Cookie`. A preflight callback that leaves the status
+unset forwards the request. An error callback that leaves it unset uses the
+default gateway response. Invalid preflight edits produce local `500`; invalid
+error-hook edits fall back to the default `502` or `504`. Every local response
+closes the downstream connection after its body, including when the request
+body is unread. Proxied bodies and WebSocket messages remain chunk streamed.
+The installed C API stays strict C89.
+
+Lua `preflight(in)` returns `nil` or `true` to forward, or a table such as
+`{status=401, body="denied", headers={{name="Set-Cookie", value="a=1"}}}` to
+answer locally. Lua `on_error(failure)` receives `status`, `code`, and
+`message` fields and returns the same response table shape, or `nil`/`true`
+for the default gateway response. Lua body strings may contain NUL; the same
+64 KiB limit applies. Callback errors in preflight produce `500`; callback
+errors in `on_error` use the default gateway response.
+
+The normal flow is: match route; copy and validate inbound metadata; run
+`preflight` for admission; sanitize outbound metadata; apply default target/path
+rewrite; run `rewrite`;
 validate the final destination and headers; start the upstream transfer. A
 custom handler/director uses `preflight` and `rewrite` around this operation,
 not an ordinary buffered `app:route()` handler. Callbacks execute in the owning

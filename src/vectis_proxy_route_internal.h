@@ -15,8 +15,12 @@ typedef struct vectis_proxy_route_data {
   size_t tls_ca_pem_length;
   vectis_proxy_rewrite_fn rewrite;
   void *rewrite_userdata;
+  vectis_proxy_preflight_fn preflight;
+  void *preflight_userdata;
   vectis_proxy_modify_response_fn modify_response;
   void *modify_response_userdata;
+  vectis_proxy_on_error_fn on_error;
+  void *on_error_userdata;
 } vectis_proxy_route_data;
 
 /* The selector compares this function pointer with the winning route handler

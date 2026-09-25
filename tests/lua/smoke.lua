@@ -1042,6 +1042,16 @@ do
     modify_response = "not a function",
   })
   assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
+    preflight = "not a function",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
+    on_error = "not a function",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
   assert(server:proxy({
     path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
     alternate_targets = {"https://example.invalid"},

@@ -553,6 +553,7 @@ set(vectis_sources
   src/vectis_proxy_route.c
   src/vectis_proxy_director.c
   src/vectis_proxy_response.c
+  src/vectis_proxy_local.c
   src/vectis_proxy_headers.c
   src/vectis_proxy_framing.c
   src/vectis_proxy_url.c
@@ -681,6 +682,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   list(APPEND vectis_sources
     src/vectis_kore_bridge.c
     src/vectis_kore_proxy.c
+    src/vectis_kore_proxy_local.c
     src/vectis_kore_proxy_ws.c
     src/vectis_proxy_events.c
     src/vectis_proxy_curl.c

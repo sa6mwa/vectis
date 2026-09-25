@@ -19,6 +19,49 @@ typedef enum vectis_proxy_http_version {
 typedef struct vectis_proxy_inbound vectis_proxy_inbound;
 typedef struct vectis_proxy_outbound vectis_proxy_outbound;
 typedef struct vectis_proxy_response vectis_proxy_response;
+typedef struct vectis_proxy_local_response vectis_proxy_local_response;
+
+/** Maximum copied body size for a proxy-generated local response. */
+#define VECTIS_PROXY_LOCAL_BODY_LIMIT 65536u
+
+/**
+ * Set the local response status and copy its optional body. A callback that
+ * leaves the status unset forwards the request (preflight) or uses the default
+ * gateway error (on_error). Body bytes may contain NUL. Status must be final,
+ * excluding 101; 204, 205, and 304 require an empty body. A failed edit is
+ * sticky and rejects the callback result even when its error is ignored.
+ */
+vectis_status vectis_proxy_local_respond(vectis_proxy_local_response *response,
+                                         int status, const void *body,
+                                         size_t body_length,
+                                         vectis_error *error);
+
+/** Add a copied end-to-end response header after setting the local status. */
+vectis_status
+vectis_proxy_local_add_header(vectis_proxy_local_response *response,
+                              const char *name, const char *value,
+                              vectis_error *error);
+
+/**
+ * Headers-time admission hook. The inbound view is borrowed and has no body.
+ * Return VECTIS_OK without a local response to continue to the upstream;
+ * call vectis_proxy_local_respond() to answer locally before any connect.
+ * A local reply closes the downstream connection after sending its body.
+ */
+typedef vectis_status (*vectis_proxy_preflight_fn)(
+    const vectis_proxy_inbound *inbound, vectis_proxy_local_response *response,
+    void *userdata, vectis_error *error);
+
+/**
+ * Optional gateway error hook before downstream headers are committed. The
+ * cause and local response are borrowed for this synchronous callback. Leave
+ * the response unset to use the default_status (502 or 504). Returning an
+ * error or making an invalid edit also falls back to that default response.
+ * Once headers have been sent, the transport aborts instead of calling this.
+ */
+typedef vectis_status (*vectis_proxy_on_error_fn)(
+    const vectis_error *cause, int default_status,
+    vectis_proxy_local_response *response, void *userdata, vectis_error *error);
 
 /**
  * Synchronous request rewrite, called after Vectis validates and sanitizes
@@ -160,9 +203,15 @@ struct vectis_proxy_route_config {
   /* Optional synchronous rewrite hook and borrowed application context. */
   vectis_proxy_rewrite_fn rewrite;
   void *rewrite_userdata;
+  /* Optional headers-time admission hook and borrowed application context. */
+  vectis_proxy_preflight_fn preflight;
+  void *preflight_userdata;
   /* Optional final response hook and borrowed application context. */
   vectis_proxy_modify_response_fn modify_response;
   void *modify_response_userdata;
+  /* Optional uncommitted gateway-error hook and borrowed context. */
+  vectis_proxy_on_error_fn on_error;
+  void *on_error_userdata;
 };
 
 /** Set the documented zero-value defaults. NULL is ignored. */

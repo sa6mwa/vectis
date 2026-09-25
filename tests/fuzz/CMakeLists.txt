@@ -34,6 +34,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_fuzzer(vectis_fuzz_proxy_http fuzz_vectis_proxy_http.c)
   vectis_add_fuzzer(vectis_fuzz_proxy_response
     fuzz_vectis_proxy_response.c)
+  vectis_add_fuzzer(vectis_fuzz_proxy_local fuzz_vectis_proxy_local.c)
   vectis_add_fuzzer(vectis_fuzz_proxy_framing fuzz_vectis_proxy_framing.c)
   vectis_add_fuzzer(vectis_fuzz_kore_bridge fuzz_vectis_kore_bridge.c)
 endif()
