@@ -28,8 +28,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   query[query_size] = '\0';
   target = NULL;
   authority = NULL;
-  status = vectis_proxy_target_build("https://example.test/base", path,
-                                     query, &target, &authority, &error);
+  status = vectis_proxy_target_build("https://example.test/base", path, query,
+                                     &target, &authority, &error);
   if (status == VECTIS_OK) {
     assert(target != NULL && target[0] == '/');
     assert(strcmp(authority, "example.test") == 0);

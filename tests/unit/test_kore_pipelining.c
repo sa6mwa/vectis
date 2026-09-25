@@ -10,19 +10,16 @@
 
 #include <vectis/vectis.h>
 
-static vectis_status
-reply(vectis_app *app, vectis_request *request, vectis_response *response,
-    void *userdata, vectis_error *error)
-{
+static vectis_status reply(vectis_app *app, vectis_request *request,
+                           vectis_response *response, void *userdata,
+                           vectis_error *error) {
   (void)app;
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
-static unsigned short
-available_port(void)
-{
+static unsigned short available_port(void) {
   struct sockaddr_in addr;
   socklen_t size;
   int fd;
@@ -39,9 +36,7 @@ available_port(void)
   return ntohs(addr.sin_port);
 }
 
-static int
-connect_local(unsigned short port)
-{
+static int connect_local(unsigned short port) {
   struct sockaddr_in addr;
   int attempt;
   int fd;
@@ -62,9 +57,7 @@ connect_local(unsigned short port)
   return -1;
 }
 
-static unsigned
-response_count(const char *data)
-{
+static unsigned response_count(const char *data) {
   unsigned count;
   const char *p;
 
@@ -77,9 +70,8 @@ response_count(const char *data)
   return count;
 }
 
-static int
-check_pipeline(unsigned short port, const char *wire, const char *label)
-{
+static int check_pipeline(unsigned short port, const char *wire,
+                          const char *label) {
   struct pollfd watch;
   char output[4096];
   size_t used;
@@ -108,12 +100,9 @@ check_pipeline(unsigned short port, const char *wire, const char *label)
   return count == 2;
 }
 
-int
-main(void)
-{
-  static const char two_gets[] =
-      "GET /one HTTP/1.1\r\nHost: localhost\r\n\r\n"
-      "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+int main(void) {
+  static const char two_gets[] = "GET /one HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                                 "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char post_then_get[] =
       "POST /post HTTP/1.1\r\nHost: localhost\r\n"
       "Content-Length: 4\r\n\r\ndata"

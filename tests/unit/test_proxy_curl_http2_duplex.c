@@ -2,8 +2,8 @@
 #include <assert.h>
 #include <curl/curl.h>
 #include <fcntl.h>
-#include <nghttp2/nghttp2.h>
 #include <netinet/in.h>
+#include <nghttp2/nghttp2.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -17,8 +17,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-static const char request_target[] =
-    "/rewritten/%2F?x=1&x=2&raw=%2F";
+static const char request_target[] = "/rewritten/%2F?x=1&x=2&raw=%2F";
 
 struct h2_server {
   int listener;
@@ -57,9 +56,7 @@ struct client_state {
   size_t response_size;
 };
 
-static EVP_PKEY *
-make_key(void)
-{
+static EVP_PKEY *make_key(void) {
   EVP_PKEY_CTX *ctx;
   EVP_PKEY *key;
 
@@ -73,9 +70,7 @@ make_key(void)
   return key;
 }
 
-static X509 *
-make_cert(EVP_PKEY *key)
-{
+static X509 *make_cert(EVP_PKEY *key) {
   X509V3_CTX extension_ctx;
   X509_EXTENSION *extension;
   X509_NAME *name;
@@ -91,11 +86,12 @@ make_cert(EVP_PKEY *key)
   name = X509_get_subject_name(cert);
   assert(name != NULL);
   assert(X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-      (const unsigned char *)"localhost", -1, -1, 0) == 1);
+                                    (const unsigned char *)"localhost", -1, -1,
+                                    0) == 1);
   assert(X509_set_issuer_name(cert, name) == 1);
   X509V3_set_ctx(&extension_ctx, cert, cert, NULL, NULL, 0);
-  extension = X509V3_EXT_conf_nid(NULL, &extension_ctx,
-      NID_subject_alt_name, "DNS:localhost");
+  extension = X509V3_EXT_conf_nid(NULL, &extension_ctx, NID_subject_alt_name,
+                                  "DNS:localhost");
   assert(extension != NULL);
   assert(X509_add_ext(cert, extension, -1) == 1);
   X509_EXTENSION_free(extension);
@@ -103,10 +99,8 @@ make_cert(EVP_PKEY *key)
   return cert;
 }
 
-static int
-select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
-    const unsigned char *in, unsigned int inlen, void *arg)
-{
+static int select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                     const unsigned char *in, unsigned int inlen, void *arg) {
   struct h2_server *server;
   unsigned int offset;
   unsigned int length;
@@ -129,10 +123,8 @@ select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
   return SSL_TLSEXT_ERR_NOACK;
 }
 
-static ssize_t
-send_data(nghttp2_session *session, const uint8_t *data, size_t len,
-    int flags, void *arg)
-{
+static ssize_t send_data(nghttp2_session *session, const uint8_t *data,
+                         size_t len, int flags, void *arg) {
   struct h2_connection *connection;
   ssize_t sent;
   int error;
@@ -149,10 +141,9 @@ send_data(nghttp2_session *session, const uint8_t *data, size_t len,
   return NGHTTP2_ERR_CALLBACK_FAILURE;
 }
 
-static ssize_t
-produce_response(nghttp2_session *session, int32_t stream_id, uint8_t *data,
-    size_t len, uint32_t *flags, nghttp2_data_source *source, void *arg)
-{
+static ssize_t produce_response(nghttp2_session *session, int32_t stream_id,
+                                uint8_t *data, size_t len, uint32_t *flags,
+                                nghttp2_data_source *source, void *arg) {
   struct h2_connection *connection;
   const char *piece;
 
@@ -187,10 +178,8 @@ produce_response(nghttp2_session *session, int32_t stream_id, uint8_t *data,
   return 4;
 }
 
-static int
-on_data(nghttp2_session *session, uint8_t flags, int32_t stream_id,
-    const uint8_t *data, size_t len, void *arg)
-{
+static int on_data(nghttp2_session *session, uint8_t flags, int32_t stream_id,
+                   const uint8_t *data, size_t len, void *arg) {
   struct h2_connection *connection;
   struct h2_server *server;
 
@@ -212,11 +201,9 @@ on_data(nghttp2_session *session, uint8_t flags, int32_t stream_id,
   return 0;
 }
 
-static int
-on_header(nghttp2_session *session, const nghttp2_frame *frame,
-    const uint8_t *name, size_t namelen, const uint8_t *value,
-    size_t valuelen, uint8_t flags, void *arg)
-{
+static int on_header(nghttp2_session *session, const nghttp2_frame *frame,
+                     const uint8_t *name, size_t namelen, const uint8_t *value,
+                     size_t valuelen, uint8_t flags, void *arg) {
   struct h2_connection *connection;
   struct h2_server *server;
 
@@ -229,19 +216,20 @@ on_header(nghttp2_session *session, const nghttp2_frame *frame,
   server = connection->server;
   if (namelen == 7 && memcmp(name, ":method", 7) == 0) {
 #ifdef VECTIS_HTTP2_FRAMED_GET
-    server->saw_requested_method = valuelen == 3 &&
-        memcmp(value, "GET", 3) == 0;
+    server->saw_requested_method =
+        valuelen == 3 && memcmp(value, "GET", 3) == 0;
 #else
-    server->saw_requested_method = valuelen == 4 &&
-        memcmp(value, "POST", 4) == 0;
+    server->saw_requested_method =
+        valuelen == 4 && memcmp(value, "POST", 4) == 0;
 #endif
   }
   if (namelen == 5 && memcmp(name, ":path", 5) == 0)
-    server->saw_rewritten_path = valuelen == sizeof(request_target) - 1 &&
+    server->saw_rewritten_path =
+        valuelen == sizeof(request_target) - 1 &&
         memcmp(value, request_target, sizeof(request_target) - 1) == 0;
   if (namelen == 10 && memcmp(name, ":authority", 10) == 0)
-    server->saw_rewritten_authority = valuelen == 14 &&
-        memcmp(value, "public.example", 14) == 0;
+    server->saw_rewritten_authority =
+        valuelen == 14 && memcmp(value, "public.example", 14) == 0;
   if (namelen == 14 && memcmp(name, "content-length", 14) == 0)
     server->saw_content_length = valuelen == 1 && value[0] == '8';
   if (namelen == 17 && memcmp(name, "transfer-encoding", 17) == 0)
@@ -249,14 +237,12 @@ on_header(nghttp2_session *session, const nghttp2_frame *frame,
   return 0;
 }
 
-static int
-on_frame(nghttp2_session *session, const nghttp2_frame *frame, void *arg)
-{
+static int on_frame(nghttp2_session *session, const nghttp2_frame *frame,
+                    void *arg) {
   static uint8_t status_name[] = ":status";
   static uint8_t status_value[] = "200";
   static nghttp2_nv headers[] = {
-    {status_name, status_value, 7, 3, NGHTTP2_NV_FLAG_NONE}
-  };
+      {status_name, status_value, 7, 3, NGHTTP2_NV_FLAG_NONE}};
   struct h2_connection *connection;
   nghttp2_data_provider provider;
 
@@ -268,8 +254,9 @@ on_frame(nghttp2_session *session, const nghttp2_frame *frame, void *arg)
     connection->server->saw_request = 1;
     memset(&provider, 0, sizeof(provider));
     provider.read_callback = produce_response;
-    assert(nghttp2_submit_response(session, connection->stream_id,
-        headers, sizeof(headers) / sizeof(headers[0]), &provider) == 0);
+    assert(nghttp2_submit_response(session, connection->stream_id, headers,
+                                   sizeof(headers) / sizeof(headers[0]),
+                                   &provider) == 0);
   }
   if (frame->hd.type == NGHTTP2_DATA &&
       (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
@@ -284,9 +271,7 @@ on_frame(nghttp2_session *session, const nghttp2_frame *frame, void *arg)
   return 0;
 }
 
-static void *
-server_main(void *arg)
-{
+static void *server_main(void *arg) {
   struct h2_server *server;
   struct h2_connection connection;
   nghttp2_session_callbacks *callbacks;
@@ -316,8 +301,7 @@ server_main(void *arg)
   nghttp2_session_callbacks_set_send_callback(callbacks, send_data);
   nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, on_frame);
   nghttp2_session_callbacks_set_on_header_callback(callbacks, on_header);
-  nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
-      on_data);
+  nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, on_data);
   assert(nghttp2_session_server_new(&session, callbacks, &connection) == 0);
   nghttp2_session_callbacks_del(callbacks);
   assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0) == 0);
@@ -355,9 +339,7 @@ server_done:
   return NULL;
 }
 
-static void
-start_server(struct h2_server *server, X509 *cert, EVP_PKEY *key)
-{
+static void start_server(struct h2_server *server, X509 *cert, EVP_PKEY *key) {
   struct sockaddr_in addr;
   socklen_t size;
 
@@ -380,9 +362,7 @@ start_server(struct h2_server *server, X509 *cert, EVP_PKEY *key)
   assert(pthread_create(&server->thread, NULL, server_main, server) == 0);
 }
 
-static size_t
-read_upload(char *data, size_t size, size_t count, void *arg)
-{
+static size_t read_upload(char *data, size_t size, size_t count, void *arg) {
   struct client_state *state;
 
   state = (struct client_state *)arg;
@@ -404,9 +384,7 @@ read_upload(char *data, size_t size, size_t count, void *arg)
   return 4;
 }
 
-static size_t
-write_response(char *data, size_t size, size_t count, void *arg)
-{
+static size_t write_response(char *data, size_t size, size_t count, void *arg) {
   struct client_state *state;
   size_t amount;
 
@@ -418,9 +396,7 @@ write_response(char *data, size_t size, size_t count, void *arg)
   return amount;
 }
 
-int
-main(void)
-{
+int main(void) {
   struct h2_server server;
   struct client_state state;
   struct curl_blob ca;
@@ -458,60 +434,61 @@ main(void)
   easy = curl_easy_init();
   assert(easy != NULL);
   assert(snprintf(url, sizeof(url), "https://localhost:%u/ignored?wrong=1",
-      (unsigned)server.port) > 0);
+                  (unsigned)server.port) > 0);
   headers = NULL;
   headers = curl_slist_append(headers, "Expect:");
   assert(headers != NULL);
   headers = curl_slist_append(headers, "Host: public.example");
   assert(headers != NULL);
   assert(curl_easy_setopt(easy, CURLOPT_URL, url) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_REQUEST_TARGET,
-      request_target) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_REQUEST_TARGET, request_target) ==
+         CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_CAINFO_BLOB, &ca) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
-      CURL_HTTP_VERSION_2TLS) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS) ==
+         CURLE_OK);
 #ifdef VECTIS_HTTP2_FRAMED_GET
   assert(curl_easy_setopt(easy, CURLOPT_UPLOAD, 1L) == CURLE_OK);
 #ifdef VECTIS_HTTP2_UNKNOWN_LENGTH
-  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE,
-      (curl_off_t)-1) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE, (curl_off_t)-1) ==
+         CURLE_OK);
 #else
-  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE,
-      (curl_off_t)8) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE, (curl_off_t)8) ==
+         CURLE_OK);
 #endif
   assert(curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, "GET") == CURLE_OK);
 #else
   assert(curl_easy_setopt(easy, CURLOPT_POST, 1L) == CURLE_OK);
 #ifdef VECTIS_HTTP2_UNKNOWN_LENGTH
-  assert(curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE,
-      (curl_off_t)-1) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)-1) ==
+         CURLE_OK);
 #else
-  assert(curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE,
-      (curl_off_t)8) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)8) ==
+         CURLE_OK);
 #endif
 #endif
-  assert(curl_easy_setopt(easy, CURLOPT_READFUNCTION,
-      read_upload) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_READFUNCTION, read_upload) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_READDATA, &state) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION,
-      write_response) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_response) ==
+         CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_WRITEDATA, &state) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
   assert(curl_multi_perform(multi, &running) == CURLM_OK);
   for (attempt = 0; attempt < 200 && running &&
-      (!state.upload_paused || state.response_size < 4); attempt++) {
+                    (!state.upload_paused || state.response_size < 4);
+       attempt++) {
     assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
   }
-  fprintf(stderr, "h2 early response: paused=%d uploaded=%lu received=%lu "
-      "attempts=%d running=%d\n", state.upload_paused,
-      (unsigned long)state.upload_size, (unsigned long)state.response_size,
-      attempt, running);
+  fprintf(stderr,
+          "h2 early response: paused=%d uploaded=%lu received=%lu "
+          "attempts=%d running=%d\n",
+          state.upload_paused, (unsigned long)state.upload_size,
+          (unsigned long)state.response_size, attempt, running);
   assert(running == 1);
   assert(state.upload_paused == 1);
   assert(state.upload_size == 4);

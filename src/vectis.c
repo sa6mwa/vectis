@@ -5403,7 +5403,7 @@ static void vectis_route_entry_free_userdata(vectis_route_entry *route) {
   if (route->userdata_cleanup != NULL) {
     route->userdata_cleanup(route->userdata);
   } else if (route->kind == VECTIS_ROUTE_ENTRY_UPLOAD_STREAM &&
-      route->upload_write == vectis_upload_file_write) {
+             route->upload_write == vectis_upload_file_write) {
     file_adapter = (vectis_upload_file_adapter *)route->userdata;
     free(file_adapter->file_path);
     free(file_adapter->content_type);
@@ -13396,8 +13396,8 @@ vectis_status vectis_register_route(vectis_app *app,
 }
 
 vectis_status vectis_internal_register_owned_route_with_cleanup(
-    vectis_app *app, const vectis_route_config *route,
-    void (*cleanup)(void *), vectis_error *error) {
+    vectis_app *app, const vectis_route_config *route, void (*cleanup)(void *),
+    vectis_error *error) {
   if (cleanup == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "owned route cleanup callback is required");
@@ -13571,8 +13571,8 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
   route.path_kind = VECTIS_ROUTE_PATH_LITERAL;
   route.handler = vectis_metrics_route_handler;
   route.userdata = html_data;
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   if (status != VECTIS_OK) {
     (void)pthread_mutex_lock(&impl->mutex);
     impl->metrics = NULL;
@@ -13590,8 +13590,8 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
   route.path_kind = VECTIS_ROUTE_PATH_LITERAL;
   route.handler = vectis_metrics_route_handler;
   route.userdata = json_data;
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   if (status != VECTIS_OK) {
     (void)pthread_mutex_lock(&impl->mutex);
     if (impl->route_count > 0u &&
@@ -15111,8 +15111,8 @@ vectis_register_static_file(vectis_app *app,
   route =
       vectis_route_methods(vectis_static_methods_or_default(config->methods),
                            config->path, vectis_static_file_dispatch, data);
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   if (status != VECTIS_OK) {
     free(data);
   }
@@ -15189,8 +15189,8 @@ vectis_register_static_directory(vectis_app *app,
   route.body = vectis_body_none();
   route.handler = vectis_static_directory_dispatch;
   route.userdata = data;
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   free(regex);
   if (status != VECTIS_OK) {
     free(data);
@@ -15267,8 +15267,8 @@ vectis_register_static_embedded(vectis_app *app,
   route.body = vectis_body_none();
   route.handler = vectis_static_embedded_dispatch;
   route.userdata = data;
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   free(regex);
   if (status != VECTIS_OK) {
     free(data);
@@ -17103,8 +17103,8 @@ vectis_status vectis_register_webdav(vectis_app *app,
   route.body = vectis_body_buffered_max(config->storage.max_file_bytes);
   route.handler = vectis_webdav_dispatch;
   route.userdata = data;
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   free(regex);
   if (status != VECTIS_OK) {
     free(data);
@@ -17170,8 +17170,8 @@ vectis_status vectis_register_webdav_embedded(
   route.body = vectis_body_buffered_max(0u);
   route.handler = vectis_webdav_embedded_dispatch;
   route.userdata = data;
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   free(regex);
   if (status != VECTIS_OK) {
     free(data);
@@ -19562,8 +19562,8 @@ static vectis_status vectis_register_auth_route_one(
     route.body = vectis_body_buffered_max(
         config->max_body_bytes > 0u ? config->max_body_bytes : 8192u);
   }
-  status = vectis_app_register_route_owned_userdata(app, &route, 1, NULL,
-                                                        error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &route, 1, NULL, error);
   free(path);
   if (status != VECTIS_OK) {
     free(data);
@@ -21011,8 +21011,8 @@ vectis_status vectis_register_json_route(vectis_app *app,
   raw_route.handler = vectis_json_route_dispatch;
   raw_route.userdata = adapter;
 
-  status = vectis_app_register_route_owned_userdata(
-      app, &raw_route, 1, NULL, error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &raw_route, 1, NULL, error);
   if (status != VECTIS_OK) {
     free(adapter);
   }
@@ -21087,8 +21087,8 @@ vectis_register_json_typed_route(vectis_app *app,
   raw_route.handler = vectis_json_typed_route_dispatch;
   raw_route.userdata = adapter;
 
-  status = vectis_app_register_route_owned_userdata(
-      app, &raw_route, 1, NULL, error);
+  status =
+      vectis_app_register_route_owned_userdata(app, &raw_route, 1, NULL, error);
   if (status != VECTIS_OK) {
     free(adapter);
   }
@@ -26691,14 +26691,11 @@ vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
   return VECTIS_ERR_STATE;
 }
 
-vectis_status
-vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
-                                  const char *path, vectis_body_policy *policy,
-                                  int *is_live_upload,
-                                  vectis_route_handler_fn *selected_handler,
-                                  void **selected_userdata,
-                                  vectis_request *matched_request,
-                                  vectis_error *error) {
+vectis_status vectis_internal_route_body_policy(
+    vectis_app *app, vectis_http_method method, const char *path,
+    vectis_body_policy *policy, int *is_live_upload,
+    vectis_route_handler_fn *selected_handler, void **selected_userdata,
+    vectis_request *matched_request, vectis_error *error) {
   vectis_app_impl *impl;
   vectis_request scratch;
   vectis_request *route_request;
@@ -26753,7 +26750,8 @@ vectis_internal_route_body_policy(vectis_app *app, vectis_http_method method,
     if (!vectis_route_method_matches(&impl->routes[i], method)) {
       continue;
     }
-    if (vectis_route_path_matches(&impl->routes[i], path, route_request, error)) {
+    if (vectis_route_path_matches(&impl->routes[i], path, route_request,
+                                  error)) {
       *policy = impl->routes[i].body;
       if (is_live_upload != NULL) {
         *is_live_upload =
@@ -26838,12 +26836,12 @@ vectis_status vectis_internal_proxy_validate_raw_path(const char *path,
       value = (unsigned char)((high << 4) | low);
       cursor += 2u;
     } else if (value == (unsigned char)'?' || value == (unsigned char)'#') {
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "proxy request path must not contain a query or fragment");
+      vectis_set_error(
+          error, VECTIS_ERR_INVALID,
+          "proxy request path must not contain a query or fragment");
       return VECTIS_ERR_INVALID;
     }
-    if (value < 0x20u || value == 0x7fu ||
-        value == (unsigned char)'\\') {
+    if (value < 0x20u || value == 0x7fu || value == (unsigned char)'\\') {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "proxy request path has an unsafe byte");
       return VECTIS_ERR_INVALID;
@@ -26943,8 +26941,7 @@ vectis_status vectis_internal_proxy_raw_path_match(
   }
   (void)pthread_mutex_unlock(&impl->mutex);
   if (status == VECTIS_ERR_STATE) {
-    vectis_set_error(error, VECTIS_ERR_STATE,
-                     "no proxy route matched request");
+    vectis_set_error(error, VECTIS_ERR_STATE, "no proxy route matched request");
   }
   return status;
 }

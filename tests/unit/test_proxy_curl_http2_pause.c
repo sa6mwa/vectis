@@ -4,8 +4,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <nghttp2/nghttp2.h>
 #include <netinet/in.h>
+#include <nghttp2/nghttp2.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -18,9 +18,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/resource.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -76,10 +76,8 @@ struct client_state {
   size_t received;
 };
 
-static ssize_t
-send_data(nghttp2_session *session, const uint8_t *data, size_t len,
-    int flags, void *arg)
-{
+static ssize_t send_data(nghttp2_session *session, const uint8_t *data,
+                         size_t len, int flags, void *arg) {
   struct h2_connection *connection;
   ssize_t sent;
 
@@ -98,9 +96,7 @@ send_data(nghttp2_session *session, const uint8_t *data, size_t len,
   return sent;
 }
 
-static EVP_PKEY *
-make_key(void)
-{
+static EVP_PKEY *make_key(void) {
   EVP_PKEY_CTX *ctx;
   EVP_PKEY *key;
 
@@ -114,9 +110,7 @@ make_key(void)
   return key;
 }
 
-static X509 *
-make_cert(EVP_PKEY *key)
-{
+static X509 *make_cert(EVP_PKEY *key) {
   X509V3_CTX extension_ctx;
   X509_EXTENSION *extension;
   X509_NAME *name;
@@ -132,11 +126,12 @@ make_cert(EVP_PKEY *key)
   name = X509_get_subject_name(cert);
   assert(name != NULL);
   assert(X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-      (const unsigned char *)"localhost", -1, -1, 0) == 1);
+                                    (const unsigned char *)"localhost", -1, -1,
+                                    0) == 1);
   assert(X509_set_issuer_name(cert, name) == 1);
   X509V3_set_ctx(&extension_ctx, cert, cert, NULL, NULL, 0);
-  extension = X509V3_EXT_conf_nid(NULL, &extension_ctx,
-      NID_subject_alt_name, "DNS:localhost");
+  extension = X509V3_EXT_conf_nid(NULL, &extension_ctx, NID_subject_alt_name,
+                                  "DNS:localhost");
   assert(extension != NULL);
   assert(X509_add_ext(cert, extension, -1) == 1);
   X509_EXTENSION_free(extension);
@@ -144,10 +139,8 @@ make_cert(EVP_PKEY *key)
   return cert;
 }
 
-static int
-select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
-    const unsigned char *in, unsigned int inlen, void *arg)
-{
+static int select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                     const unsigned char *in, unsigned int inlen, void *arg) {
   struct h2_server *server;
   unsigned int offset;
   unsigned int length;
@@ -170,10 +163,9 @@ select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
   return SSL_TLSEXT_ERR_NOACK;
 }
 
-static ssize_t
-produce_body(nghttp2_session *session, int32_t stream_id, uint8_t *data,
-    size_t len, uint32_t *flags, nghttp2_data_source *source, void *arg)
-{
+static ssize_t produce_body(nghttp2_session *session, int32_t stream_id,
+                            uint8_t *data, size_t len, uint32_t *flags,
+                            nghttp2_data_source *source, void *arg) {
   struct h2_connection *connection;
   size_t remaining;
 
@@ -192,18 +184,15 @@ produce_body(nghttp2_session *session, int32_t stream_id, uint8_t *data,
   return (ssize_t)len;
 }
 
-static int
-request_received(nghttp2_session *session, const nghttp2_frame *frame,
-    void *arg)
-{
+static int request_received(nghttp2_session *session,
+                            const nghttp2_frame *frame, void *arg) {
   static uint8_t status_name[] = ":status";
   static uint8_t status_value[] = "200";
   static uint8_t type_name[] = "content-type";
   static uint8_t type_value[] = "application/octet-stream";
   static nghttp2_nv header[] = {
-    {status_name, status_value, 7, 3, NGHTTP2_NV_FLAG_NONE},
-    {type_name, type_value, 12, 24, NGHTTP2_NV_FLAG_NONE}
-  };
+      {status_name, status_value, 7, 3, NGHTTP2_NV_FLAG_NONE},
+      {type_name, type_value, 12, 24, NGHTTP2_NV_FLAG_NONE}};
   struct h2_connection *connection;
   nghttp2_data_provider provider;
 
@@ -214,13 +203,11 @@ request_received(nghttp2_session *session, const nghttp2_frame *frame,
   __sync_fetch_and_add(&connection->server->counts->saw_request, 1);
   memset(&provider, 0, sizeof(provider));
   provider.read_callback = produce_body;
-  return nghttp2_submit_response(session, frame->hd.stream_id,
-      header, sizeof(header) / sizeof(header[0]), &provider);
+  return nghttp2_submit_response(session, frame->hd.stream_id, header,
+                                 sizeof(header) / sizeof(header[0]), &provider);
 }
 
-static void *
-connection_main(void *arg)
-{
+static void *connection_main(void *arg) {
   struct h2_connection *connection;
   nghttp2_session_callbacks *callbacks;
   nghttp2_session *session;
@@ -243,11 +230,10 @@ connection_main(void *arg)
   assert(nghttp2_session_callbacks_new(&callbacks) == 0);
   nghttp2_session_callbacks_set_send_callback(callbacks, send_data);
   nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks,
-      request_received);
+                                                       request_received);
   assert(nghttp2_session_server_new(&session, callbacks, connection) == 0);
   nghttp2_session_callbacks_del(callbacks);
-  assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE,
-      NULL, 0) == 0);
+  assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0) == 0);
   for (;;) {
     item.fd = connection->fd;
     item.events = POLLIN | (nghttp2_session_want_write(session) ? POLLOUT : 0);
@@ -261,8 +247,7 @@ connection_main(void *arg)
 
         got = SSL_read(connection->ssl, input, sizeof(input));
         if (got > 0) {
-          assert(nghttp2_session_mem_recv(session, input,
-              (size_t)got) == got);
+          assert(nghttp2_session_mem_recv(session, input, (size_t)got) == got);
           continue;
         }
         ssl_error = SSL_get_error(connection->ssl, (int)got);
@@ -286,9 +271,7 @@ connection_done:
   return NULL;
 }
 
-static void *
-server_main(void *arg)
-{
+static void *server_main(void *arg) {
   struct h2_server *server;
   struct h2_connection *connection;
   pthread_t threads[CONCURRENT_TRANSFERS];
@@ -302,18 +285,15 @@ server_main(void *arg)
     connection->fd = accept(server->listener, NULL, NULL);
     assert(connection->fd >= 0);
     server->counts->accepted++;
-    assert(pthread_create(&threads[i], NULL, connection_main,
-        connection) == 0);
+    assert(pthread_create(&threads[i], NULL, connection_main, connection) == 0);
   }
   for (i = 0; i < CONCURRENT_TRANSFERS; i++)
     assert(pthread_join(threads[i], NULL) == 0);
   return NULL;
 }
 
-static void
-start_server(struct h2_server *server, struct h2_counts *counts,
-    X509 *cert, EVP_PKEY *key, int isolated)
-{
+static void start_server(struct h2_server *server, struct h2_counts *counts,
+                         X509 *cert, EVP_PKEY *key, int isolated) {
   struct sockaddr_in addr;
   socklen_t size;
 
@@ -335,13 +315,10 @@ start_server(struct h2_server *server, struct h2_counts *counts,
   assert(getsockname(server->listener, (struct sockaddr *)&addr, &size) == 0);
   server->port = ntohs(addr.sin_port);
   if (!isolated)
-    assert(pthread_create(&server->thread, NULL,
-        server_main, server) == 0);
+    assert(pthread_create(&server->thread, NULL, server_main, server) == 0);
 }
 
-static size_t
-pause_download(char *data, size_t size, size_t count, void *arg)
-{
+static size_t pause_download(char *data, size_t size, size_t count, void *arg) {
   struct client_state *state;
   unsigned long current_rss;
 #if defined(__SANITIZE_ADDRESS__)
@@ -370,9 +347,7 @@ pause_download(char *data, size_t size, size_t count, void *arg)
   return amount;
 }
 
-static unsigned long
-rss_kb(void)
-{
+static unsigned long rss_kb(void) {
   FILE *file;
   char line[256];
   unsigned long amount;
@@ -389,9 +364,7 @@ rss_kb(void)
   return amount;
 }
 
-static unsigned
-open_fd_count(void)
-{
+static unsigned open_fd_count(void) {
   DIR *dir;
   struct dirent *entry;
   unsigned count;
@@ -407,9 +380,7 @@ open_fd_count(void)
   return count;
 }
 
-static unsigned long
-high_water_rss_kb(void)
-{
+static unsigned long high_water_rss_kb(void) {
   struct rusage usage;
 
   assert(getrusage(RUSAGE_SELF, &usage) == 0);
@@ -417,9 +388,8 @@ high_water_rss_kb(void)
   return (unsigned long)usage.ru_maxrss;
 }
 
-static unsigned long
-observed_peak_rss_kb(unsigned long current, unsigned long previous)
-{
+static unsigned long observed_peak_rss_kb(unsigned long current,
+                                          unsigned long previous) {
   if (sampled_peak_rss_kb > current)
     current = sampled_peak_rss_kb;
   if (previous > current)
@@ -427,9 +397,7 @@ observed_peak_rss_kb(unsigned long current, unsigned long previous)
   return current;
 }
 
-int
-main(void)
-{
+int main(void) {
   struct h2_server server;
   struct h2_counts *counts;
   struct client_state states[CONCURRENT_TRANSFERS];
@@ -489,7 +457,7 @@ main(void)
   ca.flags = CURL_BLOB_COPY;
   isolated_server = getenv("VECTIS_H2_ISOLATED_SERVER") != NULL;
   counts = mmap(NULL, sizeof(*counts), PROT_READ | PROT_WRITE,
-      MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   assert(counts != MAP_FAILED);
   memset(counts, 0, sizeof(*counts));
   start_server(&server, counts, cert, key, isolated_server);
@@ -514,16 +482,15 @@ main(void)
   assert(curl_info->features & CURL_VERSION_ASYNCHDNS);
   assert(curl_info->features & CURL_VERSION_HTTP2);
   assert(curl_info->features & CURL_VERSION_SSL);
-  cancel_after_pause =
-      getenv("VECTIS_H2_CANCEL_AFTER_PAUSE") != NULL;
+  cancel_after_pause = getenv("VECTIS_H2_CANCEL_AFTER_PAUSE") != NULL;
   multi = curl_multi_init();
   assert(multi != NULL);
-  assert(curl_multi_setopt(multi, CURLMOPT_PIPELINING,
-      CURLPIPE_NOTHING) == CURLM_OK);
-  assert(curl_multi_setopt(multi, CURLMOPT_MAX_CONCURRENT_STREAMS,
-      1L) == CURLM_OK);
+  assert(curl_multi_setopt(multi, CURLMOPT_PIPELINING, CURLPIPE_NOTHING) ==
+         CURLM_OK);
+  assert(curl_multi_setopt(multi, CURLMOPT_MAX_CONCURRENT_STREAMS, 1L) ==
+         CURLM_OK);
   assert(snprintf(url, sizeof(url), "https://localhost:%u/",
-      (unsigned)server.port) > 0);
+                  (unsigned)server.port) > 0);
   for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
     easy[i] = curl_easy_init();
     assert(easy[i] != NULL);
@@ -531,11 +498,11 @@ main(void)
     assert(curl_easy_setopt(easy[i], CURLOPT_CAINFO_BLOB, &ca) == CURLE_OK);
     assert(curl_easy_setopt(easy[i], CURLOPT_NOPROXY, "*") == CURLE_OK);
     assert(curl_easy_setopt(easy[i], CURLOPT_HTTP_VERSION,
-        CURL_HTTP_VERSION_2TLS) == CURLE_OK);
-    assert(curl_easy_setopt(easy[i], CURLOPT_WRITEFUNCTION,
-        pause_download) == CURLE_OK);
-    assert(curl_easy_setopt(easy[i], CURLOPT_WRITEDATA,
-        &states[i]) == CURLE_OK);
+                            CURL_HTTP_VERSION_2TLS) == CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_WRITEFUNCTION, pause_download) ==
+           CURLE_OK);
+    assert(curl_easy_setopt(easy[i], CURLOPT_WRITEDATA, &states[i]) ==
+           CURLE_OK);
     assert(curl_easy_setopt(easy[i], CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   }
   baseline = rss_kb();
@@ -550,8 +517,8 @@ main(void)
     assert(curl_multi_add_handle(multi, easy[i]) == CURLM_OK);
   assert(curl_multi_perform(multi, &running) == CURLM_OK);
   paused = 0;
-  for (attempt = 0; attempt < 200 && running &&
-      paused < CONCURRENT_TRANSFERS; attempt++) {
+  for (attempt = 0; attempt < 200 && running && paused < CONCURRENT_TRANSFERS;
+       attempt++) {
     assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
     paused = 0;
@@ -560,8 +527,8 @@ main(void)
   }
   assert(paused == CONCURRENT_TRANSFERS);
   for (i = 0; i < CONCURRENT_TRANSFERS; i++) {
-    assert(curl_easy_getinfo(easy[i], CURLINFO_HTTP_VERSION,
-        &version) == CURLE_OK);
+    assert(curl_easy_getinfo(easy[i], CURLINFO_HTTP_VERSION, &version) ==
+           CURLE_OK);
     assert(version == CURL_HTTP_VERSION_2_0);
   }
   after_pause = rss_kb();
@@ -583,16 +550,15 @@ main(void)
       assert(curl_easy_pause(easy[i], CURLPAUSE_CONT) == CURLE_OK);
     }
     resume_start = time(NULL);
-    for (attempt = 0; running && time(NULL) - resume_start < 15;
-        attempt++) {
+    for (attempt = 0; running && time(NULL) - resume_start < 15; attempt++) {
       assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
       assert(curl_multi_perform(multi, &running) == CURLM_OK);
     }
-    fprintf(stderr, "h2 resume: running=%d attempts=%d received=",
-        running, attempt);
+    fprintf(stderr, "h2 resume: running=%d attempts=%d received=", running,
+            attempt);
     for (i = 0; i < CONCURRENT_TRANSFERS; i++)
       fprintf(stderr, "%s%lu", i == 0 ? "" : ",",
-          (unsigned long)states[i].received);
+              (unsigned long)states[i].received);
     fprintf(stderr, "\n");
     assert(running == 0);
     for (i = 0; i < CONCURRENT_TRANSFERS; i++)
@@ -601,8 +567,7 @@ main(void)
 #if defined(__SANITIZE_ADDRESS__)
     allocated_resume = allocated_kb();
 #endif
-    peak_after_resume = observed_peak_rss_kb(after_resume,
-        peak_after_wait);
+    peak_after_resume = observed_peak_rss_kb(after_resume, peak_after_wait);
   } else {
     assert(running == CONCURRENT_TRANSFERS);
     for (i = 0; i < CONCURRENT_TRANSFERS; i++)
@@ -640,24 +605,22 @@ main(void)
           allocated_baseline, allocated_wait, allocated_resume,
           allocated_cleanup, sampled_peak_allocated_kb);
 #endif
-  peak_after_cleanup = observed_peak_rss_kb(after_cleanup,
-      peak_after_resume);
+  peak_after_cleanup = observed_peak_rss_kb(after_cleanup, peak_after_resume);
   after_hwm = high_water_rss_kb();
   after_cleanup_fds = open_fd_count();
   assert(after_cleanup_fds <= baseline_fds);
   if (cancel_after_pause)
     assert(time(NULL) - cleanup_start < 10);
-  fprintf(stderr, "curl h2 pause: baseline=%luKB paused=%luKB later=%luKB "
-      "resumed=%luKB cleanup=%luKB cancel=%d isolated=%d fds=%u,%u "
-      "peaks=%lu,%lu,%lu,%luKB hwm=%lu,%luKB generated=%lu,%lu,%lu\n",
-      baseline, after_pause, after_wait, after_resume, after_cleanup,
-      cancel_after_pause, isolated_server, baseline_fds, after_cleanup_fds,
-      peak_at_pause, peak_after_wait, peak_after_resume,
-      peak_after_cleanup,
-      baseline_hwm, after_hwm,
-      (unsigned long)generated_at_pause,
-      (unsigned long)generated_after_wait,
-      (unsigned long)counts->generated);
+  fprintf(stderr,
+          "curl h2 pause: baseline=%luKB paused=%luKB later=%luKB "
+          "resumed=%luKB cleanup=%luKB cancel=%d isolated=%d fds=%u,%u "
+          "peaks=%lu,%lu,%lu,%luKB hwm=%lu,%luKB generated=%lu,%lu,%lu\n",
+          baseline, after_pause, after_wait, after_resume, after_cleanup,
+          cancel_after_pause, isolated_server, baseline_fds, after_cleanup_fds,
+          peak_at_pause, peak_after_wait, peak_after_resume, peak_after_cleanup,
+          baseline_hwm, after_hwm, (unsigned long)generated_at_pause,
+          (unsigned long)generated_after_wait,
+          (unsigned long)counts->generated);
   assert(counts->accepted == CONCURRENT_TRANSFERS);
   assert(counts->saw_request == CONCURRENT_TRANSFERS);
   assert(counts->negotiated_h2 == CONCURRENT_TRANSFERS);

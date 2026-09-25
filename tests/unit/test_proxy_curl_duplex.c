@@ -25,9 +25,7 @@ struct transfer_state {
   size_t response_size;
 };
 
-static void *
-server_main(void *arg)
-{
+static void *server_main(void *arg) {
   static const char first_reply[] =
       "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
       "Connection: close\r\n\r\n4\r\npong\r\n";
@@ -46,8 +44,8 @@ server_main(void *arg)
   assert(fd >= 0);
   timeout.tv_sec = 5;
   timeout.tv_usec = 0;
-  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-      sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
   used = 0;
   input[0] = '\0';
   body = NULL;
@@ -62,7 +60,7 @@ server_main(void *arg)
   assert(body != NULL);
   assert(strstr(input, "POST /duplex HTTP/1.1\r\n") != NULL);
   assert(strstr(input, "Content-Length: 8\r\n") != NULL ||
-      strstr(input, "content-length: 8\r\n") != NULL);
+         strstr(input, "content-length: 8\r\n") != NULL);
   body += 4;
   body_size = used - (size_t)(body - input);
   while (body_size < 4) {
@@ -75,7 +73,7 @@ server_main(void *arg)
   if (body_size >= 4 && memcmp(body, "ABCD", 4) == 0) {
     server->first_body_seen = 1;
     assert(send(fd, first_reply, sizeof(first_reply) - 1, 0) ==
-        (ssize_t)(sizeof(first_reply) - 1));
+           (ssize_t)(sizeof(first_reply) - 1));
   }
   while (body_size < 8) {
     got = recv(fd, input + used, sizeof(input) - 1 - used, 0);
@@ -92,9 +90,7 @@ server_main(void *arg)
   return NULL;
 }
 
-static void
-start_server(struct duplex_server *server)
-{
+static void start_server(struct duplex_server *server) {
   struct sockaddr_in addr;
   socklen_t size;
 
@@ -112,9 +108,7 @@ start_server(struct duplex_server *server)
   assert(pthread_create(&server->thread, NULL, server_main, server) == 0);
 }
 
-static size_t
-upload(char *buffer, size_t size, size_t items, void *arg)
-{
+static size_t upload(char *buffer, size_t size, size_t items, void *arg) {
   struct transfer_state *state;
 
   state = (struct transfer_state *)arg;
@@ -133,9 +127,7 @@ upload(char *buffer, size_t size, size_t items, void *arg)
   return 4;
 }
 
-static size_t
-download(char *buffer, size_t size, size_t items, void *arg)
-{
+static size_t download(char *buffer, size_t size, size_t items, void *arg) {
   struct transfer_state *state;
   size_t amount;
 
@@ -149,9 +141,7 @@ download(char *buffer, size_t size, size_t items, void *arg)
   return amount;
 }
 
-int
-main(void)
-{
+int main(void) {
   struct duplex_server server;
   struct transfer_state state;
   struct curl_slist *headers;
@@ -175,24 +165,24 @@ main(void)
   headers = curl_slist_append(headers, "Expect:");
   assert(headers != NULL);
   assert(snprintf(url, sizeof(url), "http://127.0.0.1:%u/duplex",
-      (unsigned)server.port) > 0);
+                  (unsigned)server.port) > 0);
   assert(curl_easy_setopt(easy, CURLOPT_URL, url) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_UPLOAD, 1L) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, "POST") == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE,
-      (curl_off_t)8) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE, (curl_off_t)8) ==
+         CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_READFUNCTION, upload) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_READDATA, &state) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, download) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_WRITEDATA, &state) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
-      CURL_HTTP_VERSION_1_1) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1) ==
+         CURLE_OK);
   assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
   assert(curl_multi_perform(multi, &running) == CURLM_OK);
-  for (attempt = 0; attempt < 30 && running > 0 &&
-      state.response_size < 4; attempt++) {
+  for (attempt = 0; attempt < 30 && running > 0 && state.response_size < 4;
+       attempt++) {
     assert(curl_multi_poll(multi, NULL, 0, 100, &numfds) == CURLM_OK);
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
   }
@@ -212,14 +202,14 @@ main(void)
   assert(pthread_join(server.thread, NULL) == 0);
   assert(close(server.listener) == 0);
   fprintf(stderr,
-      "curl duplex: early=%d response=%lu first_upload=%d second_upload=%d "
-      "running=%d result=%d\n",
-      state.saw_response_before_resume, (unsigned long)state.response_size,
-      server.first_body_seen, server.second_body_seen, running, result);
-  return state.saw_response_before_resume &&
-      state.response_size == 8 &&
-      memcmp(state.response, "pongdone", 8) == 0 &&
-      server.first_body_seen && server.second_body_seen &&
-      running == 0 && result == CURLE_OK
-      ? 0 : 1;
+          "curl duplex: early=%d response=%lu first_upload=%d second_upload=%d "
+          "running=%d result=%d\n",
+          state.saw_response_before_resume, (unsigned long)state.response_size,
+          server.first_body_seen, server.second_body_seen, running, result);
+  return state.saw_response_before_resume && state.response_size == 8 &&
+                 memcmp(state.response, "pongdone", 8) == 0 &&
+                 server.first_body_seen && server.second_body_seen &&
+                 running == 0 && result == CURLE_OK
+             ? 0
+             : 1;
 }

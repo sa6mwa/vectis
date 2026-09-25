@@ -15,9 +15,7 @@ struct echo_server {
   pthread_t thread;
 };
 
-static void *
-echo_main(void *arg)
-{
+static void *echo_main(void *arg) {
   struct echo_server *server;
   char bytes[4];
   int fd;
@@ -34,9 +32,7 @@ echo_main(void *arg)
   return NULL;
 }
 
-static void
-start_echo(struct echo_server *server)
-{
+static void start_echo(struct echo_server *server) {
   struct sockaddr_in addr;
   socklen_t size;
 
@@ -53,9 +49,7 @@ start_echo(struct echo_server *server)
   assert(pthread_create(&server->thread, NULL, echo_main, server) == 0);
 }
 
-static void
-wait_socket(curl_socket_t fd, short events)
-{
+static void wait_socket(curl_socket_t fd, short events) {
   struct pollfd item;
 
   item.fd = (int)fd;
@@ -63,9 +57,7 @@ wait_socket(curl_socket_t fd, short events)
   assert(poll(&item, 1, 1000) > 0);
 }
 
-int
-main(void)
-{
+int main(void) {
   struct echo_server server;
   CURLM *multi;
   CURL *easy;
@@ -87,11 +79,11 @@ main(void)
   easy = curl_easy_init();
   assert(multi != NULL && easy != NULL);
   assert(snprintf(url, sizeof(url), "http://127.0.0.1:%u/",
-      (unsigned)server.port) > 0);
+                  (unsigned)server.port) > 0);
   assert(curl_easy_setopt(easy, CURLOPT_URL, url) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 1L) == CURLE_OK);
-  assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
-      CURL_HTTP_VERSION_1_1) == CURLE_OK);
+  assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1) ==
+         CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
   assert(curl_multi_perform(multi, &running) == CURLM_OK);

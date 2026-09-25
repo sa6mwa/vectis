@@ -11,10 +11,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "vectis_internal.h"
 #include <kore/http.h>
 #include <kore/kore.h>
 #include <vectis/vectis.h>
-#include "vectis_internal.h"
 
 struct probe_state {
   struct http_request *req;
@@ -51,8 +51,8 @@ struct chunk_state {
   size_t pipeline_length;
 };
 
-extern void vectis_kore_set_prebody_probe(
-    int (*probe)(struct http_request *, const void *, size_t));
+extern void vectis_kore_set_prebody_probe(int (*probe)(struct http_request *,
+                                                       const void *, size_t));
 
 static const char raw_path[] = "/raw-target/a%2Fb/%2e/c";
 static const char raw_query[] = "q=1&q=2&plus=%2B&empty=";
@@ -64,12 +64,11 @@ static vectis_app *probe_app;
 static int probe_proxy_first;
 
 static vectis_status proxy_marker_reply(vectis_app *app,
-    vectis_request *request, vectis_response *response, void *userdata,
-    vectis_error *error);
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error);
 
-static int
-probe_connection_handle(struct connection *c)
-{
+static int probe_connection_handle(struct connection *c) {
   if ((c->evt.flags & KORE_EVENT_READ) && !net_recv_flush(c))
     return KORE_RESULT_ERROR;
   if ((c->evt.flags & KORE_EVENT_WRITE) && !net_send_flush(c))
@@ -77,9 +76,7 @@ probe_connection_handle(struct connection *c)
   return KORE_RESULT_OK;
 }
 
-static void
-probe_finish(struct connection *c)
-{
+static void probe_finish(struct connection *c) {
   struct probe_state *state;
 
   state = (struct probe_state *)c->hdlr_extra;
@@ -100,9 +97,7 @@ probe_finish(struct connection *c)
   http_start_recv(c);
 }
 
-static int
-probe_recv(struct netbuf *nb)
-{
+static int probe_recv(struct netbuf *nb) {
   struct connection *c;
   struct probe_state *state;
 
@@ -117,9 +112,7 @@ probe_recv(struct netbuf *nb)
   return KORE_RESULT_OK;
 }
 
-static int
-raw_recv(struct netbuf *nb)
-{
+static int raw_recv(struct netbuf *nb) {
   struct connection *c;
 
   c = nb->owner;
@@ -128,15 +121,11 @@ raw_recv(struct netbuf *nb)
   return KORE_RESULT_OK;
 }
 
-static unsigned char
-chunk_byte(size_t offset)
-{
+static unsigned char chunk_byte(size_t offset) {
   return (unsigned char)((offset * 73u + 19u) & 0xffu);
 }
 
-static void
-chunk_finish(struct connection *c, struct chunk_state *state)
-{
+static void chunk_finish(struct connection *c, struct chunk_state *state) {
   assert(state->total == state->expected_total);
   assert(state->trailer_seen == 1);
   if (state->expect_initial_pipeline)
@@ -157,21 +146,16 @@ chunk_finish(struct connection *c, struct chunk_state *state)
   http_start_recv(c);
 }
 
-static size_t
-chunk_next_window(struct chunk_state *state)
-{
-  if (state->phase == CHUNK_DATA &&
-      state->remaining < CHUNK_WINDOW_SIZE)
+static size_t chunk_next_window(struct chunk_state *state) {
+  if (state->phase == CHUNK_DATA && state->remaining < CHUNK_WINDOW_SIZE)
     return state->remaining;
   if (state->phase == CHUNK_DATA)
     return CHUNK_WINDOW_SIZE;
   return 1;
 }
 
-static int
-chunk_feed(struct connection *c, struct chunk_state *state,
-    const unsigned char *data, size_t length)
-{
+static int chunk_feed(struct connection *c, struct chunk_state *state,
+                      const unsigned char *data, size_t length) {
   unsigned long parsed;
   size_t amount;
   size_t index;
@@ -246,9 +230,7 @@ chunk_feed(struct connection *c, struct chunk_state *state,
   return 0;
 }
 
-static int
-chunk_recv(struct netbuf *nb)
-{
+static int chunk_recv(struct netbuf *nb) {
   struct connection *c;
   struct chunk_state *state;
 
@@ -260,9 +242,8 @@ chunk_recv(struct netbuf *nb)
   return KORE_RESULT_OK;
 }
 
-static int
-probe_prebody(struct http_request *req, const void *data, size_t len)
-{
+static int probe_prebody(struct http_request *req, const void *data,
+                         size_t len) {
   struct connection *c;
   struct http_header *header;
   struct probe_state *state;
@@ -305,13 +286,13 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     live_upload = 0;
     raw_fallback_eligible = 0;
     allow = NULL;
-    route_method = req->method == HTTP_METHOD_POST ? VECTIS_HTTP_POST :
-        VECTIS_HTTP_GET;
-    status = vectis_internal_kore_decode_request_path(
-        req->path, &decoded, &probe_error);
+    route_method =
+        req->method == HTTP_METHOD_POST ? VECTIS_HTTP_POST : VECTIS_HTTP_GET;
+    status = vectis_internal_kore_decode_request_path(req->path, &decoded,
+                                                      &probe_error);
     if (status == VECTIS_OK) {
-      path_status = vectis_internal_validate_request_path(
-          decoded, &probe_error);
+      path_status =
+          vectis_internal_validate_request_path(decoded, &probe_error);
       if (path_status != VECTIS_OK && path_status != VECTIS_ERR_INVALID) {
         free(decoded);
         vectis_internal_request_free(probe_request);
@@ -319,9 +300,9 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
       }
       raw_fallback_eligible = path_status == VECTIS_ERR_INVALID;
       if (path_status == VECTIS_OK && route_method == VECTIS_HTTP_GET) {
-        status = vectis_internal_match_websocket(
-            probe_app, route_method, decoded, probe_request, &ws_match,
-            &probe_error);
+        status = vectis_internal_match_websocket(probe_app, route_method,
+                                                 decoded, probe_request,
+                                                 &ws_match, &probe_error);
         if (status == VECTIS_OK) {
           free(decoded);
           vectis_internal_request_free(probe_request);
@@ -335,8 +316,7 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
       }
       vectis_error_clear(&probe_error);
       status = vectis_internal_static_route_method_denied(
-          probe_app, route_method, decoded, &denied, &allow,
-          &probe_error);
+          probe_app, route_method, decoded, &denied, &allow, &probe_error);
       if (status == VECTIS_OK && !denied)
         status = vectis_internal_route_body_policy(
             probe_app, route_method, decoded, &policy, &live_upload, &selected,
@@ -346,30 +326,29 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     }
     if (raw_fallback_eligible && status == VECTIS_ERR_INVALID && !denied) {
       status = vectis_internal_proxy_raw_path_match(
-          probe_app, route_method, req->path, proxy_marker_reply,
-          probe_request, NULL, &probe_error);
+          probe_app, route_method, req->path, proxy_marker_reply, probe_request,
+          NULL, &probe_error);
       if (status == VECTIS_OK)
         selected = proxy_marker_reply;
     }
     if (route_method == VECTIS_HTTP_POST &&
-        strcmp(req->path, "/proxy-select/upload/a") == 0 &&
-        status == VECTIS_OK)
+        strcmp(req->path, "/proxy-select/upload/a") == 0 && status == VECTIS_OK)
       assert(live_upload == !probe_proxy_first);
     if (route_method == VECTIS_HTTP_POST &&
         strcmp(req->path, "/proxy-select/upload-reverse/a") == 0 &&
         status == VECTIS_OK)
       assert(live_upload == probe_proxy_first);
-    if (status == VECTIS_OK && !denied &&
-        selected == proxy_marker_reply) {
+    if (status == VECTIS_OK && !denied && selected == proxy_marker_reply) {
       static const char marker[] = "proxy-prebody-selected";
 
       if (strcmp(req->path, "/proxy-select/a") == 0 ||
           strcmp(req->path, "/proxy-select/%41") == 0)
         assert(strcmp(vectis_request_path_param(probe_request, "id"),
-            strcmp(req->path, "/proxy-select/a") == 0 ? "a" : "A") == 0);
+                      strcmp(req->path, "/proxy-select/a") == 0 ? "a" : "A") ==
+               0);
       if (strcmp(req->path, "/proxy-select/a%2Fb") == 0)
         assert(strcmp(vectis_request_path_param(probe_request, "id"),
-            "a%2Fb") == 0);
+                      "a%2Fb") == 0);
       req->owner->flags |= CONN_CLOSE_EMPTY;
       http_response(req, 200, marker, sizeof(marker) - 1);
       free(decoded);
@@ -394,12 +373,11 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     static const char marker[] = "raw-target-preserved";
     int preserved;
 
-    preserved = strcmp(req->path, raw_path) == 0 &&
-        req->query_string != NULL &&
-        strcmp(req->query_string, raw_query) == 0;
+    preserved = strcmp(req->path, raw_path) == 0 && req->query_string != NULL &&
+                strcmp(req->query_string, raw_query) == 0;
     req->owner->flags |= CONN_CLOSE_EMPTY;
-    http_response(req, preserved ? 200 : 400,
-        preserved ? marker : "raw-target-changed",
+    http_response(
+        req, preserved ? 200 : 400, preserved ? marker : "raw-target-changed",
         preserved ? sizeof(marker) - 1 : sizeof("raw-target-changed") - 1);
     return KORE_RESULT_ERROR;
   }
@@ -457,16 +435,16 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     framing_seen = 0;
     if (strcmp(req->path, "/framing-cl-te") == 0)
       framing_seen = length_count == 1 && encoding_count == 1 &&
-          strcmp(first_length, "4") == 0 &&
-          strcmp(transfer_encoding, "chunked") == 0;
+                     strcmp(first_length, "4") == 0 &&
+                     strcmp(transfer_encoding, "chunked") == 0;
     else if (strcmp(req->path, "/framing-duplicate-cl") == 0)
       framing_seen = length_count == 2 && encoding_count == 0 &&
-          strcmp(first_length, "4") == 0 &&
-          strcmp(second_length, "5") == 0;
+                     strcmp(first_length, "4") == 0 &&
+                     strcmp(second_length, "5") == 0;
     else if (strcmp(req->path, "/framing-duplicate-host") == 0)
       framing_seen = length_count == 0 && host_count == 1 &&
-          strcmp(req->host, "localhost") == 0 &&
-          strcmp(second_host, "attacker.invalid") == 0;
+                     strcmp(req->host, "localhost") == 0 &&
+                     strcmp(second_host, "attacker.invalid") == 0;
     else if (strcmp(req->path, "/framing-http10") == 0)
       framing_seen = (req->flags & HTTP_VERSION_1_0) != 0;
     if (framing_seen) {
@@ -506,10 +484,9 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
     c->http_timeout = 0;
     chunk = kore_calloc(1, sizeof(*chunk));
     chunk->req = req;
-    chunk->expect_initial_pipeline =
-        strcmp(req->path, "/chunked-small") == 0;
-    chunk->expected_total = chunk->expect_initial_pipeline
-        ? 4 : CHUNK_BODY_SIZE;
+    chunk->expect_initial_pipeline = strcmp(req->path, "/chunked-small") == 0;
+    chunk->expected_total =
+        chunk->expect_initial_pipeline ? 4 : CHUNK_BODY_SIZE;
     c->hdlr_extra = chunk;
     c->flags |= CONN_IS_BUSY;
     c->handle = probe_connection_handle;
@@ -521,9 +498,8 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
   if (strcmp(req->path, "/probe") != 0 &&
       strcmp(req->path, "/probe-continue") != 0)
     return KORE_RESULT_OK;
-  assert(req->method == HTTP_METHOD_POST ||
-      req->method == HTTP_METHOD_GET ||
-      req->method == HTTP_METHOD_OPTIONS);
+  assert(req->method == HTTP_METHOD_POST || req->method == HTTP_METHOD_GET ||
+         req->method == HTTP_METHOD_OPTIONS);
   assert(http_request_header_uint64(req, "content-length", &declared));
   assert(declared == 4);
   if (strcmp(req->path, "/probe-continue") == 0) {
@@ -560,32 +536,30 @@ probe_prebody(struct http_request *req, const void *data, size_t len)
   return KORE_RESULT_RETRY;
 }
 
-static vectis_status
-reply(vectis_app *app, vectis_request *request, vectis_response *response,
-    void *userdata, vectis_error *error)
-{
+static vectis_status reply(vectis_app *app, vectis_request *request,
+                           vectis_response *response, void *userdata,
+                           vectis_error *error) {
   (void)app;
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
-static vectis_status
-proxy_marker_reply(vectis_app *app, vectis_request *request,
-    vectis_response *response, void *userdata, vectis_error *error)
-{
+static vectis_status proxy_marker_reply(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
   (void)app;
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 500, "text/plain",
-      "proxy marker reached ordinary dispatch", error);
+                              "proxy marker reached ordinary dispatch", error);
 }
 
-static void
-selection_ws_message(vectis_app *app, vectis_websocket *websocket,
-    vectis_websocket_opcode opcode, const void *data, size_t size,
-    void *userdata)
-{
+static void selection_ws_message(vectis_app *app, vectis_websocket *websocket,
+                                 vectis_websocket_opcode opcode,
+                                 const void *data, size_t size,
+                                 void *userdata) {
   (void)app;
   (void)websocket;
   (void)opcode;
@@ -598,10 +572,10 @@ struct selection_upload_state {
   size_t size;
 };
 
-static vectis_status
-selection_upload_open(vectis_app *app, vectis_request *request,
-    void *userdata, void **state, vectis_error *error)
-{
+static vectis_status selection_upload_open(vectis_app *app,
+                                           vectis_request *request,
+                                           void *userdata, void **state,
+                                           vectis_error *error) {
   struct selection_upload_state *upload;
 
   (void)app;
@@ -617,11 +591,11 @@ selection_upload_open(vectis_app *app, vectis_request *request,
   return VECTIS_OK;
 }
 
-static vectis_status
-selection_upload_write(vectis_app *app, vectis_request *request,
-    const void *data, size_t size, void *state, void *userdata,
-    vectis_error *error)
-{
+static vectis_status selection_upload_write(vectis_app *app,
+                                            vectis_request *request,
+                                            const void *data, size_t size,
+                                            void *state, void *userdata,
+                                            vectis_error *error) {
   struct selection_upload_state *upload;
   vectis_bytes body;
 
@@ -643,11 +617,11 @@ selection_upload_write(vectis_app *app, vectis_request *request,
   return VECTIS_OK;
 }
 
-static vectis_status
-selection_upload_finish(vectis_app *app, vectis_request *request,
-    vectis_response *response, void *state, void *userdata,
-    vectis_error *error)
-{
+static vectis_status selection_upload_finish(vectis_app *app,
+                                             vectis_request *request,
+                                             vectis_response *response,
+                                             void *state, void *userdata,
+                                             vectis_error *error) {
   struct selection_upload_state *upload;
 
   (void)app;
@@ -656,25 +630,21 @@ selection_upload_finish(vectis_app *app, vectis_request *request,
   upload = (struct selection_upload_state *)state;
   if (upload == NULL || upload->size != sizeof("data") - 1u)
     return vectis_response_text(response, 422, "text/plain",
-        "wrong live upload body", error);
-  return vectis_response_text(response, 200, "text/plain",
-      "live-upload-winner", error);
+                                "wrong live upload body", error);
+  return vectis_response_text(response, 200, "text/plain", "live-upload-winner",
+                              error);
 }
 
-static void
-selection_upload_close(vectis_app *app, vectis_request *request,
-    void *state, void *userdata)
-{
+static void selection_upload_close(vectis_app *app, vectis_request *request,
+                                   void *state, void *userdata) {
   (void)app;
   (void)request;
   (void)userdata;
   free(state);
 }
 
-static void
-register_proxy_selection_routes(vectis_app *app, int proxy_first,
-    vectis_error *error)
-{
+static void register_proxy_selection_routes(vectis_app *app, int proxy_first,
+                                            vectis_error *error) {
   vectis_route_config ordinary;
   vectis_route_config proxy;
   vectis_route_config static_overlap_proxy;
@@ -687,8 +657,8 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
   probe_proxy_first = proxy_first;
   ordinary = vectis_route(VECTIS_HTTP_GET, "^/proxy-select/.*$", reply, NULL);
   ordinary.path_kind = VECTIS_ROUTE_PATH_REGEX;
-  proxy = vectis_route(VECTIS_HTTP_GET, "/proxy-select/:id",
-      proxy_marker_reply, NULL);
+  proxy = vectis_route(VECTIS_HTTP_GET, "/proxy-select/:id", proxy_marker_reply,
+                       NULL);
   proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
   if (proxy_first) {
     assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
@@ -698,17 +668,16 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
     assert(vectis_register_route(app, &proxy, error) == VECTIS_OK);
   }
   static_overlap_proxy = vectis_route(
-      VECTIS_HTTP_GET, "^/proxy-select/static/.*$", proxy_marker_reply,
-      NULL);
+      VECTIS_HTTP_GET, "^/proxy-select/static/.*$", proxy_marker_reply, NULL);
   static_overlap_proxy.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &static_overlap_proxy, error) == VECTIS_OK);
-  upload_proxy = vectis_route(VECTIS_HTTP_POST,
-      "^/proxy-select/upload/.*$", proxy_marker_reply, NULL);
+  upload_proxy = vectis_route(VECTIS_HTTP_POST, "^/proxy-select/upload/.*$",
+                              proxy_marker_reply, NULL);
   upload_proxy.path_kind = VECTIS_ROUTE_PATH_REGEX;
-  upload = vectis_stream_upload_route(VECTIS_HTTP_POST,
-      "/proxy-select/upload/a", selection_upload_open,
-      selection_upload_write, selection_upload_finish,
-      selection_upload_close, NULL);
+  upload = vectis_stream_upload_route(
+      VECTIS_HTTP_POST, "/proxy-select/upload/a", selection_upload_open,
+      selection_upload_write, selection_upload_finish, selection_upload_close,
+      NULL);
   upload.body.max_bytes = 4u;
   if (proxy_first) {
     assert(vectis_register_route(app, &upload_proxy, error) == VECTIS_OK);
@@ -717,32 +686,31 @@ register_proxy_selection_routes(vectis_app *app, int proxy_first,
     assert(app->upload_stream(app, &upload, error) == VECTIS_OK);
     assert(vectis_register_route(app, &upload_proxy, error) == VECTIS_OK);
   }
-  reverse_upload_proxy = vectis_route(VECTIS_HTTP_POST,
-      "^/proxy-select/upload-reverse/.*$", proxy_marker_reply, NULL);
+  reverse_upload_proxy =
+      vectis_route(VECTIS_HTTP_POST, "^/proxy-select/upload-reverse/.*$",
+                   proxy_marker_reply, NULL);
   reverse_upload_proxy.path_kind = VECTIS_ROUTE_PATH_REGEX;
-  reverse_upload = vectis_stream_upload_route(VECTIS_HTTP_POST,
-      "/proxy-select/upload-reverse/a", selection_upload_open,
-      selection_upload_write, selection_upload_finish,
-      selection_upload_close, NULL);
+  reverse_upload = vectis_stream_upload_route(
+      VECTIS_HTTP_POST, "/proxy-select/upload-reverse/a", selection_upload_open,
+      selection_upload_write, selection_upload_finish, selection_upload_close,
+      NULL);
   reverse_upload.body.max_bytes = 4u;
   if (proxy_first) {
     assert(app->upload_stream(app, &reverse_upload, error) == VECTIS_OK);
     assert(vectis_register_route(app, &reverse_upload_proxy, error) ==
-        VECTIS_OK);
+           VECTIS_OK);
   } else {
     assert(vectis_register_route(app, &reverse_upload_proxy, error) ==
-        VECTIS_OK);
+           VECTIS_OK);
     assert(app->upload_stream(app, &reverse_upload, error) == VECTIS_OK);
   }
-  websocket = vectis_websocket_route(
-      "/proxy-select/ws", selection_ws_message, NULL);
+  websocket =
+      vectis_websocket_route("/proxy-select/ws", selection_ws_message, NULL);
   assert(app->websocket(app, &websocket, error) == VECTIS_OK);
 }
 
-static void
-register_proxy_static_overlap(vectis_app *app, const char *root,
-    vectis_error *error)
-{
+static void register_proxy_static_overlap(vectis_app *app, const char *root,
+                                          vectis_error *error) {
   vectis_static_directory_config mount;
 
   vectis_static_directory_config_init(&mount);
@@ -751,9 +719,7 @@ register_proxy_static_overlap(vectis_app *app, const char *root,
   assert(app->static_directory(app, &mount, error) == VECTIS_OK);
 }
 
-static unsigned short
-available_port(void)
-{
+static unsigned short available_port(void) {
   struct sockaddr_in addr;
   socklen_t size;
   int fd;
@@ -770,9 +736,7 @@ available_port(void)
   return ntohs(addr.sin_port);
 }
 
-static int
-connect_local(unsigned short port)
-{
+static int connect_local(unsigned short port) {
   struct sockaddr_in addr;
   int attempt;
   int fd;
@@ -793,9 +757,7 @@ connect_local(unsigned short port)
   return -1;
 }
 
-static unsigned
-response_count(const char *data)
-{
+static unsigned response_count(const char *data) {
   unsigned count;
   const char *p;
 
@@ -808,9 +770,7 @@ response_count(const char *data)
   return count;
 }
 
-static int
-check_request_halfclose_at_headers(unsigned short port)
-{
+static int check_request_halfclose_at_headers(unsigned short port) {
   static const char request[] =
       "GET /one HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
   struct pollfd watch;
@@ -821,14 +781,13 @@ check_request_halfclose_at_headers(unsigned short port)
 
   fd = connect_local(port);
   assert(send(fd, request, sizeof(request) - 1, 0) ==
-      (ssize_t)(sizeof(request) - 1));
+         (ssize_t)(sizeof(request) - 1));
   assert(shutdown(fd, SHUT_WR) == 0);
   watch.fd = fd;
   watch.events = POLLIN;
   used = 0;
   response[0] = '\0';
-  while (used < sizeof(response) - 1 &&
-      poll(&watch, 1, 1000) > 0) {
+  while (used < sizeof(response) - 1 && poll(&watch, 1, 1000) > 0) {
     got = recv(fd, response + used, sizeof(response) - 1 - used, 0);
     if (got <= 0)
       break;
@@ -837,12 +796,10 @@ check_request_halfclose_at_headers(unsigned short port)
   }
   assert(close(fd) == 0);
   return strstr(response, "HTTP/1.1 200") != NULL &&
-      strstr(response, "ok") != NULL;
+         strstr(response, "ok") != NULL;
 }
 
-static void
-send_exact(int fd, const void *data, size_t length)
-{
+static void send_exact(int fd, const void *data, size_t length) {
   const unsigned char *bytes;
   size_t sent;
   ssize_t amount;
@@ -856,16 +813,13 @@ send_exact(int fd, const void *data, size_t length)
   }
 }
 
-static int
-check_chunked_ingress(unsigned short port)
-{
+static int check_chunked_ingress(unsigned short port) {
   static const char request[] =
       "POST /chunked HTTP/1.1\r\nHost: localhost\r\n"
       "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n\r\n"
       "2000\r\n";
-  static const char ending[] =
-      "0\r\nX-Trace: done\r\n\r\n"
-      "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char ending[] = "0\r\nX-Trace: done\r\n\r\n"
+                               "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
   struct timeval timeout;
   struct pollfd watch;
   unsigned char body[CHUNK_WINDOW_SIZE];
@@ -880,23 +834,22 @@ check_chunked_ingress(unsigned short port)
   fd = connect_local(port);
   timeout.tv_sec = 10;
   timeout.tv_usec = 0;
-  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
-      &timeout, sizeof(timeout)) == 0);
-  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
-      &timeout, sizeof(timeout)) == 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) ==
+         0);
   send_exact(fd, request, sizeof(request) - 1);
   for (index = 0; index < 4; index++)
     body[index] = chunk_byte(index);
   send_exact(fd, body, 4);
   usleep(10000u);
-  for (offset = 0; offset < CHUNK_BODY_SIZE;
-      offset += CHUNK_WINDOW_SIZE) {
+  for (offset = 0; offset < CHUNK_BODY_SIZE; offset += CHUNK_WINDOW_SIZE) {
     if (offset > 0)
       send_exact(fd, "2000\r\n", 6);
     for (index = offset == 0 ? 4 : 0; index < sizeof(body); index++)
       body[index] = chunk_byte(offset + index);
     send_exact(fd, body + (offset == 0 ? 4 : 0),
-        sizeof(body) - (offset == 0 ? 4 : 0));
+               sizeof(body) - (offset == 0 ? 4 : 0));
     send_exact(fd, "\r\n", 2);
   }
   send_exact(fd, ending, sizeof(ending) - 1);
@@ -915,21 +868,18 @@ check_chunked_ingress(unsigned short port)
   }
   ok = response_count(output) == 2 && strstr(output, "done") != NULL;
   fprintf(stderr, "chunked 1 MiB ingress + pipelined GET: %s\n",
-      ok ? "passed" : "failed");
+          ok ? "passed" : "failed");
   assert(close(fd) == 0);
   return ok;
 }
 
-static int
-check_small_chunked_ingress(unsigned short port, int tls)
-{
+static int check_small_chunked_ingress(unsigned short port, int tls) {
   static const char prefix[] =
       "POST /chunked-small HTTP/1.1\r\nHost: localhost\r\n"
       "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n\r\n"
       "4\r\n";
-  static const char suffix[] =
-      "\r\n0\r\nX-Trace: done\r\n\r\n"
-      "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char suffix[] = "\r\n0\r\nX-Trace: done\r\n\r\n"
+                               "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
   struct pollfd watch;
   SSL_CTX *ctx;
   SSL *ssl;
@@ -974,8 +924,7 @@ check_small_chunked_ingress(unsigned short port, int tls)
     if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
       break;
     if (tls)
-      got = SSL_read(ssl, output + used,
-          (int)(sizeof(output) - 1 - used));
+      got = SSL_read(ssl, output + used, (int)(sizeof(output) - 1 - used));
     else
       got = recv(fd, output + used, sizeof(output) - 1 - used, 0);
     if (got <= 0)
@@ -985,7 +934,7 @@ check_small_chunked_ingress(unsigned short port, int tls)
   }
   ok = response_count(output) == 2 && strstr(output, "done") != NULL;
   fprintf(stderr, "%s borrowed chunked body + pipelined GET: %s\n",
-      tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
+          tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
   if (ssl != NULL)
     SSL_free(ssl);
   if (ctx != NULL)
@@ -994,9 +943,8 @@ check_small_chunked_ingress(unsigned short port, int tls)
   return ok;
 }
 
-static int
-check_local_rejection(unsigned short port, const char *path, int status)
-{
+static int check_local_rejection(unsigned short port, const char *path,
+                                 int status) {
   struct pollfd watch;
   char wire[256];
   char output[1024];
@@ -1006,8 +954,9 @@ check_local_rejection(unsigned short port, const char *path, int status)
 
   fd = connect_local(port);
   assert(snprintf(wire, sizeof(wire),
-      "POST %s HTTP/1.1\r\nHost: localhost\r\n"
-      "Content-Length: 4\r\n\r\n", path) > 0);
+                  "POST %s HTTP/1.1\r\nHost: localhost\r\n"
+                  "Content-Length: 4\r\n\r\n",
+                  path) > 0);
   assert(send(fd, wire, strlen(wire), 0) == (ssize_t)strlen(wire));
   watch.fd = fd;
   watch.events = POLLIN;
@@ -1023,9 +972,7 @@ check_local_rejection(unsigned short port, const char *path, int status)
   return strstr(output, marker) != NULL;
 }
 
-static int
-check_raw_handoff(unsigned short port, int tls)
-{
+static int check_raw_handoff(unsigned short port, int tls) {
   static const char frame[] = "\x81\x85\x01\x02\x03\x04igohn";
   static const char wire[] =
       "GET /raw HTTP/1.1\r\nHost: localhost\r\n"
@@ -1055,10 +1002,9 @@ check_raw_handoff(unsigned short port, int tls)
     assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
     assert(SSL_connect(ssl) == 1);
     assert(SSL_write(ssl, wire, (int)(sizeof(wire) - 1)) ==
-        (int)(sizeof(wire) - 1));
+           (int)(sizeof(wire) - 1));
   } else {
-    assert(send(fd, wire, sizeof(wire) - 1, 0) ==
-        (ssize_t)(sizeof(wire) - 1));
+    assert(send(fd, wire, sizeof(wire) - 1, 0) == (ssize_t)(sizeof(wire) - 1));
   }
   watch.fd = fd;
   watch.events = POLLIN;
@@ -1077,8 +1023,8 @@ check_raw_handoff(unsigned short port, int tls)
     output[used] = '\0';
   }
   ok = strstr(output, " 101 ") != NULL && strstr(output, frame) != NULL;
-  fprintf(stderr, "%s early WebSocket frame: %s\n",
-      tls ? "TLS" : "cleartext", ok ? "preserved" : "missing");
+  fprintf(stderr, "%s early WebSocket frame: %s\n", tls ? "TLS" : "cleartext",
+          ok ? "preserved" : "missing");
   if (ssl != NULL)
     SSL_free(ssl);
   if (ctx != NULL)
@@ -1087,9 +1033,7 @@ check_raw_handoff(unsigned short port, int tls)
   return ok;
 }
 
-static int
-check_tls_handoff(unsigned short port, const char *wire)
-{
+static int check_tls_handoff(unsigned short port, const char *wire) {
   SSL_CTX *ctx;
   SSL *ssl;
   struct pollfd watch;
@@ -1123,17 +1067,15 @@ check_tls_handoff(unsigned short port, const char *wire)
     output[used] = '\0';
   }
   count = response_count(output);
-  fprintf(stderr, "TLS ordinary + takeover + ordinary responses: %u\n",
-      count);
+  fprintf(stderr, "TLS ordinary + takeover + ordinary responses: %u\n", count);
   SSL_free(ssl);
   SSL_CTX_free(ctx);
   assert(close(fd) == 0);
   return count == 3 && strstr(output, "data") != NULL;
 }
 
-static int
-check_framed_method_handoff(unsigned short port, const char *method, int tls)
-{
+static int check_framed_method_handoff(unsigned short port, const char *method,
+                                       int tls) {
   SSL_CTX *ctx;
   SSL *ssl;
   struct pollfd watch;
@@ -1146,10 +1088,11 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
   int ok;
 
   length = snprintf(wire, sizeof(wire),
-      "%s /probe HTTP/1.1\r\nHostile: attacker.invalid\r\n"
-      "Host: localhost\r\n"
-      "Content-Length: 4\r\n\r\ndata"
-      "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n", method);
+                    "%s /probe HTTP/1.1\r\nHostile: attacker.invalid\r\n"
+                    "Host: localhost\r\n"
+                    "Content-Length: 4\r\n\r\ndata"
+                    "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                    method);
   assert(length > 0 && (size_t)length < sizeof(wire));
   fd = connect_local(port);
   ctx = NULL;
@@ -1176,8 +1119,7 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
     if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
       break;
     if (tls)
-      got = SSL_read(ssl, output + used,
-          (int)(sizeof(output) - 1 - used));
+      got = SSL_read(ssl, output + used, (int)(sizeof(output) - 1 - used));
     else
       got = recv(fd, output + used, sizeof(output) - 1 - used, 0);
     if (got <= 0)
@@ -1185,10 +1127,10 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
     used += (size_t)got;
     output[used] = '\0';
   }
-  ok = response_count(output) == 2 &&
-      strstr(output, "data") != NULL && strstr(output, "ok") != NULL;
+  ok = response_count(output) == 2 && strstr(output, "data") != NULL &&
+       strstr(output, "ok") != NULL;
   fprintf(stderr, "%s framed %s + pipelined GET: %s\n",
-      tls ? "TLS" : "cleartext", method, ok ? "passed" : "failed");
+          tls ? "TLS" : "cleartext", method, ok ? "passed" : "failed");
   if (ssl != NULL)
     SSL_free(ssl);
   if (ctx != NULL)
@@ -1197,9 +1139,7 @@ check_framed_method_handoff(unsigned short port, const char *method, int tls)
   return ok;
 }
 
-static int
-check_expect_continue_handoff(unsigned short port, int tls)
-{
+static int check_expect_continue_handoff(unsigned short port, int tls) {
   static const char headers[] =
       "POST /probe-continue HTTP/1.1\r\nHost: localhost\r\n"
       "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n";
@@ -1227,7 +1167,7 @@ check_expect_continue_handoff(unsigned short port, int tls)
     assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
     assert(SSL_connect(ssl) == 1);
     assert(SSL_write(ssl, headers, (int)(sizeof(headers) - 1u)) ==
-        (int)(sizeof(headers) - 1u));
+           (int)(sizeof(headers) - 1u));
   } else {
     send_exact(fd, headers, sizeof(headers) - 1u);
   }
@@ -1235,13 +1175,11 @@ check_expect_continue_handoff(unsigned short port, int tls)
   watch.events = POLLIN;
   used = 0;
   output[0] = '\0';
-  while (used < sizeof(output) - 1u &&
-      strstr(output, "\r\n\r\n") == NULL) {
+  while (used < sizeof(output) - 1u && strstr(output, "\r\n\r\n") == NULL) {
     if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
       break;
     if (tls)
-      got = SSL_read(ssl, output + used,
-          (int)(sizeof(output) - 1u - used));
+      got = SSL_read(ssl, output + used, (int)(sizeof(output) - 1u - used));
     else
       got = recv(fd, output + used, sizeof(output) - 1u - used, 0);
     if (got <= 0)
@@ -1252,9 +1190,8 @@ check_expect_continue_handoff(unsigned short port, int tls)
   ok = strcmp(output, "HTTP/1.1 100 Continue\r\n\r\n") == 0;
   if (ok) {
     if (tls) {
-      assert(SSL_write(ssl, body_and_next,
-          (int)(sizeof(body_and_next) - 1u)) ==
-          (int)(sizeof(body_and_next) - 1u));
+      assert(SSL_write(ssl, body_and_next, (int)(sizeof(body_and_next) - 1u)) ==
+             (int)(sizeof(body_and_next) - 1u));
     } else {
       send_exact(fd, body_and_next, sizeof(body_and_next) - 1u);
     }
@@ -1262,8 +1199,7 @@ check_expect_continue_handoff(unsigned short port, int tls)
       if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
         break;
       if (tls)
-        got = SSL_read(ssl, output + used,
-            (int)(sizeof(output) - 1u - used));
+        got = SSL_read(ssl, output + used, (int)(sizeof(output) - 1u - used));
       else
         got = recv(fd, output + used, sizeof(output) - 1u - used, 0);
       if (got <= 0)
@@ -1272,12 +1208,12 @@ check_expect_continue_handoff(unsigned short port, int tls)
       output[used] = '\0';
     }
     ok = response_count(output) == 2 && strstr(output, "data") != NULL &&
-        strstr(output, "ok") != NULL &&
-        strstr(output + sizeof("HTTP/1.1 100 Continue\r\n\r\n") - 1u,
-            "HTTP/1.1 100 Continue") == NULL;
+         strstr(output, "ok") != NULL &&
+         strstr(output + sizeof("HTTP/1.1 100 Continue\r\n\r\n") - 1u,
+                "HTTP/1.1 100 Continue") == NULL;
   }
   fprintf(stderr, "%s 100-continue + pipelined GET: %s\n",
-      tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
+          tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
   if (!ok)
     fprintf(stderr, "received: %s\n", output);
   if (ssl != NULL)
@@ -1288,13 +1224,10 @@ check_expect_continue_handoff(unsigned short port, int tls)
   return ok;
 }
 
-static int
-check_expect_rejection_close(unsigned short port, int tls)
-{
-  static const char wire[] =
-      "POST /forbidden HTTP/1.1\r\nHost: localhost\r\n"
-      "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n"
-      "dataGET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+static int check_expect_rejection_close(unsigned short port, int tls) {
+  static const char wire[] = "POST /forbidden HTTP/1.1\r\nHost: localhost\r\n"
+                             "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n"
+                             "dataGET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
   SSL_CTX *ctx;
   SSL *ssl;
   struct pollfd watch;
@@ -1320,7 +1253,7 @@ check_expect_rejection_close(unsigned short port, int tls)
     assert(SSL_set_tlsext_host_name(ssl, "localhost") == 1);
     assert(SSL_connect(ssl) == 1);
     assert(SSL_write(ssl, wire, (int)(sizeof(wire) - 1u)) ==
-        (int)(sizeof(wire) - 1u));
+           (int)(sizeof(wire) - 1u));
   } else {
     send_exact(fd, wire, sizeof(wire) - 1u);
   }
@@ -1334,8 +1267,7 @@ check_expect_rejection_close(unsigned short port, int tls)
     if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
       break;
     if (tls)
-      got = SSL_read(ssl, output + used,
-          (int)(sizeof(output) - 1u - used));
+      got = SSL_read(ssl, output + used, (int)(sizeof(output) - 1u - used));
     else
       got = recv(fd, output + used, sizeof(output) - 1u - used, 0);
     if (got <= 0) {
@@ -1351,13 +1283,12 @@ check_expect_rejection_close(unsigned short port, int tls)
     output[used] = '\0';
   }
   first403 = strstr(output, "HTTP/1.1 403");
-  ok = closed && first403 != NULL &&
-      strstr(output, "forbidden") != NULL &&
-      strstr(output, "connection: close") != NULL &&
-      strstr(output, "HTTP/1.1 100") == NULL &&
-      strstr(first403 + 1, "HTTP/1.1 ") == NULL;
+  ok = closed && first403 != NULL && strstr(output, "forbidden") != NULL &&
+       strstr(output, "connection: close") != NULL &&
+       strstr(output, "HTTP/1.1 100") == NULL &&
+       strstr(first403 + 1, "HTTP/1.1 ") == NULL;
   fprintf(stderr, "%s Expect rejection closes unread body: %s\n",
-      tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
+          tls ? "TLS" : "cleartext", ok ? "passed" : "failed");
   if (!ok)
     fprintf(stderr, "received: %s\nTLS error=%d\n", output, tls_error);
   if (ssl != NULL)
@@ -1368,11 +1299,9 @@ check_expect_rejection_close(unsigned short port, int tls)
   return ok;
 }
 
-static int
-check_prebody_wire_result(unsigned short port, const void *wire,
-    size_t wire_length, const char *path, int tls, int status,
-    const char *marker)
-{
+static int check_prebody_wire_result(unsigned short port, const void *wire,
+                                     size_t wire_length, const char *path,
+                                     int tls, int status, const char *marker) {
   SSL_CTX *ctx;
   SSL *ssl;
   struct pollfd watch;
@@ -1405,13 +1334,11 @@ check_prebody_wire_result(unsigned short port, const void *wire,
   used = 0;
   output[0] = '\0';
   assert(snprintf(status_text, sizeof(status_text), " %d ", status) > 0);
-  while (used < sizeof(output) - 1 &&
-      strstr(output, marker) == NULL) {
+  while (used < sizeof(output) - 1 && strstr(output, marker) == NULL) {
     if ((!tls || SSL_pending(ssl) == 0) && poll(&watch, 1, 1000) <= 0)
       break;
     if (tls)
-      got = SSL_read(ssl, output + used,
-          (int)(sizeof(output) - 1 - used));
+      got = SSL_read(ssl, output + used, (int)(sizeof(output) - 1 - used));
     else
       got = recv(fd, output + used, sizeof(output) - 1 - used, 0);
     if (got <= 0)
@@ -1419,13 +1346,12 @@ check_prebody_wire_result(unsigned short port, const void *wire,
     used += (size_t)got;
     output[used] = '\0';
   }
-  ok = strstr(output, status_text) != NULL &&
-      strstr(output, marker) != NULL;
+  ok = strstr(output, status_text) != NULL && strstr(output, marker) != NULL;
   if (!ok)
-    fprintf(stderr, "expected status %d and %s, received: %s\n",
-        status, marker, output);
-  fprintf(stderr, "%s %s admission visibility: %s\n",
-      tls ? "TLS" : "cleartext", path, ok ? "passed" : "failed");
+    fprintf(stderr, "expected status %d and %s, received: %s\n", status, marker,
+            output);
+  fprintf(stderr, "%s %s admission visibility: %s\n", tls ? "TLS" : "cleartext",
+          path, ok ? "passed" : "failed");
   assert(ok);
   if (ssl != NULL)
     SSL_free(ssl);
@@ -1437,49 +1363,45 @@ check_prebody_wire_result(unsigned short port, const void *wire,
 
 static int
 check_prebody_method_body_result(unsigned short port, const char *method,
-    const char *path, const char *version, const char *headers, int tls,
-    const char *body, int status, const char *marker)
-{
+                                 const char *path, const char *version,
+                                 const char *headers, int tls, const char *body,
+                                 int status, const char *marker) {
   char wire[512];
   int length;
 
   length = snprintf(wire, sizeof(wire),
-      "%s %s HTTP/%s\r\nHost: localhost\r\n%s\r\n%s",
-      method, path, version, headers, body == NULL ? "" : body);
+                    "%s %s HTTP/%s\r\nHost: localhost\r\n%s\r\n%s", method,
+                    path, version, headers, body == NULL ? "" : body);
   assert(length > 0 && (size_t)length < sizeof(wire));
   return check_prebody_wire_result(port, wire, (size_t)length, path, tls,
-      status, marker);
+                                   status, marker);
 }
 
-static int
-check_prebody_method_result(unsigned short port, const char *method,
-    const char *path, const char *version, const char *headers, int tls,
-    int status, const char *marker)
-{
-  return check_prebody_method_body_result(port, method, path, version,
-      headers, tls, NULL, status, marker);
+static int check_prebody_method_result(unsigned short port, const char *method,
+                                       const char *path, const char *version,
+                                       const char *headers, int tls, int status,
+                                       const char *marker) {
+  return check_prebody_method_body_result(port, method, path, version, headers,
+                                          tls, NULL, status, marker);
 }
 
-static int
-check_prebody_header_result(unsigned short port, const char *path,
-    const char *version, const char *headers, int tls, int status,
-    const char *marker)
-{
-  return check_prebody_method_result(port, "GET", path, version, headers,
-      tls, status, marker);
+static int check_prebody_header_result(unsigned short port, const char *path,
+                                       const char *version, const char *headers,
+                                       int tls, int status,
+                                       const char *marker) {
+  return check_prebody_method_result(port, "GET", path, version, headers, tls,
+                                     status, marker);
 }
 
-static int
-check_framing_header_visibility(unsigned short port, const char *path,
-    const char *version, const char *headers, int tls)
-{
-  return check_prebody_header_result(port, path, version, headers, tls,
-      400, "prebody-framing-reject");
+static int check_framing_header_visibility(unsigned short port,
+                                           const char *path,
+                                           const char *version,
+                                           const char *headers, int tls) {
+  return check_prebody_header_result(port, path, version, headers, tls, 400,
+                                     "prebody-framing-reject");
 }
 
-static int
-check_header_count_boundary(unsigned short port, int tls)
-{
+static int check_header_count_boundary(unsigned short port, int tls) {
   char headers[512];
   size_t used;
   int length;
@@ -1487,53 +1409,45 @@ check_header_count_boundary(unsigned short port, int tls)
 
   used = 0;
   for (index = 0; index < HTTP_REQ_HEADER_MAX - 3; index++) {
-    length = snprintf(headers + used, sizeof(headers) - used,
-        "X-Pad: a\r\n");
+    length = snprintf(headers + used, sizeof(headers) - used, "X-Pad: a\r\n");
     assert(length > 0 && (size_t)length < sizeof(headers) - used);
     used += (size_t)length;
   }
-  assert(check_prebody_header_result(port, "/framing-header-limit",
-      "1.1", headers, tls, 200, "prebody-header-limit-accepted"));
+  assert(check_prebody_header_result(port, "/framing-header-limit", "1.1",
+                                     headers, tls, 200,
+                                     "prebody-header-limit-accepted"));
   length = snprintf(headers + used, sizeof(headers) - used,
-      "Transfer-Encoding: chunked\r\n");
+                    "Transfer-Encoding: chunked\r\n");
   assert(length > 0 && (size_t)length < sizeof(headers) - used);
-  assert(check_prebody_header_result(port, "/framing-header-limit",
-      "1.1", headers, tls, 400, "Bad Request"));
+  assert(check_prebody_header_result(port, "/framing-header-limit", "1.1",
+                                     headers, tls, 400, "Bad Request"));
   return 1;
 }
 
-static int
-check_embedded_header_nul(unsigned short port, int tls)
-{
-  static const char wire[] =
-      "GET /framing-header-nul HTTP/1.1\r\n"
-      "Host: localhost\r\nX-Pad: x\0\r\n"
-      "Transfer-Encoding: chunked\r\n\r\n";
+static int check_embedded_header_nul(unsigned short port, int tls) {
+  static const char wire[] = "GET /framing-header-nul HTTP/1.1\r\n"
+                             "Host: localhost\r\nX-Pad: x\0\r\n"
+                             "Transfer-Encoding: chunked\r\n\r\n";
 
   return check_prebody_wire_result(port, wire, sizeof(wire) - 1u,
-      "/framing-header-nul", tls, 400, "Bad Request");
+                                   "/framing-header-nul", tls, 400,
+                                   "Bad Request");
 }
 
-static int
-check_bare_header_cr(unsigned short port, int tls)
-{
-  static const char wire[] =
-      "GET /framing-bare-cr HTTP/1.1\r\n"
-      "Host: localhost\r\nX-Pad: x\r"
-      "Transfer-Encoding: chunked\r\n\r\n";
+static int check_bare_header_cr(unsigned short port, int tls) {
+  static const char wire[] = "GET /framing-bare-cr HTTP/1.1\r\n"
+                             "Host: localhost\r\nX-Pad: x\r"
+                             "Transfer-Encoding: chunked\r\n\r\n";
 
   return check_prebody_wire_result(port, wire, sizeof(wire) - 1u,
-      "/framing-bare-cr", tls, 400, "Bad Request");
+                                   "/framing-bare-cr", tls, 400, "Bad Request");
 }
 
-int
-main(void)
-{
-  static const char wire[] =
-      "GET /one HTTP/1.1\r\nHost: localhost\r\n\r\n"
-      "POST /probe HTTP/1.1\r\nHost: localhost\r\n"
-      "Content-Length: 4\r\n\r\ndata"
-      "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
+int main(void) {
+  static const char wire[] = "GET /one HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                             "POST /probe HTTP/1.1\r\nHost: localhost\r\n"
+                             "Content-Length: 4\r\n\r\ndata"
+                             "GET /two HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char split_start[] =
       "POST /probe HTTP/1.1\r\nHost: localhost\r\n"
       "Content-Length: 4\r\n\r\nda";
@@ -1576,15 +1490,15 @@ main(void)
   assert(getcwd(working_dir, sizeof(working_dir)) != NULL);
   assert(mkdtemp(static_root) != NULL);
   path_length = snprintf(static_root_abs, sizeof(static_root_abs), "%s/%s",
-      working_dir, static_root);
+                         working_dir, static_root);
   assert(path_length > 0 && (size_t)path_length < sizeof(static_root_abs));
   path_length = snprintf(static_file_path, sizeof(static_file_path),
-      "%s/file.txt", static_root);
+                         "%s/file.txt", static_root);
   assert(path_length > 0 && (size_t)path_length < sizeof(static_file_path));
   static_file = fopen(static_file_path, "wb");
   assert(static_file != NULL);
   assert(fwrite(static_content, 1, sizeof(static_content) - 1, static_file) ==
-      sizeof(static_content) - 1);
+         sizeof(static_content) - 1);
   assert(fclose(static_file) == 0);
   port = available_port();
   vectis_kore_set_prebody_probe(probe_prebody);
@@ -1598,8 +1512,8 @@ main(void)
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/two", reply, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
-  raw_route = vectis_route(VECTIS_HTTP_GET,
-      "^/ordinary-raw-target/.*$", reply, NULL);
+  raw_route =
+      vectis_route(VECTIS_HTTP_GET, "^/ordinary-raw-target/.*$", reply, NULL);
   raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
   register_proxy_static_overlap(app, static_root_abs, &error);
@@ -1630,10 +1544,10 @@ main(void)
 
   fd = connect_local(port);
   assert(send(fd, split_start, sizeof(split_start) - 1, 0) ==
-      (ssize_t)(sizeof(split_start) - 1));
+         (ssize_t)(sizeof(split_start) - 1));
   usleep(20000u);
   assert(send(fd, split_end, sizeof(split_end) - 1, 0) ==
-      (ssize_t)(sizeof(split_end) - 1));
+         (ssize_t)(sizeof(split_end) - 1));
   watch.fd = fd;
   used = 0;
   output[0] = '\0';
@@ -1657,73 +1571,73 @@ main(void)
   framed_methods_passed &= check_framed_method_handoff(port, "OPTIONS", 0);
   framed_methods_passed &= check_expect_continue_handoff(port, 0);
   framed_methods_passed &= check_expect_rejection_close(port, 0);
-  framing_headers_passed = check_framing_header_visibility(port,
-      "/framing-cl-te", "1.1",
+  framing_headers_passed = check_framing_header_visibility(
+      port, "/framing-cl-te", "1.1",
       "Content-Length: 4\r\nTransfer-Encoding: chunked\r\n", 0);
-  framing_headers_passed &= check_framing_header_visibility(port,
-      "/framing-duplicate-cl", "1.1",
+  framing_headers_passed &= check_framing_header_visibility(
+      port, "/framing-duplicate-cl", "1.1",
       "Content-Length: 4\r\nContent-Length: 5\r\n", 0);
-  framing_headers_passed &= check_framing_header_visibility(port,
-      "/framing-duplicate-host", "1.1",
-      "Host: attacker.invalid\r\n", 0);
-  framing_headers_passed &= check_framing_header_visibility(port,
-      "/framing-http10", "1.0", "", 0);
+  framing_headers_passed &= check_framing_header_visibility(
+      port, "/framing-duplicate-host", "1.1", "Host: attacker.invalid\r\n", 0);
+  framing_headers_passed &=
+      check_framing_header_visibility(port, "/framing-http10", "1.0", "", 0);
   framing_headers_passed &= check_header_count_boundary(port, 0);
   framing_headers_passed &= check_embedded_header_nul(port, 0);
   framing_headers_passed &= check_bare_header_cr(port, 0);
-  raw_target_passed = check_prebody_header_result(port,
-      "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
-      "1.1", "", 0, 200, "raw-target-preserved");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/a%2Fb", "1.1", "", 0,
-      400, "unsafe percent escape");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/a%25b", "1.1", "", 0,
-      400, "percent escapes or backslashes");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/a%3Ab", "1.1", "", 0,
-      400, "request path must not contain ':'");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/%2e%2e/child", "1.1", "", 0,
-      400, "dot segments");
-  assert(check_prebody_header_result(port, "/proxy-select/a", "1.1", "",
-      0, 200, "ok"));
-  assert(check_prebody_header_result(port, "/proxy-select/%41", "1.1",
-      "", 0, 200, "ok"));
-  assert(check_prebody_header_result(port, "/proxy-select/a%2Fb", "1.1",
-      "", 0, 200, "proxy-prebody-selected"));
-  assert(check_prebody_header_result(port, "/proxy-select/a%25b", "1.1",
-      "", 0, 200, "proxy-prebody-selected"));
-  assert(check_prebody_header_result(port, "/proxy-select/a%3Ab", "1.1",
-      "", 0, 200, "proxy-prebody-selected"));
-  assert(check_prebody_header_result(port, "/proxy-select/%2e%2e", "1.1",
-      "", 0, 400, "proxy-raw-rejected"));
-  assert(check_prebody_header_result(port, "/proxy-select/%ZZ", "1.1",
-      "", 0, 400, "proxy-raw-rejected"));
+  raw_target_passed = check_prebody_header_result(
+      port, "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=", "1.1", "", 0,
+      200, "raw-target-preserved");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/a%2Fb", "1.1", "",
+                                  0, 400, "unsafe percent escape");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/a%25b", "1.1", "",
+                                  0, 400, "percent escapes or backslashes");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/a%3Ab", "1.1", "",
+                                  0, 400, "request path must not contain ':'");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/%2e%2e/child",
+                                  "1.1", "", 0, 400, "dot segments");
+  assert(check_prebody_header_result(port, "/proxy-select/a", "1.1", "", 0, 200,
+                                     "ok"));
+  assert(check_prebody_header_result(port, "/proxy-select/%41", "1.1", "", 0,
+                                     200, "ok"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%2Fb", "1.1", "", 0,
+                                     200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%25b", "1.1", "", 0,
+                                     200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%3Ab", "1.1", "", 0,
+                                     200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%2e%2e", "1.1", "", 0,
+                                     400, "proxy-raw-rejected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%ZZ", "1.1", "", 0,
+                                     400, "proxy-raw-rejected"));
   assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
-      ws_upgrade_headers, 0, 101, "sec-websocket-accept:"));
+                                     ws_upgrade_headers, 0, 101,
+                                     "sec-websocket-accept:"));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1", "", 0,
+                                     400, " 400 "));
   assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
-      "", 0, 400, " 400 "));
-  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
-      "Connection: Upgrade\r\nUpgrade: h2c\r\n", 0, 400, " 400 "));
-  assert(check_prebody_header_result(port,
-      "/proxy-select/static/file.txt", "1.1", "", 0, 200,
-      "static-prebody-winner"));
-  assert(check_prebody_method_result(port, "POST",
-      "/proxy-select/static/file.txt", "1.1", "Content-Length: 0\r\n",
-      0, 405, "allow: GET, HEAD"));
-  assert(check_prebody_header_result(port,
-      "/proxy-select/static/a%2Fb", "1.1", "", 0, 200,
-      "proxy-prebody-selected"));
-  assert(check_prebody_method_body_result(port, "POST",
-      "/proxy-select/upload/a", "1.1", "Content-Length: 4\r\n",
-      0, "data", 200, "live-upload-winner"));
-  assert(check_prebody_method_body_result(port, "POST",
-      "/proxy-select/upload/a%2Fb", "1.1", "Content-Length: 4\r\n",
-      0, "data", 200, "proxy-prebody-selected"));
-  assert(check_prebody_method_body_result(port, "POST",
-      "/proxy-select/upload-reverse/a", "1.1", "Content-Length: 4\r\n",
-      0, "data", 200, "proxy-prebody-selected"));
+                                     "Connection: Upgrade\r\nUpgrade: h2c\r\n",
+                                     0, 400, " 400 "));
+  assert(check_prebody_header_result(port, "/proxy-select/static/file.txt",
+                                     "1.1", "", 0, 200,
+                                     "static-prebody-winner"));
+  assert(check_prebody_method_result(
+      port, "POST", "/proxy-select/static/file.txt", "1.1",
+      "Content-Length: 0\r\n", 0, 405, "allow: GET, HEAD"));
+  assert(check_prebody_header_result(port, "/proxy-select/static/a%2Fb", "1.1",
+                                     "", 0, 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(
+      port, "POST", "/proxy-select/upload/a", "1.1", "Content-Length: 4\r\n", 0,
+      "data", 200, "live-upload-winner"));
+  assert(check_prebody_method_body_result(
+      port, "POST", "/proxy-select/upload/a%2Fb", "1.1",
+      "Content-Length: 4\r\n", 0, "data", 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(
+      port, "POST", "/proxy-select/upload-reverse/a", "1.1",
+      "Content-Length: 4\r\n", 0, "data", 200, "proxy-prebody-selected"));
   reject_passed = check_local_rejection(port, "/reject", 400);
   reject_passed &= check_local_rejection(port, "/forbidden", 403);
   assert(vectis_stop(app, &error) == VECTIS_OK);
@@ -1731,9 +1645,9 @@ main(void)
   probe_app = NULL;
 
   assert(snprintf(cert_path, sizeof(cert_path),
-      "/tmp/vectis-kore-prebody-%ld-cert.pem", (long)getpid()) > 0);
+                  "/tmp/vectis-kore-prebody-%ld-cert.pem", (long)getpid()) > 0);
   assert(snprintf(key_path, sizeof(key_path),
-      "/tmp/vectis-kore-prebody-%ld-key.pem", (long)getpid()) > 0);
+                  "/tmp/vectis-kore-prebody-%ld-key.pem", (long)getpid()) > 0);
   vectis_cert_bundle_config_init(&certs);
   certs.subject.common_name = "localhost";
   certs.dns_names = "localhost";
@@ -1757,8 +1671,8 @@ main(void)
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/two", reply, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
-  raw_route = vectis_route(VECTIS_HTTP_GET,
-      "^/ordinary-raw-target/.*$", reply, NULL);
+  raw_route =
+      vectis_route(VECTIS_HTTP_GET, "^/ordinary-raw-target/.*$", reply, NULL);
   raw_route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   assert(vectis_register_route(app, &raw_route, &error) == VECTIS_OK);
   register_proxy_static_overlap(app, static_root_abs, &error);
@@ -1771,67 +1685,67 @@ main(void)
   framed_methods_passed &= check_framed_method_handoff(port, "OPTIONS", 1);
   framed_methods_passed &= check_expect_continue_handoff(port, 1);
   framed_methods_passed &= check_expect_rejection_close(port, 1);
-  framing_headers_passed &= check_framing_header_visibility(port,
-      "/framing-cl-te", "1.1",
+  framing_headers_passed &= check_framing_header_visibility(
+      port, "/framing-cl-te", "1.1",
       "Content-Length: 4\r\nTransfer-Encoding: chunked\r\n", 1);
-  framing_headers_passed &= check_framing_header_visibility(port,
-      "/framing-duplicate-cl", "1.1",
+  framing_headers_passed &= check_framing_header_visibility(
+      port, "/framing-duplicate-cl", "1.1",
       "Content-Length: 4\r\nContent-Length: 5\r\n", 1);
-  framing_headers_passed &= check_framing_header_visibility(port,
-      "/framing-duplicate-host", "1.1",
-      "Host: attacker.invalid\r\n", 1);
-  framing_headers_passed &= check_framing_header_visibility(port,
-      "/framing-http10", "1.0", "", 1);
+  framing_headers_passed &= check_framing_header_visibility(
+      port, "/framing-duplicate-host", "1.1", "Host: attacker.invalid\r\n", 1);
+  framing_headers_passed &=
+      check_framing_header_visibility(port, "/framing-http10", "1.0", "", 1);
   framing_headers_passed &= check_header_count_boundary(port, 1);
   framing_headers_passed &= check_embedded_header_nul(port, 1);
   framing_headers_passed &= check_bare_header_cr(port, 1);
-  raw_target_passed &= check_prebody_header_result(port,
-      "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=",
-      "1.1", "", 1, 200, "raw-target-preserved");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/a%2Fb", "1.1", "", 1,
-      400, "unsafe percent escape");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/a%25b", "1.1", "", 1,
-      400, "percent escapes or backslashes");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/a%3Ab", "1.1", "", 1,
-      400, "request path must not contain ':'");
-  raw_target_passed &= check_prebody_header_result(port,
-      "/ordinary-raw-target/%2e%2e/child", "1.1", "", 1,
-      400, "dot segments");
-  assert(check_prebody_header_result(port, "/proxy-select/a", "1.1", "",
-      1, 200, "proxy-prebody-selected"));
-  assert(check_prebody_header_result(port, "/proxy-select/%41", "1.1",
-      "", 1, 200, "proxy-prebody-selected"));
-  assert(check_prebody_header_result(port, "/proxy-select/a%2Fb", "1.1",
-      "", 1, 200, "proxy-prebody-selected"));
-  assert(check_prebody_header_result(port, "/proxy-select/%2e%2e", "1.1",
-      "", 1, 400, "proxy-raw-rejected"));
+  raw_target_passed &= check_prebody_header_result(
+      port, "/raw-target/a%2Fb/%2e/c?q=1&q=2&plus=%2B&empty=", "1.1", "", 1,
+      200, "raw-target-preserved");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/a%2Fb", "1.1", "",
+                                  1, 400, "unsafe percent escape");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/a%25b", "1.1", "",
+                                  1, 400, "percent escapes or backslashes");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/a%3Ab", "1.1", "",
+                                  1, 400, "request path must not contain ':'");
+  raw_target_passed &=
+      check_prebody_header_result(port, "/ordinary-raw-target/%2e%2e/child",
+                                  "1.1", "", 1, 400, "dot segments");
+  assert(check_prebody_header_result(port, "/proxy-select/a", "1.1", "", 1, 200,
+                                     "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%41", "1.1", "", 1,
+                                     200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/a%2Fb", "1.1", "", 1,
+                                     200, "proxy-prebody-selected"));
+  assert(check_prebody_header_result(port, "/proxy-select/%2e%2e", "1.1", "", 1,
+                                     400, "proxy-raw-rejected"));
   assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
-      ws_upgrade_headers, 1, 101, "sec-websocket-accept:"));
+                                     ws_upgrade_headers, 1, 101,
+                                     "sec-websocket-accept:"));
+  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1", "", 1,
+                                     400, " 400 "));
   assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
-      "", 1, 400, " 400 "));
-  assert(check_prebody_header_result(port, "/proxy-select/ws", "1.1",
-      "Connection: Upgrade\r\nUpgrade: h2c\r\n", 1, 400, " 400 "));
-  assert(check_prebody_header_result(port,
-      "/proxy-select/static/file.txt", "1.1", "", 1, 200,
-      "static-prebody-winner"));
-  assert(check_prebody_method_result(port, "POST",
-      "/proxy-select/static/file.txt", "1.1", "Content-Length: 0\r\n",
-      1, 405, "allow: GET, HEAD"));
-  assert(check_prebody_header_result(port,
-      "/proxy-select/static/a%2Fb", "1.1", "", 1, 200,
-      "proxy-prebody-selected"));
-  assert(check_prebody_method_body_result(port, "POST",
-      "/proxy-select/upload/a", "1.1", "Content-Length: 4\r\n",
-      1, "data", 200, "proxy-prebody-selected"));
-  assert(check_prebody_method_body_result(port, "POST",
-      "/proxy-select/upload/a%2Fb", "1.1", "Content-Length: 4\r\n",
-      1, "data", 200, "proxy-prebody-selected"));
-  assert(check_prebody_method_body_result(port, "POST",
-      "/proxy-select/upload-reverse/a", "1.1", "Content-Length: 4\r\n",
-      1, "data", 200, "live-upload-winner"));
+                                     "Connection: Upgrade\r\nUpgrade: h2c\r\n",
+                                     1, 400, " 400 "));
+  assert(check_prebody_header_result(port, "/proxy-select/static/file.txt",
+                                     "1.1", "", 1, 200,
+                                     "static-prebody-winner"));
+  assert(check_prebody_method_result(
+      port, "POST", "/proxy-select/static/file.txt", "1.1",
+      "Content-Length: 0\r\n", 1, 405, "allow: GET, HEAD"));
+  assert(check_prebody_header_result(port, "/proxy-select/static/a%2Fb", "1.1",
+                                     "", 1, 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(
+      port, "POST", "/proxy-select/upload/a", "1.1", "Content-Length: 4\r\n", 1,
+      "data", 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(
+      port, "POST", "/proxy-select/upload/a%2Fb", "1.1",
+      "Content-Length: 4\r\n", 1, "data", 200, "proxy-prebody-selected"));
+  assert(check_prebody_method_body_result(
+      port, "POST", "/proxy-select/upload-reverse/a", "1.1",
+      "Content-Length: 4\r\n", 1, "data", 200, "live-upload-winner"));
   tls_raw_passed = check_raw_handoff(port, 1);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
@@ -1841,9 +1755,11 @@ main(void)
   assert(remove(static_file_path) == 0);
   assert(rmdir(static_root) == 0);
   vectis_kore_set_prebody_probe(NULL);
-  return count == 3 && split_count == 2 && tls_passed &&
-      raw_passed && tls_raw_passed && reject_passed && chunked_passed &&
-      small_chunked_passed && tls_chunked_passed && framed_methods_passed &&
-      framing_headers_passed && raw_target_passed &&
-      strstr(output, "data") != NULL ? 0 : 1;
+  return count == 3 && split_count == 2 && tls_passed && raw_passed &&
+                 tls_raw_passed && reject_passed && chunked_passed &&
+                 small_chunked_passed && tls_chunked_passed &&
+                 framed_methods_passed && framing_headers_passed &&
+                 raw_target_passed && strstr(output, "data") != NULL
+             ? 0
+             : 1;
 }
