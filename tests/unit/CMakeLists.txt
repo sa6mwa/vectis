@@ -87,6 +87,12 @@ if(VECTIS_WITH_KORE_RUNTIME)
       test_kore_proxy_h2_memory_live.c)
     vectis_add_unit_test(vectis_unit_kore_proxy_ws_admission_memory_live
       test_kore_proxy_ws_admission_memory_live.c)
+    add_test(NAME vectis_unit_kore_proxy_ws_admission_memory_filled
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WS_FILLED_BUFFER=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_ws_admission_memory_live>)
+    set_tests_properties(vectis_unit_kore_proxy_ws_admission_memory_filled
+      PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_h2_memory_large
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_H2_LARGE_BUFFER=1
         bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"

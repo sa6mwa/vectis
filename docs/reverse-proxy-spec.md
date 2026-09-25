@@ -721,17 +721,29 @@ connection's allocation separately. The ASan build uses a 256 MiB aggregate
 RSS ceiling for instrumentation redzones and quarantine while retaining the
 same streaming, plateau, and teardown checks.
 The Linux production-route WebSocket smoke holds sixteen HTTP/1.1 upgraded
-connections with 1 MiB route chunk limits and idle clients for three seconds.
+connections with 1 MiB route chunk limits and idle clients for four seconds.
 The pinned x86-64 Linux Release run measured 8,384 KiB worker RSS before the
 first connection, 9,908 KiB at the handshakes and sampled peak, and 9,844 KiB
 after teardown. Worker FDs were 14 / 48 / 16 before, during, and after. A
 seventeenth HTTP request and a seventeenth WebSocket handshake each received
 `503` without reaching the origin; after closing the sixteen tunnels, a new
-WebSocket handshake succeeded. These measurements cover idle retained handles,
-not filled 1 MiB relay buffers or a bound for every active WebSocket workload.
+WebSocket handshake succeeded. These measurements cover idle retained handles.
+
+The same production test also sends one 4 MiB WebSocket frame from each of
+the sixteen origins into a client with a small receive buffer that stops
+reading after the handshake. All 64 MiB were accepted by the origin sockets;
+the test samples worker RSS for four seconds, checks for a plateau after
+two seconds, rejects both overflow request types, and verifies FD recovery
+and slot reuse. In the pinned x86-64 Linux Release run, the worker measured
+8,432 KiB before the first connection, 25,312 KiB at the sampled peak and
+later plateau, and 18,144 KiB after teardown. The executable ceiling is
+64 MiB of additional worker RSS for sixteen tunnels, with no more than
+4 MiB growth after warmup; the ASan ceiling is 256 MiB. This is an aggregate
+slow-reader test, not a measurement of the exact occupancy of each relay
+buffer or a bound for every active WebSocket workload.
 
 The full admission reserve still needs mixed HTTP/1.1 and HTTP/2 uploads,
-WebSocket tunnels with filled relay buffers, both idle caches, maximum
+simultaneous bidirectional WebSocket pressure, both idle caches, maximum
 permitted headers and CA bundles, and a deployment worker-memory budget.
 The existing 16-slot exchange cap remains provisional until that gate is
 complete.

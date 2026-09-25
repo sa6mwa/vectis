@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <dirent.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
@@ -17,6 +18,7 @@
 #include <vectis/vectis.h>
 
 #define TEST_CONNECTIONS 16
+#define TEST_FRAME_SIZE (4u * 1024u * 1024u)
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define TEST_ASAN_ENABLED 1
@@ -39,6 +41,8 @@ static const char ws_response[] =
     "HTTP/1.1 101 Switching Protocols\r\n"
     "Connection: Upgrade\r\nUpgrade: websocket\r\n"
     "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+static const unsigned char frame_header[] = {0x82u, 0x7fu, 0u,    0u, 0u,
+                                             0u,    0u,    0x40u, 0u, 0u};
 
 typedef struct test_probe {
   volatile pid_t worker_pid;
@@ -53,6 +57,9 @@ typedef struct test_origin {
   pthread_t thread;
   volatile unsigned accepted;
   volatile int release;
+  volatile int producer_done;
+  volatile size_t produced;
+  int filled;
 } test_origin;
 
 static unsigned long process_rss_kb(pid_t pid) {
@@ -137,6 +144,59 @@ static unsigned short listen_port(int *listener) {
   return ntohs(address.sin_port);
 }
 
+static void produce_frames(test_origin *origin) {
+  unsigned char payload[4096];
+  size_t offsets[TEST_CONNECTIONS];
+  const unsigned char *data;
+  size_t length;
+  ssize_t amount;
+  unsigned idle;
+  int i;
+  int active;
+  int progress;
+
+  memset(payload, 'B', sizeof(payload));
+  memset(offsets, 0, sizeof(offsets));
+  idle = 0u;
+  while (idle < 200u) {
+    active = 0;
+    progress = 0;
+    for (i = 0; i < TEST_CONNECTIONS; ++i) {
+      if (offsets[i] == sizeof(frame_header) + TEST_FRAME_SIZE)
+        continue;
+      active = 1;
+      if (offsets[i] < sizeof(frame_header)) {
+        data = frame_header + offsets[i];
+        length = sizeof(frame_header) - offsets[i];
+      } else {
+        data = payload;
+        length = sizeof(payload);
+        if (length > sizeof(frame_header) + TEST_FRAME_SIZE - offsets[i])
+          length = sizeof(frame_header) + TEST_FRAME_SIZE - offsets[i];
+      }
+      amount = send(origin->clients[i], data, length, MSG_DONTWAIT);
+      if (amount > 0) {
+        if (offsets[i] >= sizeof(frame_header))
+          (void)__sync_add_and_fetch(&origin->produced, (size_t)amount);
+        offsets[i] += (size_t)amount;
+        progress = 1;
+      } else {
+        assert(amount == -1);
+        assert(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
+      }
+    }
+    if (!active)
+      break;
+    if (progress)
+      idle = 0u;
+    else {
+      ++idle;
+      usleep(1000u);
+    }
+  }
+  (void)__sync_lock_test_and_set(&origin->producer_done, 1);
+}
+
 static void *origin_main(void *userdata) {
   test_origin *origin;
   char request[2048];
@@ -163,6 +223,8 @@ static void *origin_main(void *userdata) {
            strstr(request, "upgrade: websocket\r\n") != NULL);
     send_all(origin->clients[i], ws_response, sizeof(ws_response) - 1u);
     (void)__sync_add_and_fetch(&origin->accepted, 1u);
+    if (i == TEST_CONNECTIONS - 1 && origin->filled)
+      produce_frames(origin);
   }
   while (__sync_fetch_and_add(&origin->release, 0) == 0)
     usleep(1000u);
@@ -171,9 +233,10 @@ static void *origin_main(void *userdata) {
   return NULL;
 }
 
-static int connect_app(unsigned short port, int websocket) {
+static int connect_app(unsigned short port, int websocket, int filled) {
   struct sockaddr_in address;
   struct timeval timeout;
+  int receive_buffer;
   int attempt;
   int fd;
 
@@ -184,6 +247,11 @@ static int connect_app(unsigned short port, int websocket) {
   for (attempt = 0; attempt < 100; ++attempt) {
     fd = socket(AF_INET, SOCK_STREAM, 0);
     assert(fd >= 0);
+    if (websocket && filled) {
+      receive_buffer = 4096;
+      assert(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer,
+                        sizeof(receive_buffer)) == 0);
+    }
     if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0)
       break;
     assert(close(fd) == 0);
@@ -232,7 +300,9 @@ int main(void) {
   int replacement;
   int i;
   unsigned long at_headers;
+  unsigned long after_warmup;
   unsigned long peak;
+  unsigned long later;
   unsigned long after_close;
   unsigned at_headers_fds;
   unsigned after_close_fds;
@@ -243,6 +313,7 @@ int main(void) {
   assert(probe != MAP_FAILED);
   memset(probe, 0, sizeof(*probe));
   memset(&origin, 0, sizeof(origin));
+  origin.filled = getenv("VECTIS_PROXY_WS_FILLED_BUFFER") != NULL;
   origin.port = listen_port(&origin.listener);
   app_port = listen_port(&overflow);
   assert(close(overflow) == 0);
@@ -267,37 +338,55 @@ int main(void) {
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
 
   for (i = 0; i < TEST_CONNECTIONS; ++i) {
-    clients[i] = connect_app(app_port, 1);
+    clients[i] = connect_app(app_port, 1, origin.filled);
     read_head(clients[i], response, sizeof(response));
     assert(strstr(response, "HTTP/1.1 101 Switching Protocols\r\n") ==
            response);
   }
   assert(probe->worker_pid > 0);
   assert(__sync_fetch_and_add(&origin.accepted, 0u) == TEST_CONNECTIONS);
+  if (origin.filled) {
+    for (i = 0; i < 500; ++i) {
+      if (__sync_fetch_and_add(&origin.producer_done, 0) != 0)
+        break;
+      usleep(10000u);
+    }
+    assert(i < 500);
+  }
   at_headers = process_rss_kb(probe->worker_pid);
   at_headers_fds = process_fd_count(probe->worker_pid);
   peak = at_headers;
-  for (i = 0; i < 150; ++i) {
+  after_warmup = at_headers;
+  for (i = 0; i < 200; ++i) {
     unsigned long current;
 
     usleep(20000u);
     current = process_rss_kb(probe->worker_pid);
     if (current > peak)
       peak = current;
+    if (i == 99)
+      after_warmup = current;
   }
+  later = process_rss_kb(probe->worker_pid);
   fprintf(stderr,
           "production websocket worker: baseline=%luKB headers=%luKB "
-          "peak=%luKB fds=%u,%u\n",
-          probe->baseline_rss_kb, at_headers, peak, probe->baseline_fds,
-          at_headers_fds);
+          "warmup=%luKB peak=%luKB later=%luKB fds=%u,%u produced=%lu\n",
+          probe->baseline_rss_kb, at_headers, after_warmup, peak, later,
+          probe->baseline_fds, at_headers_fds, (unsigned long)origin.produced);
   assert(peak <= probe->baseline_rss_kb + TEST_MAX_RSS_DELTA_KB);
+  assert(later <= after_warmup + 4096u);
   assert(at_headers_fds <= probe->baseline_fds + 64u);
+  if (origin.filled) {
+    assert(__sync_fetch_and_add(&origin.producer_done, 0) == 1);
+    assert(__sync_fetch_and_add(&origin.produced, 0u) >=
+           (size_t)TEST_CONNECTIONS * 1048576u);
+  }
 
-  overflow = connect_app(app_port, 0);
+  overflow = connect_app(app_port, 0, origin.filled);
   read_head(overflow, response, sizeof(response));
   assert(strstr(response, "HTTP/1.1 503 Service Unavailable\r\n") == response);
   assert(close(overflow) == 0);
-  overflow = connect_app(app_port, 1);
+  overflow = connect_app(app_port, 1, origin.filled);
   read_head(overflow, response, sizeof(response));
   assert(strstr(response, "HTTP/1.1 503 Service Unavailable\r\n") == response);
   assert(close(overflow) == 0);
@@ -314,7 +403,7 @@ int main(void) {
     usleep(10000u);
   }
   assert(i < 200);
-  replacement = connect_app(app_port, 1);
+  replacement = connect_app(app_port, 1, origin.filled);
   read_head(replacement, response, sizeof(response));
   assert(strstr(response, "HTTP/1.1 101 Switching Protocols\r\n") == response);
   assert(__sync_fetch_and_add(&origin.accepted, 0u) == TEST_CONNECTIONS + 1u);
