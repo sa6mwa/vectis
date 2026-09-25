@@ -37,17 +37,13 @@ def read_stats(helper, url, ca, expected_protocol, args, resource_pid):
         if len(samples) != args.repetitions:
             raise RuntimeError(f"{name}: wrong sample count")
         mean_completion = sum(item["completion_ms"] for item in samples) / len(samples)
-        payload_bytes = (
-            2 if name == "small" else args.chunks * 16384
-        )
+        request_bytes = (args.chunks * 16384
+                         if name in ("slow_upload", "duplex") else 0)
         profiles[name] = {
             "first_byte": common.distribution([item["first_ms"] for item in samples]),
             "completion": common.distribution([item["completion_ms"] for item in samples]),
-            "response_bytes_per_trial": samples[0]["bytes"],
-            "payload_bytes_per_trial": payload_bytes,
-            "mean_mib_per_second": round(
-                payload_bytes / 1048576 / (mean_completion / 1000), 3
-            ),
+            **common.transfer_rates(request_bytes, samples[0]["bytes"],
+                                    mean_completion),
         }
     for name, delays in raw["sse"].items():
         count = int(name.removeprefix("sse_"))

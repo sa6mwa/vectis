@@ -1215,11 +1215,26 @@ harness in `bench/proxy.py` warms each path, generates and consumes payloads
 in 16 KiB chunks, checks that a duplex response arrives before upload EOF,
 and measures small requests, streaming downloads, slow uploads/readers, SSE,
 and WebSocket echo at 1, 8, and 16 concurrent streams. It reports JSON with
-direct and proxied latency distributions, added latency, throughput, worker
-peak RSS, process-group file descriptors, and CPU time. The `--smoke` form
-is registered as two short CTest integration cases (HTTP and TLS); they
+direct and proxied latency distributions, added latency, request and response
+byte counts, directional throughput, worker peak RSS, process-group file
+descriptors, and CPU time. The `--smoke` form is registered as two short CTest
+integration cases (HTTP and TLS); they
 assert behavior and set no performance threshold. The harness owns its
 origin, proxy process group, temporary certificate, and teardown.
+
+For an opt-in multi-gigabyte streaming check, run
+`make bench-proxy PROXY_BENCH_ARGS="--profiles download --warmup 0 --repetitions 1 --chunks 131072 --concurrency 1"`.
+That profile generates and consumes a 2 GiB response on each path in 16 KiB
+chunks, then reports the Vectis worker's peak RSS. Selecting `slow_upload`
+with the same chunk count sends a 2 GiB request; its MiB/s figure uses the
+request bytes rather than the short acknowledgment body. `--profiles` can
+also select `slow_reader` or `duplex` separately. This stress
+measurement remains outside normal CTest and `test-all`.
+In separate local Linux Debug runs, the direct and proxied paths each completed
+a 2 GiB download and a 2 GiB slow upload;
+the proxied worker peaked at 14,675,968 bytes RSS for the download and
+14,344,192 bytes for the slow upload. These single-host samples are evidence
+of bounded memory for those workloads, not throughput or release thresholds.
 
 This local comparison uses an HTTP/1.1 origin. The opt-in
 `make bench-proxy-h2` profile uses a local Go TLS origin and the same Go client

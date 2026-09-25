@@ -183,6 +183,20 @@ def distribution(values):
     }
 
 
+def transfer_rates(request_bytes, response_bytes, completion_ms):
+    seconds = completion_ms / 1000
+    return {
+        "request_bytes_per_trial": request_bytes,
+        "response_bytes_per_trial": response_bytes,
+        "mean_upload_mib_per_second": round(
+            request_bytes / 1048576 / seconds, 3
+        ) if request_bytes else None,
+        "mean_download_mib_per_second": round(
+            response_bytes / 1048576 / seconds, 3
+        ) if response_bytes else None,
+    }
+
+
 def connection(host, port, secure, context):
     if secure:
         return http.client.HTTPSConnection(host, port, timeout=15, context=context)
@@ -579,6 +593,8 @@ def measure(host, port, secure, context, args, worker_pid=None):
             ("slow_reader", "/download", args.chunks, True),
             ("slow_upload", "/upload", args.chunks, False),
         ):
+            if profile not in args.profiles:
+                continue
             for _ in range(args.warmup):
                 http_trial(host, port, secure, context, path, chunks, slow)
             trials = [
@@ -589,48 +605,49 @@ def measure(host, port, secure, context, args, worker_pid=None):
             result[profile] = {
                 "first_byte": distribution([item[0] for item in trials]),
                 "completion": distribution([item[1] for item in trials]),
-                "bytes_per_trial": trials[0][2],
                 "mean_requests_per_second": round(
                     1000 / mean_completion_ms, 3
                 ),
-                "mean_mib_per_second": round(
-                    trials[0][2] / 1048576 / (mean_completion_ms / 1000), 3
-                ),
+                **transfer_rates(chunks * CHUNK if path == "/upload" else 0,
+                                 trials[0][2], mean_completion_ms),
             }
-        for _ in range(args.warmup):
-            duplex_trial(host, port, secure, context, args.chunks)
-        duplex = [
-            duplex_trial(host, port, secure, context, args.chunks)
-            for _ in range(args.repetitions)
-        ]
-        mean_completion_ms = statistics.mean(item[1] for item in duplex)
-        result["duplex"] = {
-            "first_byte": distribution([item[0] for item in duplex]),
-            "completion": distribution([item[1] for item in duplex]),
-            "bytes_per_trial": duplex[0][2],
-            "mean_requests_per_second": round(
-                1000 / mean_completion_ms, 3
-            ),
-            "mean_mib_per_second": round(
-                duplex[0][2] / 1048576 / (mean_completion_ms / 1000), 3
-            ),
-        }
+        if "duplex" in args.profiles:
+            for _ in range(args.warmup):
+                duplex_trial(host, port, secure, context, args.chunks)
+            duplex = [
+                duplex_trial(host, port, secure, context, args.chunks)
+                for _ in range(args.repetitions)
+            ]
+            mean_completion_ms = statistics.mean(item[1] for item in duplex)
+            result["duplex"] = {
+                "first_byte": distribution([item[0] for item in duplex]),
+                "completion": distribution([item[1] for item in duplex]),
+                "mean_requests_per_second": round(
+                    1000 / mean_completion_ms, 3
+                ),
+                **transfer_rates(chunks * CHUNK, duplex[0][2],
+                                 mean_completion_ms),
+            }
         for count in args.concurrency:
             for _ in range(args.warmup):
-                concurrent_trials(
+                if "sse" in args.profiles:
+                    concurrent_trials(
+                        count, lambda: sse_trial(host, port, secure, context, args.events)
+                    )
+                if "ws" in args.profiles:
+                    concurrent_trials(
+                        count, lambda: ws_trial(host, port, secure, context, args.echoes)
+                    )
+            if "sse" in args.profiles:
+                sse = concurrent_trials(
                     count, lambda: sse_trial(host, port, secure, context, args.events)
                 )
-                concurrent_trials(
+                result[f"sse_{count}"] = {"event_delay": distribution(sse)}
+            if "ws" in args.profiles:
+                ws = concurrent_trials(
                     count, lambda: ws_trial(host, port, secure, context, args.echoes)
                 )
-            sse = concurrent_trials(
-                count, lambda: sse_trial(host, port, secure, context, args.events)
-            )
-            ws = concurrent_trials(
-                count, lambda: ws_trial(host, port, secure, context, args.echoes)
-            )
-            result[f"sse_{count}"] = {"event_delay": distribution(sse)}
-            result[f"ws_{count}"] = {"echo": distribution(ws)}
+                result[f"ws_{count}"] = {"echo": distribution(ws)}
     result["resource"] = {
         "peak_worker_rss_bytes": sampler.peak_worker_rss_bytes or None,
         "peak_process_group_rss_bytes": sampler.peak_process_group_rss_bytes or None,
@@ -653,6 +670,11 @@ def main():
     parser.add_argument("--events", type=int, default=5)
     parser.add_argument("--echoes", type=int, default=5)
     parser.add_argument("--concurrency", type=int, nargs="+", default=[1, 8, 16])
+    parser.add_argument("--profiles", nargs="+", default=[
+        "small", "download", "slow_reader", "slow_upload", "duplex", "sse", "ws"
+    ], choices=("small", "download", "slow_reader", "slow_upload",
+                "duplex", "sse", "ws"),
+                        help="run only the selected measurement profiles")
     parser.add_argument("--tls", action="store_true", help="use a local trusted HTTPS/WSS origin")
     parser.add_argument("--smoke", action="store_true", help="short harness verification")
     args = parser.parse_args()
@@ -663,7 +685,7 @@ def main():
         parser.error("warmup must be nonnegative")
     if min(args.repetitions, args.chunks, args.events, args.echoes, *args.concurrency) < 1:
         parser.error("repetitions, chunks, events, echoes, and concurrency must be positive")
-    if args.chunks < 2:
+    if args.chunks < 2 and "duplex" in args.profiles:
         parser.error("chunks must be at least 2 for the duplex streaming check")
     binary = args.vectis.resolve()
     if not binary.is_file():
@@ -726,7 +748,8 @@ def main():
                                "repetitions": args.repetitions, "chunk_bytes": CHUNK,
                                "chunks": args.chunks, "events": args.events,
                                "echoes": args.echoes, "concurrency": args.concurrency,
-                               "upstream_tls": args.tls},
+                               "upstream_tls": args.tls,
+                               "profiles": args.profiles},
                 "direct": direct, "proxied": proxied,
                 "added_latency_ms": added,
             }, indent=2, sort_keys=True))
