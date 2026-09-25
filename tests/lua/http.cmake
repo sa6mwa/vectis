@@ -954,6 +954,19 @@ assert(api_server:proxy({
   end,
 }) == true)
 assert(api_server:proxy({
+  path = "/lua-proxy-sse",
+  target = "http://127.0.0.1:28484",
+  rewrite = function(inbound, outbound)
+    assert(inbound.websocket == false)
+    assert(outbound:set_path("/dynamic-sse"))
+  end,
+  modify_response = function(response)
+    assert(response.status == 200)
+    assert(response:set_status(202))
+    assert(response:add_header("X-Lua-SSE", "edited"))
+  end,
+}) == true)
+assert(api_server:proxy({
   path = "/lua-proxy-response-bad",
   target = "http://127.0.0.1:28484",
   rewrite = function(_, outbound)
@@ -963,6 +976,23 @@ assert(api_server:proxy({
     local ok, err = response:add_header("Content-Length", "100")
     assert(ok == nil and type(err) == "string")
     return true
+  end,
+}) == true)
+assert(api_server:proxy({
+  path = "/lua-proxy-ws-reject",
+  target = "http://127.0.0.1:28484",
+  preflight = function(inbound)
+    assert(inbound.websocket == true)
+    return true
+  end,
+  rewrite = function(inbound, outbound)
+    assert(inbound.websocket == true)
+    assert(outbound:set_path("/plain"))
+  end,
+  modify_response = function(response)
+    assert(response.status == 200)
+    assert(response:set_status(403))
+    assert(response:add_header("X-Lua-WS", "rejected"))
   end,
 }) == true)
 assert(api_server:proxy({
@@ -1059,6 +1089,20 @@ local repeated_proxy_response = vectis.http.get(
 })
 assert(repeated_proxy_response.status == 202)
 assert(repeated_proxy_response.body == "alice-ok:lua-rewrite\n")
+local proxy_sse_response = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-sse", {
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(proxy_sse_response.ok == true,
+       proxy_sse_response.error and proxy_sse_response.error.message)
+assert(proxy_sse_response.status == 202)
+assert(proxy_sse_response.body ==
+       "id: 1\nevent: ready\ndata: alpha\ndata: beta\n\n" ..
+       ": heartbeat\n\n" ..
+       "data: done\n\n")
+assert(proxy_sse_response.headers:lower():find("content-type: text/event-stream", 1, true))
+assert(proxy_sse_response.headers:lower():find("transfer-encoding: chunked", 1, true))
+assert(proxy_sse_response.headers:lower():find("x-lua-sse: edited", 1, true))
 local bad_proxy_response = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy-bad", {
   timeout_ms = 2000,
@@ -1073,6 +1117,22 @@ local bad_proxy_response_hook = vectis.http.get(
   no_signal = true,
 })
 assert(bad_proxy_response_hook.status == 502)
+local proxy_ws_rejection = vectis.http.get(
+    "http://127.0.0.1:28484/lua-proxy-ws-reject", {
+  headers = {
+    ["Connection"] = "Upgrade",
+    ["Upgrade"] = "websocket",
+    ["Sec-WebSocket-Version"] = "13",
+    ["Sec-WebSocket-Key"] = "dGhlIHNhbXBsZSBub25jZQ==",
+  },
+  timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
+})
+assert(proxy_ws_rejection.transport_ok == true)
+assert(proxy_ws_rejection.ok == false)
+assert(proxy_ws_rejection.error.kind == "http_status")
+assert(proxy_ws_rejection.status == 403)
+assert(proxy_ws_rejection.body == "plain text route\n")
+assert(proxy_ws_rejection.headers:lower():find("x-lua-ws: rejected", 1, true))
 local local_proxy_response = vectis.http.get(
     "http://127.0.0.1:28484/lua-proxy-local/deny", {
   timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true,
