@@ -44,9 +44,11 @@
 /* ASan keeps redzones and quarantined allocations resident after pause. */
 #define TEST_MAX_RSS_DELTA_KB (TEST_CONNECTIONS * 16384u)
 #define TEST_MAX_CONFIG_RSS_DELTA_KB TEST_MAX_RSS_DELTA_KB
+#define TEST_DUPLEX_RSS_DELTA_KB TEST_MAX_RSS_DELTA_KB
 #else
 #define TEST_MAX_RSS_DELTA_KB (TEST_CONNECTIONS * 4096u)
 #define TEST_MAX_CONFIG_RSS_DELTA_KB (TEST_CONNECTIONS * 5120u)
+#define TEST_DUPLEX_RSS_DELTA_KB (TEST_CONNECTIONS * 8192u)
 #endif
 
 typedef struct test_probe {
@@ -69,6 +71,7 @@ typedef struct test_origin {
   test_probe *probe;
   int connections;
   int upload_mode;
+  int duplex_mode;
   int warmup_mode;
   volatile int release;
 } test_origin;
@@ -293,7 +296,7 @@ static int request_received(nghttp2_session *session,
     connection->warmup_stream = frame->hd.stream_id;
     return 0;
   }
-  if (connection->origin->upload_mode)
+  if (connection->origin->upload_mode && !connection->origin->duplex_mode)
     return 0;
   memset(&provider, 0, sizeof(provider));
   provider.read_callback = produce_body;
@@ -323,6 +326,7 @@ static int upload_received(nghttp2_session *session, uint8_t flags,
 static void *connection_main(void *userdata) {
   test_connection *connection;
   nghttp2_session_callbacks *callbacks;
+  nghttp2_option *options;
   nghttp2_session *session;
   struct pollfd watch;
   unsigned char input[16384];
@@ -348,7 +352,15 @@ static void *connection_main(void *userdata) {
   if (connection->origin->upload_mode)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
                                                               upload_received);
-  assert(nghttp2_session_server_new(&session, callbacks, connection) == 0);
+  options = NULL;
+  if (connection->origin->duplex_mode) {
+    assert(nghttp2_option_new(&options) == 0);
+    nghttp2_option_set_no_auto_window_update(options, 1);
+  }
+  assert(nghttp2_session_server_new2(&session, callbacks, connection,
+                                     options) == 0);
+  if (options != NULL)
+    nghttp2_option_del(options);
   nghttp2_session_callbacks_del(callbacks);
   assert(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0) == 0);
   for (;;) {
@@ -373,7 +385,8 @@ static void *connection_main(void *userdata) {
     }
     watch.fd = connection->fd;
     watch.events =
-        ((connection->origin->upload_mode && connection->upload_started)
+        ((connection->origin->upload_mode && connection->upload_started &&
+          !connection->origin->duplex_mode)
              ? 0
              : POLLIN) |
         (nghttp2_session_want_write(session) ? POLLOUT : 0);
@@ -387,7 +400,8 @@ static void *connection_main(void *userdata) {
         got = SSL_read(connection->ssl, input, sizeof(input));
         if (got > 0) {
           assert(nghttp2_session_mem_recv(session, input, (size_t)got) == got);
-          if (connection->origin->upload_mode && connection->upload_started)
+          if (connection->origin->upload_mode && connection->upload_started &&
+              !connection->origin->duplex_mode)
             break;
           continue;
         }
@@ -663,6 +677,9 @@ static int connect_app(unsigned short port, int route_kind, int upload_mode,
   static const char max_h1_prefix[] =
       "POST /proxy/h1 HTTP/1.1\r\nHost: localhost\r\n"
       "Content-Length: 67108864\r\n";
+  static const char max_h2_upload_prefix[] =
+      "POST /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n"
+      "Content-Length: 67108864\r\n";
   static const char http_request[] =
       "GET /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char upload_request[] =
@@ -719,7 +736,9 @@ static int connect_app(unsigned short port, int route_kind, int upload_mode,
       send_max_header_request(fd, max_h1_prefix, 20, 3000u);
     else
       send_all(fd, h1_upload_request, sizeof(h1_upload_request) - 1u);
-  } else if (upload_mode)
+  } else if (upload_mode && max_headers)
+    send_max_header_request(fd, max_h2_upload_prefix, 20, 3000u);
+  else if (upload_mode)
     send_all(fd, upload_request, sizeof(upload_request) - 1u);
   else if (max_headers)
     send_max_header_request(fd, max_h2_prefix, 22, 2800u);
@@ -882,6 +901,7 @@ int main(void) {
   int mtls;
   int large_identity;
   int idle_cache;
+  int duplex_mode;
   int upload_mode;
   int h2_connections;
 
@@ -891,16 +911,20 @@ int main(void) {
   mixed_transfer = getenv("VECTIS_PROXY_MIXED_TRANSFER_MEMORY") != NULL;
   large_identity = getenv("VECTIS_PROXY_H2_MTLS_LARGE_IDENTITY") != NULL;
   idle_cache = getenv("VECTIS_PROXY_H2_IDLE_CACHE_MEMORY") != NULL;
+  duplex_mode = getenv("VECTIS_PROXY_H2_DUPLEX_MEMORY") != NULL;
   idle_fds = 0u;
   mtls = large_identity || getenv("VECTIS_PROXY_H2_MTLS") != NULL;
-  rss_delta_limit =
-      large_identity ? TEST_MAX_CONFIG_RSS_DELTA_KB : TEST_MAX_RSS_DELTA_KB;
-  upload_mode = mixed_upload || getenv("VECTIS_PROXY_H2_UPLOAD_MEMORY") != NULL;
+  rss_delta_limit = duplex_mode ? TEST_DUPLEX_RSS_DELTA_KB
+                                : (large_identity ? TEST_MAX_CONFIG_RSS_DELTA_KB
+                                                  : TEST_MAX_RSS_DELTA_KB);
+  upload_mode = mixed_upload || duplex_mode ||
+                getenv("VECTIS_PROXY_H2_UPLOAD_MEMORY") != NULL;
   assert(!mixed_upload || !mixed);
   assert(!mixed_transfer || (!mixed_upload && !mixed && !upload_mode));
   assert(!upload_mode || !mixed);
   assert(!idle_cache ||
          (!mixed && !mixed_upload && !mixed_transfer && !upload_mode));
+  assert(!duplex_mode || (!mixed && !mixed_upload && !mixed_transfer));
   h2_connections = (mixed || mixed_upload || mixed_transfer)
                        ? TEST_MIXED_CONNECTIONS
                        : TEST_CONNECTIONS;
@@ -944,6 +968,7 @@ int main(void) {
   origin.probe = probe;
   origin.connections = h2_connections;
   origin.upload_mode = upload_mode;
+  origin.duplex_mode = duplex_mode;
   memset(&ws_origin, 0, sizeof(ws_origin));
   memset(&h1_origin, 0, sizeof(h1_origin));
   origin.ctx = SSL_CTX_new(TLS_server_method());
@@ -1131,6 +1156,13 @@ int main(void) {
   upload_sent = (upload_mode || mixed_transfer)
                     ? send_uploads(clients, mixed_transfer ? h2_connections : 0)
                     : 0u;
+  if (duplex_mode) {
+    for (i = 0; i < TEST_CONNECTIONS; ++i) {
+      read_head(clients[i], head, sizeof(head));
+      assert(strstr(head, "HTTP/1.1 200 ") == head);
+      assert(strstr(head, "Transfer-Encoding: chunked\r\n") != NULL);
+    }
+  }
   assert(probe->worker_pid > 0);
   for (i = 0; i < 500; ++i) {
     if (__sync_fetch_and_add(&probe->accepted, 0u) ==
@@ -1188,11 +1220,14 @@ int main(void) {
           "warmup=%luKB peak=%luKB later=%luKB fds=%u,%u "
           "generated=%lu,%lu,%lu ws=%lu uploaded=%lu,%lu h1=%u "
           "idle_fds=%u active_fd_delta=%u\n",
-          mixed ? "mixed h2/ws"
-                : (mixed_upload
-                       ? "mixed h1/h2 upload"
-                       : (mixed_transfer ? "mixed h1 upload/h2 download"
-                                         : (upload_mode ? "h2 upload" : "h2"))),
+          duplex_mode
+              ? "h2 duplex"
+              : (mixed ? "mixed h2/ws"
+                       : (mixed_upload
+                              ? "mixed h1/h2 upload"
+                              : (mixed_transfer
+                                     ? "mixed h1 upload/h2 download"
+                                     : (upload_mode ? "h2 upload" : "h2")))),
           (unsigned long)buffer_limit, probe->baseline_rss_kb, at_headers,
           after_warmup, peak, later, probe->baseline_fds, at_headers_fds,
           (unsigned long)generated_at_headers,
@@ -1215,7 +1250,8 @@ int main(void) {
     assert(__sync_fetch_and_add(&probe->uploaded, 0u) >=
            (size_t)h2_connections);
     assert(__sync_fetch_and_add(&probe->uploaded, 0u) < upload_sent);
-  } else {
+  }
+  if (!upload_mode || duplex_mode) {
     assert(generated_later > (size_t)h2_connections * 1048576u);
     assert(generated_later < (size_t)h2_connections * TEST_BODY_SIZE / 4u);
     assert(generated_later - generated_after_warmup <=

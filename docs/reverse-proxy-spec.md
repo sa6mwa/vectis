@@ -732,10 +732,13 @@ more than 4 MiB growth after the first two seconds. It does not measure each
 connection's allocation separately. The ASan build uses a 256 MiB aggregate
 RSS ceiling for instrumentation redzones and quarantine while retaining the
 same streaming, plateau, and teardown checks.
-The maximum-identity variants use an 80 MiB incremental RSS regression
-ceiling in ordinary builds to leave headroom above their observed peaks;
-they retain the 256 MiB ASan ceiling. These are test thresholds, not a
-deployment worker budget.
+The maximum-identity download and mixed-pool variants use an 80 MiB
+incremental RSS regression ceiling in ordinary builds to leave headroom above
+their observed peaks. They retain the 256 MiB ASan ceiling. These are test
+thresholds, not a deployment worker budget.
+The full-duplex HTTP/2 variant uses a 128 MiB incremental ceiling in ordinary
+builds and the same 256 MiB instrumented ceiling because it exercises a
+larger simultaneous upload and response allocation envelope.
 
 The live mTLS variant also fills each copied CA bundle, client certificate,
 and client key to the allowed 256 KiB with PEM whitespace, sends 22 additional
@@ -845,14 +848,42 @@ RSS. The later plateau, `503` admission, and FD recovery passed; the ASan
 variant passed too. These runs establish simultaneous maximum-configuration
 pressure in both libcurl protocol pools for these two transfer profiles.
 
-The full admission reserve still needs a worst-case full-duplex HTTP exchange,
-and a deployment worker-memory budget. Both idle caches have been warmed in
-the live test above; the active HTTP/2 pool evicts its four cached idle
-connections as it fills. Maximum configuration sizes with active transfers
-in both protocol pools are covered by the mixed variant. The bidirectional
-WebSocket case is covered separately above.
-The existing 16-slot exchange cap remains provisional until that gate is
-complete.
+The full-duplex variant holds sixteen certificate-verified H2 POST exchanges
+open with maximum-size copied TLS identities, near-64 KiB request headers,
+1 MiB chunk limits, and 64 MiB advertised bodies in each direction. Each
+origin withholds upload window credit while continuing to process response
+window updates, so upload and response backpressure coexist in the *same*
+exchange. Downstream clients receive response headers before their uploads
+finish, then stop reading. Two x86-64 Linux Debug runs measured 8,000-8,308
+KiB at preflight and 90,916-91,368 KiB at the sampled peak: 82,916-83,060
+KiB additional worker RSS. The origins generated 104,267,776-104,562,688
+response bytes while the downstream clients had sent 91,972,267-92,140,272
+upload bytes; the origins had received only 1,048,560 upload bytes. The
+later RSS plateau, `503` admission, and FD recovery passed. The ASan variant
+passed with a 214,116 KiB sampled peak against a 30,696 KiB baseline.
+
+For the pinned x86-64 Linux bundle and tested configuration, target 256 MiB
+RSS per proxy worker at the sixteen-exchange admission limit. Reserve 80 MiB
+for the worker baseline, retained allocator state, and idle connections,
+plus 11 MiB for each of sixteen active exchanges (176 MiB total). The
+largest observed incremental peak was 83,060 KiB, or about 5.1 MiB per
+exchange at full admission; the largest post-teardown RSS in the passing
+Debug profiles was 65,360 KiB. The active reserve is over twice the observed
+incremental peak; the baseline reserve is about 16 MiB above the retained
+RSS observation. The 256 MiB figure is an operational planning target, not a
+guarantee that libcurl or the process allocator cannot exceed it.
+
+This target assumes the default 64 KiB server request-header limit, route
+chunk limits no larger than 1 MiB, copied TLS identity fields no larger than
+256 KiB each, the pinned dependency bundle, and no unrelated memory-heavy
+handlers in the same worker. `max_request_header_bytes` can currently be
+configured above 64 KiB, so that setting requires a new measurement or a
+lower active-exchange cap. Provision additional memory for the Kore parent,
+other workers, and the operating system; do not use 256 MiB as a whole-app
+or cgroup limit. Native kqueue execution remains unverified without a macOS
+or BSD runner. Both idle caches, active maximum-configuration transfers in
+both protocol pools, a same-exchange full-duplex HTTP workload, and
+bidirectional WebSocket pressure have live Linux coverage above.
 
 ### Downstream response writer
 
