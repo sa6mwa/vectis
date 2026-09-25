@@ -40,6 +40,7 @@
 #endif
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
+#include <vectis/proxy.h>
 #include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/vectis_version.h>
@@ -11439,6 +11440,101 @@ static int vectis_lua_app_websocket(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_app_proxy(lua_State *lua) {
+  vectis_app *app;
+  vectis_proxy_route_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *alternates[15];
+  const char *version;
+  const char *kind;
+  size_t count;
+  size_t i;
+
+  app = vectis_lua_app_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  vectis_proxy_route_config_init(&config);
+  config.path = vectis_lua_table_string(lua, 2, "path");
+  config.target = vectis_lua_table_string(lua, 2, "target");
+  if (config.path == NULL || config.path[0] == '\0' || config.target == NULL ||
+      config.target[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "proxy path and target are required");
+  }
+  config.methods =
+      vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_ALL, "proxy");
+  kind = vectis_lua_table_string(lua, 2, "path_kind");
+  if (kind != NULL) {
+    if (strcmp(kind, "literal") == 0) {
+      config.path_kind = VECTIS_ROUTE_PATH_LITERAL;
+    } else if (strcmp(kind, "params") == 0) {
+      config.path_kind = VECTIS_ROUTE_PATH_PARAMS;
+    } else if (strcmp(kind, "regex") == 0) {
+      config.path_kind = VECTIS_ROUTE_PATH_REGEX;
+    } else {
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "proxy path_kind must be literal, params, or regex");
+    }
+  }
+  version = vectis_lua_table_string(lua, 2, "upstream_http_version");
+  if (version != NULL) {
+    if (strcmp(version, "auto") == 0) {
+      config.upstream_http_version = VECTIS_PROXY_HTTP_AUTO;
+    } else if (strcmp(version, "http1") == 0) {
+      config.upstream_http_version = VECTIS_PROXY_HTTP_1_1;
+    } else {
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "proxy upstream_http_version must be auto or http1");
+    }
+  }
+  config.connect_timeout_ms =
+      vectis_lua_table_long(lua, 2, "connect_timeout_ms", 0L);
+  config.idle_timeout_ms = vectis_lua_table_long(lua, 2, "idle_timeout_ms", 0L);
+  config.total_timeout_ms =
+      vectis_lua_table_long(lua, 2, "total_timeout_ms", 0L);
+  config.buffer_limit_bytes =
+      vectis_lua_table_size(lua, 2, "buffer_limit_bytes", 0u);
+
+  lua_getfield(lua, 2, "alternate_targets");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_istable(lua, -1)) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID, "proxy alternate_targets must be a table");
+    }
+    count = lua_rawlen(lua, -1);
+    if (count > sizeof(alternates) / sizeof(alternates[0])) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "proxy has too many alternate_targets");
+    }
+    for (i = 0u; i < count; ++i) {
+      lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+      if (lua_type(lua, -1) != LUA_TSTRING) {
+        lua_pop(lua, 2);
+        return vectis_lua_push_error_text(
+            lua, VECTIS_ERR_INVALID,
+            "proxy alternate_targets entries must be strings");
+      }
+      alternates[i] = lua_tostring(lua, -1);
+      lua_pop(lua, 1);
+    }
+    config.alternate_targets = alternates;
+    config.alternate_target_count = count;
+  }
+  /* Keep the Lua target table on the stack until registration copies URLs. */
+  vectis_error_clear(&error);
+  status = app->proxy_route(app, &config, &error);
+  lua_pop(lua, 1);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_lua_app_route(lua_State *lua) {
   vectis_lua_app *server;
   vectis_app *app;
@@ -21557,6 +21653,8 @@ static void vectis_lua_register_app(lua_State *lua) {
     lua_setfield(lua, -2, "metrics");
     lua_pushcfunction(lua, vectis_lua_app_route);
     lua_setfield(lua, -2, "route");
+    lua_pushcfunction(lua, vectis_lua_app_proxy);
+    lua_setfield(lua, -2, "proxy");
     lua_pushcfunction(lua, vectis_lua_app_route_count);
     lua_setfield(lua, -2, "route_count");
     lua_pushcfunction(lua, vectis_lua_app_group);

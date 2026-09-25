@@ -11,7 +11,18 @@ typedef void (*vectis_proxy_http_upstream_ready_fn)(
     vectis_proxy_http_upstream *upstream, vectis_proxy_http_event event,
     void *userdata);
 
-/* The owner retains easy, url, target and request_headers through the
+/* A producer may return CURL_READFUNC_PAUSE while its bounded queue is empty.
+ * Once input arrives, the owner resumes the easy handle. The producer and
+ * userdata remain valid until the transfer is cancelled or completed. */
+typedef struct vectis_proxy_http_upload {
+  size_t (*read)(char *buffer, size_t size, size_t count, void *userdata);
+  int (*trailers)(struct curl_slist **list, void *userdata);
+  void *userdata;
+  uint64_t content_length;
+  int known_length;
+} vectis_proxy_http_upload;
+
+/* The owner retains easy, url, target, method and request_headers through the
  * transfer. One curl callback chunk is held until the downstream consumes it;
  * curl is paused before another chunk can be copied. Header metadata has its
  * separate 64 KiB cap. The transfer owner cancels before cleanup. */
@@ -34,6 +45,7 @@ vectis_status vectis_proxy_http_upstream_init(
     const char *request_target, const char *method,
     struct curl_slist *request_headers, size_t buffer_limit,
     long connect_timeout_ms, long total_timeout_ms,
+    const vectis_proxy_http_upload *upload,
     vectis_proxy_http_upstream_ready_fn ready, void *userdata,
     vectis_error *error);
 

@@ -1,9 +1,10 @@
 # Reverse Proxy Design and Verification Spec
 
 Status: architecture selected for implementation, 2026-09-25. Route
-registration, header and body framing, target construction, route selection,
-and the worker curl pool are in progress; the proxy route does not yet serve
-traffic. The
+registration, target construction, worker curl integration, and bounded live
+HTTP/SSE request and response streaming are implemented. WebSocket relay,
+application director hooks, and the remaining resource limits are still in
+progress. The
 [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
 
@@ -34,10 +35,9 @@ strict C89. Kore and libcurl types stay out of the public proxy API; their
 language mode must not leak into installed headers or consumer compile flags.
 The installed SDK consumer is a C89 compilation and link gate for this API.
 
-The proposed C registration is `app->proxy_route(config, error)` with a
-corresponding Lua `app:proxy(opts)`. The exact C identifiers are illustrative
-until implementation, but the following fields and callback phases are the
-intended contract:
+The C registration is `app->proxy_route(app, &config, &error)` with a
+corresponding Lua `app:proxy(opts)`. The current route configuration fields and
+planned callback phases have the following contract:
 
 | Field or hook | Contract |
 | --- | --- |

@@ -72,6 +72,7 @@ vectis_status vectis_proxy_http_upstream_init(
     const char *request_target, const char *method,
     struct curl_slist *request_headers, size_t buffer_limit,
     long connect_timeout_ms, long total_timeout_ms,
+    const vectis_proxy_http_upload *upload,
     vectis_proxy_http_upstream_ready_fn ready, void *userdata,
     vectis_error *error) {
   size_t capacity;
@@ -81,18 +82,20 @@ vectis_status vectis_proxy_http_upstream_init(
   if (upstream == NULL || easy == NULL || url == NULL ||
       request_target == NULL || method == NULL || buffer_limit < 8192u ||
       buffer_limit > 1048576u || connect_timeout_ms < 0L ||
-      total_timeout_ms < 0L) {
+      total_timeout_ms < 0L ||
+      (upload != NULL &&
+       (upload->read == NULL ||
+        (upload->known_length != 0 && upload->known_length != 1) ||
+        (upload->known_length &&
+         ((curl_off_t)upload->content_length < 0 ||
+          (uint64_t)(curl_off_t)upload->content_length !=
+              upload->content_length))))) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "invalid proxy upstream transfer configuration");
     return VECTIS_ERR_INVALID;
   }
   memset(upstream, 0, sizeof(*upstream));
   head = strcmp(method, "HEAD") == 0;
-  if (!head && strcmp(method, "GET") != 0) {
-    vectis_set_error(error, VECTIS_ERR_NOT_IMPLEMENTED,
-                     "proxy upstream upload is not configured");
-    return VECTIS_ERR_NOT_IMPLEMENTED;
-  }
   capacity =
       buffer_limit > CURL_MAX_WRITE_SIZE ? buffer_limit : CURL_MAX_WRITE_SIZE;
   upstream->body = (unsigned char *)malloc(capacity);
@@ -112,6 +115,23 @@ vectis_status vectis_proxy_http_upstream_init(
     code = curl_easy_setopt(easy, CURLOPT_REQUEST_TARGET, request_target);
   if (code == CURLE_OK)
     code = curl_easy_setopt(easy, CURLOPT_NOBODY, head ? 1L : 0L);
+  if (code == CURLE_OK)
+    code = curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method);
+  if (code == CURLE_OK && upload != NULL)
+    code = curl_easy_setopt(easy, CURLOPT_UPLOAD, 1L);
+  if (code == CURLE_OK && upload != NULL)
+    code = curl_easy_setopt(easy, CURLOPT_READFUNCTION, upload->read);
+  if (code == CURLE_OK && upload != NULL)
+    code = curl_easy_setopt(easy, CURLOPT_READDATA, upload->userdata);
+  if (code == CURLE_OK && upload != NULL && upload->trailers != NULL)
+    code = curl_easy_setopt(easy, CURLOPT_TRAILERFUNCTION, upload->trailers);
+  if (code == CURLE_OK && upload != NULL && upload->trailers != NULL)
+    code = curl_easy_setopt(easy, CURLOPT_TRAILERDATA, upload->userdata);
+  if (code == CURLE_OK && upload != NULL)
+    code = curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE,
+                            upload->known_length
+                                ? (curl_off_t)upload->content_length
+                                : (curl_off_t)-1);
   if (code == CURLE_OK)
     code = curl_easy_setopt(easy, CURLOPT_HTTPHEADER, request_headers);
   if (code == CURLE_OK)

@@ -72,6 +72,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     -Wextra
     -Werror
     -Wpedantic
+    -pedantic-errors
     -Wstrict-prototypes
     -Wmissing-prototypes
     -Wshadow

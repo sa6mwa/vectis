@@ -1006,8 +1006,31 @@ assert(type(server.static_file) == "function")
 assert(type(server.webdav) == "function")
 assert(type(server.webdav_embedded) == "function")
 assert(type(server.route) == "function")
+assert(type(server.proxy) == "function")
 assert(type(server.route_count) == "function")
 assert(server:route_count() == 0)
+do
+  local ok, err = server:proxy({path = "/lua-smoke-proxy"})
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
+    upstream_http_version = "http3",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
+    alternate_targets = {false},
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  assert(server:proxy({
+    path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
+    alternate_targets = {"https://example.invalid"},
+    methods = {"GET", "POST"}, path_kind = "literal",
+    upstream_http_version = "http1", buffer_limit_bytes = 16384,
+    connect_timeout_ms = 1000, idle_timeout_ms = 3000,
+  }) == true)
+  assert(server:route_count() == 1)
+end
 assert(type(server.dsv) == "function")
 assert(type(server.upload) == "function")
 assert(type(server.mcp) == "function")

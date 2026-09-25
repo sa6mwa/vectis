@@ -21,6 +21,7 @@ struct origin_server {
   volatile int first_sent;
   volatile int third_sent;
   volatile int finish_third;
+  volatile int upload_first_seen;
 };
 
 static void send_all(int fd, const char *data, size_t length) {
@@ -44,6 +45,9 @@ static void *origin_main(void *userdata) {
   struct origin_server *server;
   struct timeval timeout;
   char request[2048];
+  char big_chunk[4096];
+  char *body_start;
+  size_t body_seen;
   size_t used;
   ssize_t got;
   int fd;
@@ -91,6 +95,90 @@ static void *origin_main(void *userdata) {
   for (spins = 0; spins < 500 && !server->finish_third; ++spins)
     usleep(10000u);
   assert(server->finish_third);
+  assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "\r\n\r\nABCD") == NULL &&
+           used < sizeof(request) - 1u);
+  assert(strstr(request, "POST /api/proxy/upload HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "Content-Length: 8\r\n") != NULL ||
+         strstr(request, "content-length: 8\r\n") != NULL);
+  server->upload_first_seen = 1;
+  send_all(fd,
+           "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+           "Connection: close\r\n\r\n4\r\npong\r\n",
+           strlen("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+                  "Connection: close\r\n\r\n4\r\npong\r\n"));
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "EFGH") == NULL && used < sizeof(request) - 1u);
+  send_all(fd, "4\r\ndone\r\n0\r\n\r\n", strlen("4\r\ndone\r\n0\r\n\r\n"));
+  assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "X-Trace: yes\r\n\r\n") == NULL &&
+           used < sizeof(request) - 1u);
+  assert(strstr(request, "POST /api/proxy/chunked HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "Transfer-Encoding: chunked\r\n") != NULL ||
+         strstr(request, "transfer-encoding: chunked\r\n") != NULL);
+  assert(strstr(request, "3\r\nabc\r\n0\r\nX-Trace: yes\r\n\r\n") != NULL);
+  send_all(fd,
+           "HTTP/1.1 201 Created\r\nContent-Length: 2\r\n"
+           "Connection: close\r\n\r\nok",
+           strlen("HTTP/1.1 201 Created\r\nContent-Length: 2\r\n"
+                  "Connection: close\r\n\r\nok"));
+  assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
+  assert(strstr(request, "POST /api/proxy/big HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "Content-Length: 32768\r\n") != NULL ||
+         strstr(request, "content-length: 32768\r\n") != NULL);
+  body_start = strstr(request, "\r\n\r\n") + 4;
+  body_seen = used - (size_t)(body_start - request);
+  for (used = 0u; used < body_seen; ++used)
+    assert(body_start[used] == 'A');
+  while (body_seen < 32768u) {
+    got = recv(fd, big_chunk, sizeof(big_chunk), 0);
+    assert(got > 0);
+    for (used = 0u; used < (size_t)got; ++used)
+      assert(big_chunk[used] == 'A');
+    body_seen += (size_t)got;
+  }
+  assert(body_seen == 32768u);
+  send_all(fd,
+           "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+           "Connection: close\r\n\r\nok",
+           strlen("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+                  "Connection: close\r\n\r\nok"));
   assert(close(fd) == 0);
   return NULL;
 }
@@ -178,6 +266,7 @@ int main(void) {
   unsigned short app_port;
   char target[128];
   char response[8192];
+  char big_body[32768];
   size_t used;
   ssize_t got;
   int fd;
@@ -196,7 +285,7 @@ int main(void) {
   vectis_proxy_route_config_init(&proxy);
   proxy.path = "/proxy/:id";
   proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
-  proxy.methods = VECTIS_HTTP_METHODS_GET;
+  proxy.methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST;
   proxy.target = target;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/plain", plain, NULL);
@@ -289,6 +378,75 @@ int main(void) {
   assert(got == 0 || (got < 0 && errno == ECONNRESET));
   assert(close(fd) == 0);
   origin.finish_third = 1;
+  fd = connect_app(app_port);
+  send_all(fd,
+           "POST /proxy/upload HTTP/1.1\r\nHost: localhost\r\n"
+           "Content-Length: 8\r\nConnection: close\r\n\r\nABCD",
+           strlen("POST /proxy/upload HTTP/1.1\r\nHost: localhost\r\n"
+                  "Content-Length: 8\r\nConnection: close\r\n\r\nABCD"));
+  used = 0u;
+  do {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    response[used] = '\0';
+  } while (strstr(response, "pong\r\n") == NULL &&
+           used < sizeof(response) - 1u);
+  assert(origin.upload_first_seen);
+  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  send_all(fd, "EFGH", 4u);
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+    response[used] = '\0';
+  }
+  assert(strstr(response, "pong\r\n4\r\ndone\r\n0\r\n\r\n") != NULL);
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd,
+           "POST /proxy/chunked HTTP/1.1\r\nHost: localhost\r\n"
+           "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n"
+           "Connection: close\r\n\r\n3\r\nabc\r\n",
+           strlen("POST /proxy/chunked HTTP/1.1\r\nHost: localhost\r\n"
+                  "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n"
+                  "Connection: close\r\n\r\n3\r\nabc\r\n"));
+  send_all(fd, "0\r\nX-Trace: yes\r\n\r\n",
+           strlen("0\r\nX-Trace: yes\r\n\r\n"));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+    response[used] = '\0';
+  }
+  assert(strstr(response, "HTTP/1.1 201 ") != NULL);
+  assert(strstr(response, "ok") != NULL);
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd,
+           "POST /proxy/big HTTP/1.1\r\nHost: localhost\r\n"
+           "Content-Length: 32768\r\nConnection: close\r\n\r\n",
+           strlen("POST /proxy/big HTTP/1.1\r\nHost: localhost\r\n"
+                  "Content-Length: 32768\r\nConnection: close\r\n\r\n"));
+  memset(big_body, 'A', sizeof(big_body));
+  send_all(fd, big_body, sizeof(big_body));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+    response[used] = '\0';
+  }
+  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  assert(strstr(response, "ok") != NULL);
+  assert(close(fd) == 0);
   assert(pthread_join(origin.thread, NULL) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);

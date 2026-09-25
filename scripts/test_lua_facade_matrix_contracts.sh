@@ -133,6 +133,7 @@ c_only_receivers=(
   prefixed_xml_route prefixed_dsv_route logger cai_client lockd_client
   managed_service register_consumer_receiver consumer_service_receiver
 )
+mapped_receivers=(proxy_route)
 
 for receiver in "${direct_receivers[@]}"; do
   require_fixed "$app_header" "(*$receiver)" "public C app receiver"
@@ -142,11 +143,15 @@ for receiver in "${c_only_receivers[@]}"; do
   require_fixed "$app_header" "(*$receiver)" "public C app receiver"
   require_fixed "$app_docs" "app->$receiver()" "C-only receiver mapping"
 done
+require_fixed "$app_header" '(*proxy_route)' 'public C proxy receiver'
+require_fixed "$app_binding" '"proxy"' 'Lua proxy receiver binding'
+require_fixed "$app_docs" 'app->proxy_route()' 'proxy receiver mapping'
+require_fixed "$app_docs" 'app:proxy()' 'Lua proxy receiver mapping'
 
 # A future public receiver must be classified explicitly rather than silently
 # escaping the Lua facade audit.
 while IFS= read -r receiver; do
-  case " ${direct_receivers[*]} ${c_only_receivers[*]} " in
+  case " ${direct_receivers[*]} ${c_only_receivers[*]} ${mapped_receivers[*]} " in
     *" $receiver "*) ;;
     *) fail "unclassified public C app receiver: $receiver" ;;
   esac

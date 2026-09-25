@@ -48,7 +48,8 @@ int main(void) {
     return 2;
   }
   if (app->route_count == NULL || app->route_count(app) != 0u ||
-      app->logger == NULL || app->logger(app) == NULL || app->close == NULL) {
+      app->logger == NULL || app->logger(app) == NULL ||
+      app->proxy_route == NULL || app->close == NULL) {
     app->close(app);
     return 3;
   }

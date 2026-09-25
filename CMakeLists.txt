@@ -684,6 +684,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
     src/vectis_proxy_http.c
     src/vectis_proxy_http_upstream.c
     src/vectis_proxy_http_wire.c
+    src/vectis_proxy_upload.c
     src/vectis_proxy_framing.c
     $<TARGET_OBJECTS:vectis_kore_runtime>)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

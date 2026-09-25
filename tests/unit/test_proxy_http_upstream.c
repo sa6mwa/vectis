@@ -23,6 +23,29 @@ struct stream_observation {
   unsigned trailers;
 };
 
+struct upload_source {
+  size_t offset;
+};
+
+static size_t upload_read(char *buffer, size_t size, size_t count,
+                          void *userdata) {
+  static const char payload[] = "abcdefgh";
+  struct upload_source *source;
+  size_t capacity;
+  size_t amount;
+
+  source = (struct upload_source *)userdata;
+  capacity = size * count;
+  amount = sizeof(payload) - 1u - source->offset;
+  if (amount > capacity)
+    amount = capacity;
+  if (amount > 4u)
+    amount = 4u;
+  memcpy(buffer, payload + source->offset, amount);
+  source->offset += amount;
+  return amount;
+}
+
 static void ready(vectis_proxy_http_upstream *upstream,
                   vectis_proxy_http_event event, void *userdata);
 
@@ -107,6 +130,95 @@ static void start_server(struct stream_server *server,
   assert(pthread_create(&server->thread, NULL, handler, server) == 0);
 }
 
+static void *serve_upload(void *userdata) {
+  static const char reply[] = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+                              "Connection: close\r\n\r\nok";
+  struct stream_server *server;
+  struct timeval timeout;
+  char request[2048];
+  char *body;
+  size_t used;
+  size_t body_length;
+  ssize_t got;
+  int fd;
+
+  server = (struct stream_server *)userdata;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  used = 0u;
+  body = NULL;
+  while (body == NULL && used < sizeof(request) - 1u) {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+    body = strstr(request, "\r\n\r\n");
+  }
+  assert(body != NULL);
+  assert(strstr(request, "GET /upload HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "Content-Length: 8\r\n") != NULL);
+  body += 4;
+  body_length = used - (size_t)(body - request);
+  while (body_length < 8u && used < sizeof(request) - 1u) {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    body_length += (size_t)got;
+  }
+  assert(body_length == 8u && memcmp(body, "abcdefgh", 8u) == 0);
+  send_all(fd, reply, sizeof(reply) - 1u);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void test_framed_get_upload(void) {
+  struct stream_server server;
+  struct stream_observation observation;
+  struct upload_source source;
+  vectis_proxy_http_upload upload;
+  vectis_proxy_http_upstream upstream;
+  vectis_error error;
+  char url[128];
+  CURL *easy;
+  CURLcode result;
+
+  start_server(&server, serve_upload);
+  memset(&observation, 0, sizeof(observation));
+  memset(&source, 0, sizeof(source));
+  memset(&upload, 0, sizeof(upload));
+  upload.read = upload_read;
+  upload.userdata = &source;
+  upload.content_length = 8u;
+  upload.known_length = 1;
+  assert(snprintf(url, sizeof(url), "http://127.0.0.1:%u/base",
+                  (unsigned)server.port) > 0);
+  easy = curl_easy_init();
+  assert(easy != NULL);
+  upload.content_length = UINT64_MAX;
+  assert(vectis_proxy_http_upstream_init(
+             &upstream, easy, url, "/upload", "GET", NULL, 8192u, 5000L, 10000L,
+             &upload, ready, &observation, &error) == VECTIS_ERR_INVALID);
+  upload.content_length = 8u;
+  assert(vectis_proxy_http_upstream_init(
+             &upstream, easy, url, "/upload", "GET", NULL, 8192u, 5000L, 10000L,
+             &upload, ready, &observation, &error) == VECTIS_OK);
+  result = curl_easy_perform(easy);
+  assert(result == CURLE_OK);
+  assert(source.offset == 8u);
+  assert(upstream.response.status == 200);
+  assert(observation.final == 1u && observation.body == 1u);
+  assert(vectis_proxy_http_upstream_finish(&upstream, result, NULL) ==
+         VECTIS_PROXY_HEADER_OK);
+  vectis_proxy_http_upstream_cleanup(&upstream);
+  curl_easy_cleanup(easy);
+  assert(pthread_join(server.thread, NULL) == 0);
+  assert(close(server.listener) == 0);
+}
+
 static void *serve_head(void *userdata) {
   static const char response[] =
       "HTTP/1.1 304 Not Modified\r\nContent-Length: 123\r\n"
@@ -150,9 +262,9 @@ static void test_head(void) {
                   (unsigned)server.port) > 0);
   easy = curl_easy_init();
   assert(easy != NULL);
-  assert(vectis_proxy_http_upstream_init(&upstream, easy, url, "/head", "HEAD",
-                                         NULL, 8192u, 5000L, 10000L, ready,
-                                         &observation, &error) == VECTIS_OK);
+  assert(vectis_proxy_http_upstream_init(
+             &upstream, easy, url, "/head", "HEAD", NULL, 8192u, 5000L, 10000L,
+             NULL, ready, &observation, &error) == VECTIS_OK);
   result = curl_easy_perform(easy);
   assert(result == CURLE_OK);
   assert(observation.final == 1u && observation.body == 0u);
@@ -205,6 +317,8 @@ int main(void) {
   int messages;
   int spins;
 
+  test_framed_get_upload();
+
   start_server(&server, serve);
   memset(&observation, 0, sizeof(observation));
   assert(snprintf(url, sizeof(url), "http://127.0.0.1:%u/original",
@@ -214,7 +328,7 @@ int main(void) {
   assert(easy != NULL && multi != NULL);
   assert(vectis_proxy_http_upstream_init(
              &upstream, easy, url, "/rewritten?q=1&q=2", "GET", NULL, 8192u,
-             5000L, 10000L, ready, &observation, &error) == VECTIS_OK);
+             5000L, 10000L, NULL, ready, &observation, &error) == VECTIS_OK);
   assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
   running = 1;
   for (spins = 0; spins < 500 && observation.body == 0u; ++spins) {

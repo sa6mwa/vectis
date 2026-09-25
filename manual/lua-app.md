@@ -21,6 +21,7 @@ test fails if the C table gains an unclassified receiver.
 | C receiver | Lua surface | Reason when not one-to-one |
 | --- | --- | --- |
 | `app->route()`, `app->prefixed_route()` | `app:route()`, `app:group()` | Buffered Lua callback route and prefix composition. |
+| `app->proxy_route()` | `app:proxy()` | Bounded in-process reverse proxy route; the C route configuration is copied at registration. |
 | `app->json_route()`, `app->json_typed_route()`, `app->xml_route()`, `app->prefixed_json_route()`, `app->prefixed_json_typed_route()`, `app->prefixed_xml_route()` | `app:route()` plus LoneJSON or `vectis.xml` | The C forms require C-owned maps and C callbacks. Lua deliberately keeps the request callback and its values in Lua. |
 | `app->dsv_route()`, `app->prefixed_dsv_route()` | `app:dsv()` | Native streaming DSV parsing with Lua row callbacks; it does not materialize the request body. |
 | `app->upload_stream()`, `app->upload_file()`, `app->upload_reader()` | `app:upload()` | Lua exposes an ownership-safe bounded chunk callback rather than borrowed C file/reader callbacks. |
@@ -301,6 +302,28 @@ assert(app:redirect({
   location = "/static/docs/index.html",
   status = 303,
 }) == true)
+```
+
+## Reverse Proxy Routes
+
+`app:proxy(opts)` registers a Kore-backed reverse proxy route. It forwards
+request and response bodies through bounded chunks, including SSE responses.
+It accepts `path`, `target`, optional `method` or `methods`, `path_kind`
+(`literal`, `params`, or `regex`), `alternate_targets`,
+`upstream_http_version` (`auto` or `http1`), `connect_timeout_ms`,
+`idle_timeout_ms`, `total_timeout_ms`, and `buffer_limit_bytes`. Omitted methods
+permit all supported HTTP methods. Targets must be HTTP or HTTPS base URLs;
+Vectis copies them at registration. Zero-valued timeouts and buffer limit use
+the C API defaults. The upstream HTTP version defaults to `auto`, which prefers
+HTTP/2 over HTTPS and uses HTTP/1.1 for cleartext.
+
+```lua
+assert(app:proxy({
+  path = "/api",
+  target = "https://backend.example/api",
+  methods = {"GET", "POST"},
+  buffer_limit_bytes = 16384,
+}))
 ```
 
 ## Lua Callback Routes
