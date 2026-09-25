@@ -48,9 +48,10 @@ strict C89. Kore and libcurl types stay out of the public proxy API; their
 language mode must not leak into installed headers or consumer compile flags.
 The installed SDK consumer is a C89 compilation and link gate for this API.
 The private vendored Kore runtime uses GNU99; the embedded CLI and dependency
-modules use C99. All project-owned `libvectis` sources, including the Kore
-proxy bridge, compile in strict C89 mode. Neither C99 target imposes its
-language mode on installed headers or downstream consumers.
+modules use C99. Project-owned `libvectis` sources compile in strict C89 mode
+except for the private Kore bridge translation unit, which includes Kore's C99
+headers and is compiled as GNU99. This source-level exception does not impose
+its language mode on installed headers or downstream consumers.
 
 The C registration is `app->proxy_route(app, &config, &error)` with a
 corresponding Lua `app:proxy(opts)`. The current route configuration fields and

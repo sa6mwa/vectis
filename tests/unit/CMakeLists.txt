@@ -14,7 +14,7 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
+      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|ws_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
     set(kore_test_deadline 15)
     if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
       set(kore_test_deadline 30)
@@ -80,6 +80,30 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_kore_proxy_live test_kore_proxy_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_ws_live
     test_kore_proxy_ws_live.c)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_program(vectis_test_go_executable NAMES go)
+    if(vectis_test_go_executable)
+      set(vectis_test_go_ws_origin
+        "${CMAKE_CURRENT_BINARY_DIR}/proxy_go_ws_origin")
+      add_custom_command(OUTPUT "${vectis_test_go_ws_origin}"
+        COMMAND ${CMAKE_COMMAND} -E env
+          "GOCACHE=${CMAKE_CURRENT_BINARY_DIR}/go-cache"
+          CGO_ENABLED=0 GOTOOLCHAIN=local
+          "${vectis_test_go_executable}" build -trimpath
+          -o "${vectis_test_go_ws_origin}"
+          "${CMAKE_SOURCE_DIR}/tests/fixtures/proxy_go_ws_origin.go"
+        DEPENDS "${CMAKE_SOURCE_DIR}/tests/fixtures/proxy_go_ws_origin.go"
+        VERBATIM)
+      add_custom_target(vectis_test_go_ws_origin
+        DEPENDS "${vectis_test_go_ws_origin}")
+      vectis_add_unit_test(vectis_unit_kore_proxy_go_ws_live
+        test_kore_proxy_go_ws_live.c)
+      add_dependencies(vectis_unit_kore_proxy_go_ws_live
+        vectis_test_go_ws_origin)
+      target_compile_definitions(vectis_unit_kore_proxy_go_ws_live PRIVATE
+        VECTIS_TEST_GO_WS_ORIGIN="${vectis_test_go_ws_origin}")
+    endif()
+  endif()
   vectis_add_unit_test(vectis_unit_kore_proxy_ws_rejection_live
     test_kore_proxy_ws_rejection_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_wss_live
