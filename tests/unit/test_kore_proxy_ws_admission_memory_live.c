@@ -371,6 +371,7 @@ int main(void) {
   unsigned long later;
   unsigned long after_close;
   unsigned at_headers_fds;
+  unsigned active_fds_after_upgrade;
   unsigned after_close_fds;
   size_t client_produced;
   int bidirectional;
@@ -416,6 +417,9 @@ int main(void) {
   }
   assert(probe->worker_pid > 0);
   assert(__sync_fetch_and_add(&origin.accepted, 0u) == TEST_CONNECTIONS);
+  active_fds_after_upgrade = process_fd_count(probe->worker_pid);
+  assert(active_fds_after_upgrade >=
+         probe->baseline_fds + TEST_CONNECTIONS * 2u);
   client_produced = bidirectional ? send_masked_frames(clients) : 0u;
   if (origin.filled) {
     for (i = 0; i < 500; ++i) {
@@ -476,6 +480,11 @@ int main(void) {
   assert(peak <= probe->baseline_rss_kb + TEST_MAX_RSS_DELTA_KB);
   assert(later <= after_warmup + 4096u);
   assert(at_headers_fds <= probe->baseline_fds + 64u);
+  if (at_headers_fds < active_fds_after_upgrade)
+    fprintf(stderr,
+            "websocket exchanges closed during pressure: worker fds %u -> %u\n",
+            active_fds_after_upgrade, at_headers_fds);
+  assert(at_headers_fds >= active_fds_after_upgrade);
   if (origin.filled) {
     assert(__sync_fetch_and_add(&origin.producer_done, 0) == 1);
     assert(__sync_fetch_and_add(&origin.produced, 0u) >=

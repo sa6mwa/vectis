@@ -73,6 +73,9 @@ typedef struct vectis_kore_proxy_state {
   int active;
   int has_upload;
   int read_want_write;
+  /* Only a blocked SSL_write may make the send queue wait for readability.
+   * A preceding SSL_read WANT_READ must not suppress the first write. */
+  int send_retry_read;
 } vectis_kore_proxy_state;
 
 static vectis_kore_proxy_state *vectis_kore_proxy_states;
@@ -182,7 +185,7 @@ static void vectis_kore_proxy_schedule(vectis_kore_proxy_state *state) {
       (state->headers_queued &&
        (vectis_proxy_http_upstream_body(&state->upstream, NULL) != NULL ||
         state->done))) {
-    if (connection->tls != NULL && SSL_want(connection->tls) == SSL_READING &&
+    if (connection->tls != NULL && state->send_retry_read &&
         !TAILQ_EMPTY(&connection->send_queue))
       desired |= VECTIS_PROXY_EVENT_READ;
     else
@@ -445,6 +448,9 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     }
     if (connection->state == CONN_STATE_DISCONNECTING)
       return 0;
+    state->send_retry_read = connection->tls != NULL &&
+                             !TAILQ_EMPTY(&connection->send_queue) &&
+                             SSL_want(connection->tls) == SSL_READING;
     if (TAILQ_FIRST(&connection->send_queue) != prior_buffer ||
         (prior_buffer != NULL && prior_buffer->s_off > prior_offset))
       vectis_kore_proxy_progress(state);
@@ -475,6 +481,7 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   }
   if (state->headers_ready && !state->headers_queued) {
     net_send_queue(connection, state->wire.head, state->wire.head_length);
+    state->send_retry_read = 0;
     state->headers_queued = 1;
     state->request->status = (u_int16_t)state->response_status;
     vectis_kore_proxy_schedule(state);
@@ -492,6 +499,7 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
         return 0;
       }
       net_send_queue(connection, state->frame, written);
+      state->send_retry_read = 0;
       state->telemetry.downstream_bytes += (uint64_t)body_length;
       vectis_proxy_http_upstream_consume(&state->upstream, body_length);
       vectis_kore_proxy_schedule(state);
@@ -521,9 +529,10 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
         return 0;
       }
       state->final_queued = 1;
-      if (state->final_length != 0u)
+      if (state->final_length != 0u) {
         net_send_queue(connection, state->final_wire, state->final_length);
-      else {
+        state->send_retry_read = 0;
+      } else {
         kore_connection_disconnect(connection);
         return 0;
       }

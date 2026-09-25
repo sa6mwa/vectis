@@ -57,6 +57,18 @@ set_target_properties(vectis_ws_client PROPERTIES
 )
 
 if(TARGET vectis_bin)
+  if(VECTIS_WITH_KORE_RUNTIME AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME vectis_proxy_stream_smoke_http
+      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/bench/proxy.py"
+        --vectis "$<TARGET_FILE:vectis_bin>" --smoke)
+    add_test(NAME vectis_proxy_stream_smoke_tls
+      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/bench/proxy.py"
+        --vectis "$<TARGET_FILE:vectis_bin>" --smoke --tls)
+    set_tests_properties(vectis_proxy_stream_smoke_http
+      vectis_proxy_stream_smoke_tls PROPERTIES
+      LABELS "proxy;smoke;local;integration" TIMEOUT 25 RUN_SERIAL TRUE)
+  endif()
   find_program(VECTIS_HOST_LUA NAMES lua5.5 lua)
 
   add_executable(vectis_opcua_lua_e2e

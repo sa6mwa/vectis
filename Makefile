@@ -43,7 +43,7 @@ PROXY_FAST_TEST_REGEX := ^($(subst $(space),|,$(strip $(PROXY_FAST_TESTS))))$$
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-debug-lua build-release build-asan build-valgrind build-coverage build-fuzz \
-	bench-metrics-storage perf-gate \
+	bench-metrics-storage bench-proxy perf-gate \
 	test test-debug test-proxy-fast test-proxy-asan-fast test-proxy-lua-fast test-proxy-lua-asan-fast test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
@@ -100,6 +100,7 @@ help:
 		'make test-instrumentation-presets Build the sanitizer and coverage preset link-regression targets.' \
 		'make build-fuzz         Configure and build the fuzz preset.' \
 		'make bench-metrics-storage Time encrypted Pouch layouts for 6m/12m (Python 3.9+; METRICS_BENCH_ARGS=--smoke for a short check).' \
+		'make bench-proxy        Compare direct and proxied HTTP/SSE/WS locally (PROXY_BENCH_ARGS="--smoke" for a short check).' \
 		'make perf-gate          Gate encrypted metrics recovery through HTTPS readiness (Linux; Python 3).' \
 		'make deps-debug         Provision host debug dependencies into .cache/.' \
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
@@ -296,6 +297,11 @@ bench-metrics-storage: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) bench-metrics-storage-configure $(CMAKE) --preset $(DEBUG_PRESET) -DVECTIS_BUILD_BENCHMARKS=ON
 	$(TIMED) bench-metrics-storage-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis
 	$(TIMED) bench-metrics-storage python3 $(ROOT)/bench/metrics_storage.py --binary $(ROOT)/build/$(DEBUG_PRESET)/vectis --root $(ROOT)/build/$(DEBUG_PRESET)/bench $(METRICS_BENCH_ARGS)
+
+bench-proxy: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) bench-proxy-configure $(CMAKE) --preset $(DEBUG_PRESET)
+	$(TIMED) bench-proxy-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
+	$(TIMED) bench-proxy python3 -B $(ROOT)/bench/proxy.py --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis $(PROXY_BENCH_ARGS)
 
 fuzz: build-fuzz
 

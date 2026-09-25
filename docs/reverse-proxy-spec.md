@@ -1204,6 +1204,28 @@ Run a short, deterministic memory/backpressure smoke in ordinary CI. Keep
 throughput and soak benchmarks opt-in or on dedicated runners so unrelated
 host load does not turn the correctness gate into a noisy performance test.
 
+The opt-in local HTTP/1.1 comparison is `make bench-proxy`, with
+`PROXY_BENCH_ARGS="--tls"` for a trusted HTTPS/WSS origin and HTTPS/WSS
+downstream. Both legs use the same local certificate in that profile. The
+harness in `bench/proxy.py` warms each path, generates and consumes payloads
+in 16 KiB chunks, checks that a duplex response arrives before upload EOF,
+and measures small requests, streaming downloads, slow uploads/readers, SSE,
+and WebSocket echo at 1, 8, and 16 concurrent streams. It reports JSON with
+direct and proxied latency distributions, added latency, throughput, worker
+peak RSS, process-group file descriptors, and CPU time. The `--smoke` form
+is registered as two short CTest integration cases (HTTP and TLS); they
+assert behavior and set no performance threshold. The harness owns its
+origin, proxy process group, temporary certificate, and teardown.
+
+This local comparison uses an HTTP/1.1 origin. Existing deterministic C
+fixtures exercise certificate-verified HTTP/2 memory, pausing, and duplex
+behavior. A repeatable direct-versus-proxy HTTP/2 throughput profile,
+long-lived soak, and numerical latency thresholds still require a dedicated
+runner and pinned H2 origin fixture. Do not use the shared-host JSON samples
+as release thresholds. The `/proc` resource samples are Linux-only and
+observational; the conservative 256 MiB worker admission target is checked
+through the admission and memory tests described above.
+
 ## External API notes
 
 The transport choices above depend on documented libcurl behavior:

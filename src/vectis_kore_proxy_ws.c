@@ -71,6 +71,8 @@ typedef struct vectis_kore_ws_state {
   int downstream_interest;
   int upstream_ready;
   int down_read_want_write;
+  /* Tracks SSL_write retry state separately from downstream SSL_read. */
+  int send_retry_read;
   int upstream_again;
   int upstream_error;
   int upstream_eof;
@@ -87,6 +89,12 @@ static vectis_kore_ws_state *vectis_kore_ws_states;
 
 static void vectis_kore_ws_pump(vectis_kore_ws_state *state);
 static void vectis_kore_ws_schedule(vectis_kore_ws_state *state);
+
+static void vectis_kore_ws_queue(vectis_kore_ws_state *state, const void *data,
+                                 size_t length) {
+  state->send_retry_read = 0;
+  net_send_queue(state->downstream, data, length);
+}
 
 static void vectis_kore_ws_unlink(vectis_kore_ws_state *state) {
   vectis_kore_ws_state **slot;
@@ -272,7 +280,7 @@ static void vectis_kore_ws_schedule(vectis_kore_ws_state *state) {
   }
   if (!TAILQ_EMPTY(&connection->send_queue) ||
       state->phase == VECTIS_KORE_WS_ERROR || state->down_length != 0u) {
-    if (connection->tls != NULL && SSL_want(connection->tls) == SSL_READING)
+    if (connection->tls != NULL && state->send_retry_read)
       downstream |= VECTIS_PROXY_EVENT_READ;
     else
       downstream |= VECTIS_PROXY_EVENT_WRITE;
@@ -377,7 +385,7 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
     surplus = state->response_length - head_length;
     memmove(state->response_head, state->response_head + head_length, surplus);
     state->response_length = surplus;
-    net_send_queue(state->downstream, wire, wire_length);
+    vectis_kore_ws_queue(state, wire, wire_length);
     free(wire);
     if (final) {
       state->request->status = (u_int16_t)state->rejection.downstream_status;
@@ -414,7 +422,7 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
   if (state->down_length != 0u)
     memcpy(state->to_downstream, state->response_head + head_length,
            state->down_length);
-  net_send_queue(state->downstream, wire, wire_length);
+  vectis_kore_ws_queue(state, wire, wire_length);
   free(wire);
   state->request->status = 101;
   vectis_internal_metrics_note_http_status(state->app, 101);
@@ -424,7 +432,6 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
 }
 
 static int vectis_kore_ws_rejection_step(vectis_kore_ws_state *state) {
-  struct connection *connection;
   vectis_error error;
   size_t consumed;
   size_t written;
@@ -433,9 +440,8 @@ static int vectis_kore_ws_rejection_step(vectis_kore_ws_state *state) {
   size_t wire_length;
   CURLcode code;
 
-  connection = state->downstream;
   if (state->down_length != 0u) {
-    net_send_queue(connection, state->to_downstream, state->down_length);
+    vectis_kore_ws_queue(state, state->to_downstream, state->down_length);
     state->telemetry.downstream_bytes += (uint64_t)state->down_length;
     state->down_length = 0u;
     return 1;
@@ -467,7 +473,7 @@ static int vectis_kore_ws_rejection_step(vectis_kore_ws_state *state) {
                                            state->upstream_eof, &wire,
                                            &wire_length, &error) == VECTIS_OK &&
           wire_length != 0u)
-        net_send_queue(connection, wire, wire_length);
+        vectis_kore_ws_queue(state, wire, wire_length);
       free(wire);
     }
     state->rejection_finished = 1;
@@ -553,13 +559,16 @@ static void vectis_kore_ws_pump(vectis_kore_ws_state *state) {
         kore_connection_disconnect(connection);
         return;
       }
+      state->send_retry_read = connection->tls != NULL &&
+                               !TAILQ_EMPTY(&connection->send_queue) &&
+                               SSL_want(connection->tls) == SSL_READING;
       if (!TAILQ_EMPTY(&connection->send_queue))
         break;
       progress = 1;
     }
     if (state->closing) {
       if (state->down_length != 0u && TAILQ_EMPTY(&connection->send_queue)) {
-        net_send_queue(connection, state->to_downstream, state->down_length);
+        vectis_kore_ws_queue(state, state->to_downstream, state->down_length);
         state->telemetry.downstream_bytes += (uint64_t)state->down_length;
         state->down_length = 0u;
         progress = 1;
@@ -647,7 +656,7 @@ static void vectis_kore_ws_pump(vectis_kore_ws_state *state) {
         }
       }
       if (state->down_length != 0u && TAILQ_EMPTY(&connection->send_queue)) {
-        net_send_queue(connection, state->to_downstream, state->down_length);
+        vectis_kore_ws_queue(state, state->to_downstream, state->down_length);
         state->telemetry.downstream_bytes += (uint64_t)state->down_length;
         state->down_length = 0u;
         progress = 1;
