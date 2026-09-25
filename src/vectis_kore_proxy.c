@@ -302,7 +302,10 @@ static int vectis_kore_proxy_upload_drive(vectis_kore_proxy_state *state) {
           return 0;
         }
       } else {
-        got = recv(connection->fd, state->read_chunk, state->read_capacity, 0);
+        do {
+          got =
+              recv(connection->fd, state->read_chunk, state->read_capacity, 0);
+        } while (got < 0 && errno == EINTR);
         if (got <= 0) {
           if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
             break;
@@ -583,7 +586,9 @@ static void vectis_kore_proxy_event(void *userdata, int error) {
         return;
       }
     } else {
-      count = recv(connection->fd, &byte, 1u, MSG_PEEK);
+      do {
+        count = recv(connection->fd, &byte, 1u, MSG_PEEK);
+      } while (count < 0 && errno == EINTR);
       if (count >= 0) {
         kore_connection_disconnect(connection);
         return;

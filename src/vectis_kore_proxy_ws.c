@@ -331,7 +331,9 @@ static int vectis_kore_ws_read_down(vectis_kore_ws_state *state) {
       return 0;
     }
   } else {
-    got = recv(connection->fd, state->to_upstream, state->buffer_capacity, 0);
+    do {
+      got = recv(connection->fd, state->to_upstream, state->buffer_capacity, 0);
+    } while (got < 0 && errno == EINTR);
     if (got <= 0) {
       if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         return 0;
