@@ -53,6 +53,10 @@
 #include <vectis/embedded_fs.h>
 #include <vectis/webdav.h>
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
+
 #if !defined(MAP_ANONYMOUS) && defined(MAP_ANON)
 #define MAP_ANONYMOUS MAP_ANON
 #endif
@@ -11036,6 +11040,56 @@ static vectis_status vectis_process_thread_count(size_t *out,
   }
   closedir(dir);
   *out = count;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+#elif defined(__APPLE__)
+  thread_act_array_t threads;
+  mach_msg_type_number_t count;
+  kern_return_t result;
+  kern_return_t release_result;
+  kern_return_t current_result;
+  mach_msg_type_number_t i;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "thread count output required");
+    return VECTIS_ERR_INVALID;
+  }
+  threads = NULL;
+  count = 0;
+  result = task_threads(mach_task_self(), &threads, &count);
+  if (result != KERN_SUCCESS) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to inspect process thread count: task_threads: %s",
+                      mach_error_string(result));
+    return VECTIS_ERR_STATE;
+  }
+  release_result = KERN_SUCCESS;
+  if (threads != NULL) {
+    for (i = 0; i < count; ++i) {
+      current_result = mach_port_deallocate(mach_task_self(), threads[i]);
+      if (release_result == KERN_SUCCESS && current_result != KERN_SUCCESS) {
+        release_result = current_result;
+      }
+    }
+    current_result = vm_deallocate(mach_task_self(), (vm_address_t)threads,
+                                   (vm_size_t)count * sizeof(*threads));
+    if (release_result == KERN_SUCCESS && current_result != KERN_SUCCESS) {
+      release_result = current_result;
+    }
+  }
+  if (release_result != KERN_SUCCESS) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to release Mach thread snapshot: %s",
+                      mach_error_string(release_result));
+    return VECTIS_ERR_STATE;
+  }
+  if (threads == NULL || count == 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to inspect process thread count: empty Mach "
+                     "thread snapshot");
+    return VECTIS_ERR_STATE;
+  }
+  *out = (size_t)count;
   vectis_error_clear(error);
   return VECTIS_OK;
 #else

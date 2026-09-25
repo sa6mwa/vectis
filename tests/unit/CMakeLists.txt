@@ -72,6 +72,10 @@ vectis_add_unit_test(vectis_unit_proxy_route_selection
   test_proxy_route_selection.c)
 vectis_add_unit_test(vectis_unit_proxy_url test_proxy_url.c)
 if(VECTIS_WITH_KORE_RUNTIME)
+  if(APPLE)
+    vectis_add_unit_test(vectis_unit_kore_quiescence_darwin
+      test_kore_quiescence_darwin.c)
+  endif()
   vectis_add_unit_test(vectis_unit_kore_response_write_timeout
     test_kore_response_write_timeout.c)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

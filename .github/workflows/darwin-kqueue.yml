@@ -46,6 +46,7 @@ jobs:
       - name: Build proxy integration tests
         run: |
           cmake --build --preset darwin-debug --parallel 2 --target \
+            vectis_unit_kore_quiescence_darwin \
             vectis_unit_kore_proxy_live \
             vectis_unit_kore_proxy_local_live \
             vectis_unit_kore_proxy_overlap_live \
@@ -56,4 +57,4 @@ jobs:
       - name: Exercise native kqueue HTTP, SSE, WebSocket, and WSS
         run: |
           ctest --preset darwin-debug --no-tests=error \
-            -R '^(vectis_unit_forked_kore_darwin_supervisor|vectis_unit_kore_proxy_(live|local_live|overlap_live|ws_live|ws_rejection_live|wss_live))$'
+            -R '^(vectis_unit_forked_kore_darwin_supervisor|vectis_unit_kore_quiescence_darwin|vectis_unit_kore_proxy_(live|local_live|overlap_live|ws_live|ws_rejection_live|wss_live))$'
