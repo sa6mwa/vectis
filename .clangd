@@ -8,8 +8,18 @@ CompileFlags:
     - -Wall
     - -Wextra
     - -Wpedantic
+    - -Wno-long-long
 Documentation:
   CommentFormat: Markdown
+---
+If:
+  PathMatch: src/vectis_kore_bridge.c
+CompileFlags:
+  Remove:
+    - -std=*
+  Add:
+    - -std=gnu99
+    - -Wno-pedantic
 ---
 If:
   PathMatch: (dist|build|\\.cache)/.*
