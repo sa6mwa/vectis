@@ -71,6 +71,8 @@ vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
 vectis_add_unit_test(vectis_unit_proxy_route_selection
   test_proxy_route_selection.c)
 vectis_add_unit_test(vectis_unit_proxy_url test_proxy_url.c)
+vectis_add_unit_test(vectis_unit_proxy_curl_capabilities
+  test_proxy_curl_capabilities.c)
 if(VECTIS_WITH_KORE_RUNTIME)
   if(APPLE)
     vectis_add_unit_test(vectis_unit_kore_quiescence_darwin
