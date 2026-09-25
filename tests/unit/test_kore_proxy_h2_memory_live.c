@@ -622,7 +622,7 @@ static int connect_app(unsigned short port, int route_kind, int upload_mode) {
   return fd;
 }
 
-static size_t send_uploads(const int *clients) {
+static size_t send_uploads(const int *clients, int first) {
   char body[4096];
   size_t offsets[TEST_CONNECTIONS];
   size_t total;
@@ -638,7 +638,7 @@ static size_t send_uploads(const int *clients) {
   while (idle < 200u) {
     active = 0;
     progress = 0;
-    for (i = 0; i < TEST_CONNECTIONS; ++i) {
+    for (i = first; i < TEST_CONNECTIONS; ++i) {
       if (offsets[i] == TEST_BODY_SIZE)
         continue;
       active = 1;
@@ -665,7 +665,7 @@ static size_t send_uploads(const int *clients) {
     }
   }
   total = 0u;
-  for (i = 0; i < TEST_CONNECTIONS; ++i) {
+  for (i = first; i < TEST_CONNECTIONS; ++i) {
     assert(offsets[i] >= 65536u);
     assert(offsets[i] < TEST_BODY_SIZE);
     total += offsets[i];
@@ -728,6 +728,7 @@ int main(void) {
   size_t buffer_limit;
   int mixed;
   int mixed_upload;
+  int mixed_transfer;
   int mtls;
   int upload_mode;
   int h2_connections;
@@ -735,12 +736,15 @@ int main(void) {
   (void)signal(SIGPIPE, SIG_IGN);
   mixed = getenv("VECTIS_PROXY_MIXED_MEMORY") != NULL;
   mixed_upload = getenv("VECTIS_PROXY_MIXED_UPLOAD_MEMORY") != NULL;
+  mixed_transfer = getenv("VECTIS_PROXY_MIXED_TRANSFER_MEMORY") != NULL;
   mtls = getenv("VECTIS_PROXY_H2_MTLS") != NULL;
   upload_mode = mixed_upload || getenv("VECTIS_PROXY_H2_UPLOAD_MEMORY") != NULL;
   assert(!mixed_upload || !mixed);
+  assert(!mixed_transfer || (!mixed_upload && !mixed && !upload_mode));
   assert(!upload_mode || !mixed);
-  h2_connections =
-      (mixed || mixed_upload) ? TEST_MIXED_CONNECTIONS : TEST_CONNECTIONS;
+  h2_connections = (mixed || mixed_upload || mixed_transfer)
+                       ? TEST_MIXED_CONNECTIONS
+                       : TEST_CONNECTIONS;
   probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   assert(probe != MAP_FAILED);
@@ -789,7 +793,7 @@ int main(void) {
   origin.port = listen_port(&origin.listener);
   if (mixed)
     ws_origin.port = listen_port(&ws_origin.listener);
-  if (mixed_upload)
+  if (mixed_upload || mixed_transfer)
     h1_origin.port = listen_port(&h1_origin.listener);
   app_port = unused_port();
   assert(snprintf(target, sizeof(target), "https://localhost:%u",
@@ -827,7 +831,7 @@ int main(void) {
     proxy.buffer_limit_bytes = 1048576u;
     assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   }
-  if (mixed_upload) {
+  if (mixed_upload || mixed_transfer) {
     assert(snprintf(h1_target, sizeof(h1_target), "http://127.0.0.1:%u",
                     (unsigned)h1_origin.port) > 0);
     vectis_proxy_route_config_init(&proxy);
@@ -848,7 +852,7 @@ int main(void) {
   if (mixed)
     assert(pthread_create(&ws_origin.thread, NULL, ws_origin_main,
                           &ws_origin) == 0);
-  if (mixed_upload)
+  if (mixed_upload || mixed_transfer)
     assert(pthread_create(&h1_origin.thread, NULL, h1_origin_main,
                           &h1_origin) == 0);
 
@@ -877,11 +881,13 @@ int main(void) {
     assert(__sync_fetch_and_add(&ws_origin.produced, 0u) >=
            (size_t)TEST_MIXED_CONNECTIONS * 1048576u);
   }
-  if (mixed_upload) {
+  if (mixed_upload || mixed_transfer) {
     for (i = h2_connections; i < TEST_CONNECTIONS; ++i)
       clients[i] = connect_app(app_port, TEST_ROUTE_H1, 1);
   }
-  upload_sent = upload_mode ? send_uploads(clients) : 0u;
+  upload_sent = (upload_mode || mixed_transfer)
+                    ? send_uploads(clients, mixed_transfer ? h2_connections : 0)
+                    : 0u;
   assert(probe->worker_pid > 0);
   for (i = 0; i < 500; ++i) {
     if (__sync_fetch_and_add(&probe->accepted, 0u) ==
@@ -898,7 +904,7 @@ int main(void) {
          (unsigned)h2_connections);
   if (upload_mode)
     assert(upload_sent >= (size_t)h2_connections * 1048576u);
-  if (mixed_upload) {
+  if (mixed_upload || mixed_transfer) {
     for (i = 0; i < 500; ++i) {
       if (__sync_fetch_and_add(&h1_origin.accepted, 0u) ==
               TEST_MIXED_CONNECTIONS &&
@@ -934,8 +940,10 @@ int main(void) {
           "warmup=%luKB peak=%luKB later=%luKB fds=%u,%u "
           "generated=%lu,%lu,%lu ws=%lu uploaded=%lu,%lu h1=%u\n",
           mixed ? "mixed h2/ws"
-                : (mixed_upload ? "mixed h1/h2 upload"
-                                : (upload_mode ? "h2 upload" : "h2")),
+                : (mixed_upload
+                       ? "mixed h1/h2 upload"
+                       : (mixed_transfer ? "mixed h1 upload/h2 download"
+                                         : (upload_mode ? "h2 upload" : "h2"))),
           (unsigned long)buffer_limit, probe->baseline_rss_kb, at_headers,
           after_warmup, peak, later, probe->baseline_fds, at_headers_fds,
           (unsigned long)generated_at_headers,
@@ -943,8 +951,9 @@ int main(void) {
           (unsigned long)(mixed ? ws_origin.produced : 0u),
           (unsigned long)upload_sent,
           (unsigned long)__sync_fetch_and_add(&probe->uploaded, 0u),
-          mixed_upload ? __sync_fetch_and_add(&h1_origin.uploads_started, 0u)
-                       : 0u);
+          (mixed_upload || mixed_transfer)
+              ? __sync_fetch_and_add(&h1_origin.uploads_started, 0u)
+              : 0u);
   assert(at_headers <= probe->baseline_rss_kb + TEST_MAX_RSS_DELTA_KB);
   assert(peak <= probe->baseline_rss_kb + TEST_MAX_RSS_DELTA_KB);
   assert(later <= after_warmup + 4096u);
@@ -959,6 +968,8 @@ int main(void) {
     assert(generated_later - generated_after_warmup <=
            (size_t)h2_connections * 1048576u);
   }
+  if (mixed_transfer)
+    assert(upload_sent >= (size_t)TEST_MIXED_CONNECTIONS * 1048576u);
 
   overflow = connect_app(app_port, TEST_ROUTE_H2, upload_mode);
   read_head(overflow, head, sizeof(head));
@@ -970,7 +981,7 @@ int main(void) {
     assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
     assert(close(overflow) == 0);
   }
-  if (mixed_upload) {
+  if (mixed_upload || mixed_transfer) {
     overflow = connect_app(app_port, TEST_ROUTE_H1, 1);
     read_head(overflow, head, sizeof(head));
     assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
@@ -985,7 +996,7 @@ int main(void) {
     pending.revents = 0;
     assert(poll(&pending, 1u, 100) == 0);
   }
-  if (mixed_upload) {
+  if (mixed_upload || mixed_transfer) {
     pending.fd = h1_origin.listener;
     pending.revents = 0;
     assert(poll(&pending, 1u, 100) == 0);
@@ -1000,7 +1011,7 @@ int main(void) {
     (void)__sync_lock_test_and_set(&ws_origin.release, 1);
     assert(pthread_join(ws_origin.thread, NULL) == 0);
   }
-  if (mixed_upload) {
+  if (mixed_upload || mixed_transfer) {
     (void)__sync_lock_test_and_set(&h1_origin.release, 1);
     assert(pthread_join(h1_origin.thread, NULL) == 0);
   }
@@ -1016,7 +1027,7 @@ int main(void) {
   assert(close(origin.listener) == 0);
   if (mixed)
     assert(close(ws_origin.listener) == 0);
-  if (mixed_upload)
+  if (mixed_upload || mixed_transfer)
     assert(close(h1_origin.listener) == 0);
   SSL_CTX_free(origin.ctx);
   BIO_free(pem);

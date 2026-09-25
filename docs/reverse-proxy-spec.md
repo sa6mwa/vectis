@@ -795,7 +795,18 @@ bytes in aggregate while the origins remained stalled. Both upload variants
 also passed under ASan's 256 MiB aggregate ceiling. This measures a stalled
 upload profile, not the allocator maximum for every concurrent workload.
 
-The full admission reserve still needs combined upload and download pressure,
+Another variant combines eight slow-reader HTTP/2 downloads with eight
+HTTP/1.1 uploads whose origins stop reading after their first body byte.
+Both workloads share one worker and use 1 MiB route chunk limits. It checks
+the same RSS plateau, `503` admission for both route types, origin admission,
+and FD recovery. In one x86-64 Linux Debug run, worker RSS was 7,216 KiB at
+the preflight baseline and 40,392 KiB at the sampled peak and later plateau;
+the HTTP/2 origins generated 49,840,128 bytes while upload clients had sent
+69,974,734 bytes. The ASan variant passed its 256 MiB ceiling. This covers
+simultaneous pressure across exchanges, not a full-duplex exchange with both
+directions active in the same HTTP request.
+
+The full admission reserve still needs a worst-case full-duplex HTTP exchange,
 both idle caches, maximum permitted headers, CA bundles and client identities,
 and a deployment worker-memory budget. The bidirectional WebSocket case is
 covered separately above.
