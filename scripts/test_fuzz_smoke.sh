@@ -21,6 +21,7 @@ python3 "$script_dir/test_runtime_contract.py" "$build_dir"
 json_target="$build_dir/tests/fuzz/vectis_fuzz_json_validate"
 kore_target="$build_dir/tests/fuzz/vectis_fuzz_kore_bridge"
 proxy_framing_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_framing"
+proxy_upload_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_upload"
 proxy_headers_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_headers"
 proxy_ws_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_ws_handshake"
 proxy_url_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_url"
@@ -39,6 +40,10 @@ if [ ! -x "$kore_target" ]; then
 fi
 if [ ! -x "$proxy_framing_target" ]; then
   echo "missing fuzz target: $proxy_framing_target" >&2
+  exit 1
+fi
+if [ ! -x "$proxy_upload_target" ]; then
+  echo "missing fuzz target: $proxy_upload_target" >&2
   exit 1
 fi
 if [ ! -x "$proxy_headers_target" ]; then
@@ -85,6 +90,12 @@ for seed in "$repo_root"/tests/fuzz/corpus/proxy_framing/*; do
   seed_name=$(basename -- "$seed")
   AFL_QUIET=1 "$afl_showmap" -o "$tmp_dir/proxy-framing-$seed_name.map" -- \
     "$proxy_framing_target" <"$seed" >/dev/null
+done
+
+for seed in "$repo_root"/tests/fuzz/corpus/proxy_upload/*; do
+  seed_name=$(basename -- "$seed")
+  AFL_QUIET=1 "$afl_showmap" -o "$tmp_dir/proxy-upload-$seed_name.map" -- \
+    "$proxy_upload_target" <"$seed" >/dev/null
 done
 
 for seed in "$repo_root"/tests/fuzz/corpus/proxy_headers/*; do

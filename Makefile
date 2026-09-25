@@ -22,6 +22,7 @@ PROXY_FAST_TESTS := \
 	vectis_unit_proxy_framing vectis_unit_proxy_headers \
 	vectis_unit_proxy_http vectis_unit_proxy_http_upstream \
 	vectis_unit_proxy_http_wire vectis_unit_proxy_upload \
+	vectis_unit_proxy_curl_capabilities \
 	vectis_unit_proxy_ws_handshake vectis_unit_proxy_ws_wire \
 	vectis_unit_proxy_ws_rejection vectis_unit_proxy_route_registration \
 	vectis_unit_proxy_director vectis_unit_proxy_response \

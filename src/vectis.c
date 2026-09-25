@@ -11058,9 +11058,10 @@ static vectis_status vectis_process_thread_count(size_t *out,
   count = 0;
   result = task_threads(mach_task_self(), &threads, &count);
   if (result != KERN_SUCCESS) {
-    vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "failed to inspect process thread count: task_threads: %s",
-                      mach_error_string(result));
+    vectis_set_errorf(
+        error, VECTIS_ERR_STATE,
+        "failed to inspect process thread count: task_threads: %s",
+        mach_error_string(result));
     return VECTIS_ERR_STATE;
   }
   release_result = KERN_SUCCESS;
