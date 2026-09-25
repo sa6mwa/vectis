@@ -152,7 +152,7 @@ the connection authority and TLS peer. Reject absolute-form targets, fragments,
 control characters, and ambiguous escaping before passing that target to
 libcurl, which sends it verbatim.
 
-This route-selection rule has an unresolved feasibility gate. The current
+This route-selection rule was a feasibility gate. The current
 Vectis decoder rejects escaped slashes, and its ordinary path validator can
 reject other escaped forms before route matching. Kore's pre-body hook retains
 the raw bytes. The candidate selector first uses the existing decoded-path
@@ -1056,7 +1056,8 @@ informational responses and trailers, followed by WebSocket tunneling. These
 are implementation milestones, not exemptions from the wire contract above;
 the proxy route is complete only when all required cases pass.
 
-Treat these as feasibility gates before committing to the full implementation:
+The implementation was evaluated against these feasibility gates. Native BSD
+event-loop execution in item 2 remains unverified on this Linux host:
 
 1. The catch-all route's optional pre-body callback selects a proxy for
    bodyless, zero-length, and body-bearing requests while `CONTINUE` preserves
