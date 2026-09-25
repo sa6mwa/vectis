@@ -571,7 +571,26 @@ static void *h1_origin_main(void *userdata) {
   return NULL;
 }
 
-static int connect_app(unsigned short port, int route_kind, int upload_mode) {
+static void send_max_header_request(int fd) {
+  static const char prefix[] = "GET /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n";
+  char field[2830];
+  int length;
+  int i;
+
+  send_all(fd, prefix, sizeof(prefix) - 1u);
+  for (i = 0; i < 22; ++i) {
+    length = snprintf(field, sizeof(field), "X-Stress-%02d: ", i);
+    assert(length > 0 && (size_t)length + 2802u <= sizeof(field));
+    memset(field + length, 'h', 2800u);
+    field[length + 2800] = '\r';
+    field[length + 2801] = '\n';
+    send_all(fd, field, (size_t)length + 2802u);
+  }
+  send_all(fd, "\r\n", 2u);
+}
+
+static int connect_app(unsigned short port, int route_kind, int upload_mode,
+                       int max_headers) {
   static const char http_request[] =
       "GET /proxy/h2 HTTP/1.1\r\nHost: localhost\r\n\r\n";
   static const char upload_request[] =
@@ -617,6 +636,8 @@ static int connect_app(unsigned short port, int route_kind, int upload_mode) {
     send_all(fd, h1_upload_request, sizeof(h1_upload_request) - 1u);
   else if (upload_mode)
     send_all(fd, upload_request, sizeof(upload_request) - 1u);
+  else if (max_headers)
+    send_max_header_request(fd);
   else
     send_all(fd, http_request, sizeof(http_request) - 1u);
   return fd;
@@ -688,6 +709,23 @@ static void read_head(int fd, char *head, size_t capacity) {
   }
 }
 
+static char *max_size_pem(char *pem, int secret) {
+  char *padded;
+  size_t length;
+
+  length = strlen(pem);
+  assert(length < 262144u);
+  padded = (char *)malloc(262145u);
+  assert(padded != NULL);
+  memcpy(padded, pem, length);
+  memset(padded + length, '\n', 262144u - length);
+  padded[262144u] = '\0';
+  if (secret)
+    OPENSSL_cleanse(pem, length);
+  free(pem);
+  return padded;
+}
+
 int main(void) {
   test_origin origin;
   test_ws_origin ws_origin;
@@ -730,6 +768,7 @@ int main(void) {
   int mixed_upload;
   int mixed_transfer;
   int mtls;
+  int large_identity;
   int upload_mode;
   int h2_connections;
 
@@ -737,7 +776,8 @@ int main(void) {
   mixed = getenv("VECTIS_PROXY_MIXED_MEMORY") != NULL;
   mixed_upload = getenv("VECTIS_PROXY_MIXED_UPLOAD_MEMORY") != NULL;
   mixed_transfer = getenv("VECTIS_PROXY_MIXED_TRANSFER_MEMORY") != NULL;
-  mtls = getenv("VECTIS_PROXY_H2_MTLS") != NULL;
+  large_identity = getenv("VECTIS_PROXY_H2_MTLS_LARGE_IDENTITY") != NULL;
+  mtls = large_identity || getenv("VECTIS_PROXY_H2_MTLS") != NULL;
   upload_mode = mixed_upload || getenv("VECTIS_PROXY_H2_UPLOAD_MEMORY") != NULL;
   assert(!mixed_upload || !mixed);
   assert(!mixed_transfer || (!mixed_upload && !mixed && !upload_mode));
@@ -773,6 +813,10 @@ int main(void) {
     assert(client_key_pem != NULL);
     memcpy(client_key_pem, key_pem_data->data, key_pem_data->length);
     client_key_pem[key_pem_data->length] = '\0';
+  }
+  if (large_identity) {
+    ca_pem = max_size_pem(ca_pem, 0);
+    client_key_pem = max_size_pem(client_key_pem, 1);
   }
   memset(&origin, 0, sizeof(origin));
   origin.probe = probe;
@@ -857,7 +901,8 @@ int main(void) {
                           &h1_origin) == 0);
 
   for (i = 0; i < h2_connections; ++i) {
-    clients[i] = connect_app(app_port, TEST_ROUTE_H2, upload_mode);
+    clients[i] =
+        connect_app(app_port, TEST_ROUTE_H2, upload_mode, large_identity);
     if (!upload_mode) {
       read_head(clients[i], head, sizeof(head));
       assert(strstr(head, "HTTP/1.1 200 ") == head);
@@ -866,7 +911,7 @@ int main(void) {
   }
   if (mixed) {
     for (i = h2_connections; i < TEST_CONNECTIONS; ++i) {
-      clients[i] = connect_app(app_port, TEST_ROUTE_WS, 0);
+      clients[i] = connect_app(app_port, TEST_ROUTE_WS, 0, 0);
       read_head(clients[i], head, sizeof(head));
       assert(strstr(head, "HTTP/1.1 101 Switching Protocols\r\n") == head);
     }
@@ -883,7 +928,7 @@ int main(void) {
   }
   if (mixed_upload || mixed_transfer) {
     for (i = h2_connections; i < TEST_CONNECTIONS; ++i)
-      clients[i] = connect_app(app_port, TEST_ROUTE_H1, 1);
+      clients[i] = connect_app(app_port, TEST_ROUTE_H1, 1, 0);
   }
   upload_sent = (upload_mode || mixed_transfer)
                     ? send_uploads(clients, mixed_transfer ? h2_connections : 0)
@@ -971,18 +1016,18 @@ int main(void) {
   if (mixed_transfer)
     assert(upload_sent >= (size_t)TEST_MIXED_CONNECTIONS * 1048576u);
 
-  overflow = connect_app(app_port, TEST_ROUTE_H2, upload_mode);
+  overflow = connect_app(app_port, TEST_ROUTE_H2, upload_mode, large_identity);
   read_head(overflow, head, sizeof(head));
   assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
   assert(close(overflow) == 0);
   if (mixed) {
-    overflow = connect_app(app_port, TEST_ROUTE_WS, 0);
+    overflow = connect_app(app_port, TEST_ROUTE_WS, 0, 0);
     read_head(overflow, head, sizeof(head));
     assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
     assert(close(overflow) == 0);
   }
   if (mixed_upload || mixed_transfer) {
-    overflow = connect_app(app_port, TEST_ROUTE_H1, 1);
+    overflow = connect_app(app_port, TEST_ROUTE_H1, 1, 0);
     read_head(overflow, head, sizeof(head));
     assert(strstr(head, "HTTP/1.1 503 Service Unavailable\r\n") == head);
     assert(close(overflow) == 0);

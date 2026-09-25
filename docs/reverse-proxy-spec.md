@@ -732,6 +732,18 @@ more than 4 MiB growth after the first two seconds. It does not measure each
 connection's allocation separately. The ASan build uses a 256 MiB aggregate
 RSS ceiling for instrumentation redzones and quarantine while retaining the
 same streaming, plateau, and teardown checks.
+
+The live mTLS variant also fills each copied CA bundle, client certificate,
+and client key to the allowed 256 KiB with PEM whitespace, sends 22 additional
+2,800-byte request headers per client, and uses 1 MiB route chunk limits.
+With sixteen HTTP/2 slow-reader downloads, two local x86-64 Linux Debug runs
+measured 7,896 to 8,244 KiB at the preflight baseline and 65,516 to
+67,996 KiB at the sampled peak. The incremental peak was 57,272 to
+60,100 KiB; both runs held a stable later plateau and recovered descriptors.
+The same case passed under ASan. This tests maximum configured identity
+sizes and a near-maximum inbound header block for this one response profile;
+it does not account for retained idle connections or all route combinations.
+
 The Linux production-route WebSocket smoke holds sixteen HTTP/1.1 upgraded
 connections with 1 MiB route chunk limits and idle clients for four seconds.
 The pinned x86-64 Linux Release run measured 8,384 KiB worker RSS before the
@@ -807,7 +819,7 @@ simultaneous pressure across exchanges, not a full-duplex exchange with both
 directions active in the same HTTP request.
 
 The full admission reserve still needs a worst-case full-duplex HTTP exchange,
-both idle caches, maximum permitted headers, CA bundles and client identities,
+both idle caches, maximum configuration sizes across both protocol pools,
 and a deployment worker-memory budget. The bidirectional WebSocket case is
 covered separately above.
 The existing 16-slot exchange cap remains provisional until that gate is
