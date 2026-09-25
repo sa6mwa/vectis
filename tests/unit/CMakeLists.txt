@@ -75,9 +75,13 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_proxy_ws_handshake
     test_proxy_ws_handshake.c)
   vectis_add_unit_test(vectis_unit_proxy_ws_wire test_proxy_ws_wire.c)
+  vectis_add_unit_test(vectis_unit_proxy_ws_rejection
+    test_proxy_ws_rejection.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_live test_kore_proxy_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_ws_live
     test_kore_proxy_ws_live.c)
+  vectis_add_unit_test(vectis_unit_kore_proxy_ws_rejection_live
+    test_kore_proxy_ws_rejection_live.c)
   vectis_add_unit_test(vectis_unit_proxy_route_registration
     test_proxy_route_registration.c)
   vectis_add_unit_test(vectis_unit_proxy_select test_proxy_select.c)

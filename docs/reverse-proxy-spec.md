@@ -5,9 +5,12 @@ registration, target construction, worker curl integration, and bounded live
 HTTP/SSE request and response streaming are implemented. A successful
 HTTP/1.1 WebSocket upgrade now uses a retained connect-only transfer and a
 bounded raw relay; a cleartext live test covers coalesced handshake/frame bytes
-and 1 MiB streaming in both directions. Non-`101` upstream replies still need
-the incremental HTTP rejection path, and WSS, TLS retry, backpressure, and
-shutdown cases need production-route tests. Application director hooks and the
+and 1 MiB streaming in both directions. Non-`101` replies now use an
+incremental HTTP/1.1 rejection path; a cleartext live test covers a 1 MiB
+fixed-length rejection that starts before the origin finishes sending, chunked
+trailers, and `103` followed by a close-delimited final response. WSS, TLS
+retry, backpressure, and shutdown cases need production-route tests.
+Application director hooks and the
 remaining resource limits are still in progress. The
 [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
 evidence behind this choice and the checks required during implementation.
@@ -38,6 +41,8 @@ The installed libvectis C headers and the proxy route API must compile under
 strict C89. Kore and libcurl types stay out of the public proxy API; their
 language mode must not leak into installed headers or consumer compile flags.
 The installed SDK consumer is a C89 compilation and link gate for this API.
+The private vendored Kore runtime and its bridge may use GNU99; proxy sources
+and the public libvectis interface compile in C89 mode.
 
 The C registration is `app->proxy_route(app, &config, &error)` with a
 corresponding Lua `app:proxy(opts)`. The current route configuration fields and
@@ -339,7 +344,9 @@ Keep the Vectis implementation split along its ownership boundaries:
 | `vectis_proxy_events.c` | Linux and BSD readiness translation shared by curl sockets and taken-over connections. |
 | `vectis_proxy_http.c` | Incremental upstream response status, header, body-length, and trailer validation. |
 | `vectis_proxy_http_upstream.c` | Libcurl HTTP callbacks, one bounded pending download chunk, and pause/resume flow control. Upload callbacks still need production integration. |
-| `vectis_proxy_ws.c` | HTTP/1.1 WebSocket handshake validation, rejection framing, and opaque duplex relay. |
+| `vectis_proxy_ws_handshake.c`, `vectis_proxy_ws_wire.c` | HTTP/1.1 WebSocket handshake validation and bounded opening wire blocks. |
+| `vectis_proxy_ws_rejection.c` | Incremental non-`101` response framing, body and trailer validation, and bounded downstream chunks. |
+| `vectis_kore_proxy_ws.c` | Connect-only WebSocket lifecycle, Kore readiness, and opaque duplex relay. |
 | `vectis_kore_proxy.c` | Header-time route selection, accepted-connection takeover, Kore send queue, TLS readiness, and connection restoration. |
 
 Share private state through small `src/` headers. Keep Kore-specific types out

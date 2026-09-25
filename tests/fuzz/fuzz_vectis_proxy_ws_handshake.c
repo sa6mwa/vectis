@@ -1,4 +1,5 @@
 #include "vectis_proxy_ws_handshake.h"
+#include "vectis_proxy_ws_rejection.h"
 #include "vectis_proxy_ws_wire.h"
 
 #include <stdint.h>
@@ -24,6 +25,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   size_t parsed_length;
   size_t wire_length;
   char *wire;
+  vectis_proxy_ws_rejection rejection;
+  char output[2048];
+  size_t consumed;
+  size_t written;
+  size_t offset;
+  int final;
   vectis_error error;
 
   if (size == 0u || size > sizeof(value))
@@ -73,6 +80,32 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (vectis_proxy_ws_wire_upgrade_response(&parsed, &wire, &wire_length,
                                               &error) == VECTIS_OK)
       free(wire);
+  } else if (head_result == VECTIS_PROXY_WS_HEAD_COMPLETE) {
+    vectis_proxy_ws_rejection_init(&rejection);
+    wire = NULL;
+    if (vectis_proxy_ws_rejection_head(&rejection, data + 1u, parsed_length,
+                                       &final, &wire, &wire_length,
+                                       &error) == VECTIS_OK &&
+        final) {
+      free(wire);
+      offset = parsed_length;
+      while (offset < size - 1u &&
+             rejection.mode != VECTIS_PROXY_WS_REJECTION_COMPLETE) {
+        if (vectis_proxy_ws_rejection_feed(
+                &rejection, data + 1u + offset, size - 1u - offset, &consumed,
+                output, sizeof(output), &written, &error) != VECTIS_OK ||
+            consumed == 0u)
+          break;
+        offset += consumed;
+      }
+      wire = NULL;
+      if (vectis_proxy_ws_rejection_finish(&rejection, 1, &wire, &wire_length,
+                                           &error) == VECTIS_OK)
+        free(wire);
+    } else {
+      free(wire);
+    }
+    vectis_proxy_ws_rejection_cleanup(&rejection);
   }
   vectis_proxy_headers_cleanup(&parsed);
   vectis_proxy_headers_cleanup(&response);

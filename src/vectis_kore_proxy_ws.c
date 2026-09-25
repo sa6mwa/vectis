@@ -5,6 +5,7 @@
 #include "vectis_proxy_events.h"
 #include "vectis_proxy_url.h"
 #include "vectis_proxy_ws_handshake.h"
+#include "vectis_proxy_ws_rejection.h"
 #include "vectis_proxy_ws_wire.h"
 
 #pragma GCC diagnostic push
@@ -28,7 +29,8 @@ typedef enum vectis_kore_ws_phase {
   VECTIS_KORE_WS_SEND_HEAD = 1,
   VECTIS_KORE_WS_READ_HEAD = 2,
   VECTIS_KORE_WS_RELAY = 3,
-  VECTIS_KORE_WS_ERROR = 4
+  VECTIS_KORE_WS_REJECTION = 4,
+  VECTIS_KORE_WS_ERROR = 5
 } vectis_kore_ws_phase;
 
 typedef struct vectis_kore_ws_state {
@@ -40,6 +42,7 @@ typedef struct vectis_kore_ws_state {
   vectis_request *route_request;
   vectis_proxy_route_data *route;
   vectis_proxy_headers inbound;
+  vectis_proxy_ws_rejection rejection;
   vectis_proxy_curl_transfer *transfer;
   struct kore_timer *wake_timer;
   struct kore_timer *idle_timer;
@@ -66,10 +69,12 @@ typedef struct vectis_kore_ws_state {
   int down_read_want_write;
   int upstream_again;
   int upstream_error;
+  int upstream_eof;
   int upstream_tls;
   unsigned long retry_delay_ms;
   int active;
   int closing;
+  int rejection_finished;
   int error_status;
   vectis_kore_ws_phase phase;
 } vectis_kore_ws_state;
@@ -114,6 +119,7 @@ static void vectis_kore_ws_free(vectis_kore_ws_state *state) {
   if (state->route_request != NULL)
     vectis_internal_request_free(state->route_request);
   vectis_proxy_headers_cleanup(&state->inbound);
+  vectis_proxy_ws_rejection_cleanup(&state->rejection);
   free(state->request_wire);
   free(state->response_head);
   free(state->to_upstream);
@@ -152,7 +158,8 @@ static void vectis_kore_ws_idle(void *userdata, u_int64_t now) {
   (void)now;
   state = (vectis_kore_ws_state *)userdata;
   state->idle_timer = NULL;
-  if (state->phase == VECTIS_KORE_WS_RELAY)
+  if (state->phase == VECTIS_KORE_WS_RELAY ||
+      state->phase == VECTIS_KORE_WS_REJECTION)
     state->closing = 1;
   else {
     state->error_status = 504;
@@ -167,7 +174,8 @@ static void vectis_kore_ws_total(void *userdata, u_int64_t now) {
   (void)now;
   state = (vectis_kore_ws_state *)userdata;
   state->total_timer = NULL;
-  if (state->phase == VECTIS_KORE_WS_RELAY)
+  if (state->phase == VECTIS_KORE_WS_RELAY ||
+      state->phase == VECTIS_KORE_WS_REJECTION)
     state->closing = 1;
   else {
     state->error_status = 504;
@@ -222,7 +230,11 @@ static void vectis_kore_ws_schedule(vectis_kore_ws_state *state) {
         (state->phase == VECTIS_KORE_WS_RELAY &&
          state->up_offset < state->up_length))
       upstream |= VECTIS_PROXY_EVENT_WRITE;
-    if (state->phase == VECTIS_KORE_WS_READ_HEAD ||
+    if ((state->phase == VECTIS_KORE_WS_READ_HEAD &&
+         state->response_length == 0u) ||
+        (state->phase == VECTIS_KORE_WS_REJECTION &&
+         !state->rejection_finished && state->response_length == 0u &&
+         state->down_length == 0u && TAILQ_EMPTY(&connection->send_queue)) ||
         (state->phase == VECTIS_KORE_WS_RELAY && state->down_length == 0u &&
          TAILQ_EMPTY(&connection->send_queue)))
       upstream |= VECTIS_PROXY_EVENT_READ;
@@ -302,6 +314,8 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
   char *wire;
   size_t head_length;
   size_t wire_length;
+  size_t surplus;
+  int final;
   unsigned status;
 
   vectis_proxy_headers_init(&headers);
@@ -310,8 +324,37 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
       &headers, &reason);
   if (result == VECTIS_PROXY_WS_HEAD_MORE)
     return 0;
-  if (result != VECTIS_PROXY_WS_HEAD_COMPLETE || status != 101u ||
-      !vectis_proxy_ws_response_valid(&state->inbound, status, &headers,
+  if (result != VECTIS_PROXY_WS_HEAD_COMPLETE) {
+    state->error_status = 502;
+    state->phase = VECTIS_KORE_WS_ERROR;
+    vectis_proxy_headers_cleanup(&headers);
+    return 0;
+  }
+  if (status != 101u) {
+    wire = NULL;
+    if (vectis_proxy_ws_rejection_head(&state->rejection, state->response_head,
+                                       head_length, &final, &wire, &wire_length,
+                                       &error) != VECTIS_OK) {
+      state->error_status = 502;
+      state->phase = VECTIS_KORE_WS_ERROR;
+      vectis_proxy_headers_cleanup(&headers);
+      return 0;
+    }
+    vectis_proxy_headers_cleanup(&headers);
+    surplus = state->response_length - head_length;
+    memmove(state->response_head, state->response_head + head_length, surplus);
+    state->response_length = surplus;
+    net_send_queue(state->downstream, wire, wire_length);
+    free(wire);
+    if (final) {
+      state->request->status = (u_int16_t)status;
+      vectis_internal_metrics_note_http_status(state->app, (int)status);
+      state->downstream->http_response_count++;
+      state->phase = VECTIS_KORE_WS_REJECTION;
+    }
+    return 1;
+  }
+  if (!vectis_proxy_ws_response_valid(&state->inbound, status, &headers,
                                       &reason)) {
     state->error_status = 502;
     state->phase = VECTIS_KORE_WS_ERROR;
@@ -344,6 +387,78 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
   state->downstream->http_response_count++;
   state->phase = VECTIS_KORE_WS_RELAY;
   return 1;
+}
+
+static int vectis_kore_ws_rejection_step(vectis_kore_ws_state *state) {
+  struct connection *connection;
+  vectis_error error;
+  size_t consumed;
+  size_t written;
+  size_t amount;
+  char *wire;
+  size_t wire_length;
+  CURLcode code;
+
+  connection = state->downstream;
+  if (state->down_length != 0u) {
+    net_send_queue(connection, state->to_downstream, state->down_length);
+    state->down_length = 0u;
+    return 1;
+  }
+  if (state->response_length != 0u) {
+    if (vectis_proxy_ws_rejection_feed(
+            &state->rejection, state->response_head, state->response_length,
+            &consumed, (char *)state->to_downstream, state->buffer_capacity,
+            &written, &error) != VECTIS_OK) {
+      state->closing = 1;
+      return 1;
+    }
+    state->response_length -= consumed;
+    memmove(state->response_head, state->response_head + consumed,
+            state->response_length);
+    state->down_length = written;
+    if (state->rejection.mode == VECTIS_PROXY_WS_REJECTION_COMPLETE)
+      state->response_length = 0u;
+    if (consumed != 0u || written != 0u)
+      return 1;
+  }
+  if (state->rejection.mode == VECTIS_PROXY_WS_REJECTION_COMPLETE ||
+      state->upstream_eof || state->upstream_error) {
+    if (state->rejection.mode == VECTIS_PROXY_WS_REJECTION_COMPLETE ||
+        (state->upstream_eof &&
+         state->rejection.mode == VECTIS_PROXY_WS_REJECTION_CLOSE)) {
+      wire = NULL;
+      if (vectis_proxy_ws_rejection_finish(&state->rejection,
+                                           state->upstream_eof, &wire,
+                                           &wire_length, &error) == VECTIS_OK &&
+          wire_length != 0u)
+        net_send_queue(connection, wire, wire_length);
+      free(wire);
+    }
+    state->rejection_finished = 1;
+    state->closing = 1;
+    return 1;
+  }
+  amount = 0u;
+  code = curl_easy_recv(state->easy, state->response_head,
+                        state->buffer_capacity < VECTIS_KORE_WS_HEAD_CAPACITY
+                            ? state->buffer_capacity
+                            : VECTIS_KORE_WS_HEAD_CAPACITY,
+                        &amount);
+  if (code == CURLE_OK && amount != 0u) {
+    state->response_length = amount;
+    state->upstream_again = 0;
+    return 1;
+  }
+  if (code == CURLE_OK)
+    state->upstream_eof = 1;
+  else if (code != CURLE_AGAIN) {
+    state->closing = 1;
+    return 1;
+  } else {
+    state->upstream_again = 1;
+  }
+  return state->upstream_eof;
 }
 
 static int vectis_kore_ws_write_error(vectis_kore_ws_state *state) {
@@ -442,6 +557,11 @@ static void vectis_kore_ws_pump(vectis_kore_ws_state *state) {
         state->upstream_again = 1;
       }
     } else if (state->phase == VECTIS_KORE_WS_READ_HEAD) {
+      if (state->response_length != 0u) {
+        progress = vectis_kore_ws_response(state);
+        if (progress || state->phase != VECTIS_KORE_WS_READ_HEAD)
+          goto next_step;
+      }
       amount = 0u;
       code = curl_easy_recv(
           state->easy, state->response_head + state->response_length,
@@ -457,7 +577,8 @@ static void vectis_kore_ws_pump(vectis_kore_ws_state *state) {
         state->response_length += amount;
         state->upstream_again = 0;
         progress = 1;
-        (void)vectis_kore_ws_response(state);
+        if (vectis_kore_ws_response(state))
+          progress = 1;
       } else if (code == CURLE_OK) {
         state->error_status = 502;
         state->phase = VECTIS_KORE_WS_ERROR;
@@ -467,6 +588,8 @@ static void vectis_kore_ws_pump(vectis_kore_ws_state *state) {
             state->upstream_again || (state->upstream_tls && !made_progress &&
                                       (upstream_ready & KORE_EVENT_READ) != 0);
       }
+    } else if (state->phase == VECTIS_KORE_WS_REJECTION) {
+      progress = vectis_kore_ws_rejection_step(state);
     } else if (state->phase == VECTIS_KORE_WS_RELAY) {
       if (state->up_offset < state->up_length) {
         amount = 0u;
@@ -524,6 +647,7 @@ static void vectis_kore_ws_pump(vectis_kore_ws_state *state) {
         }
       }
     }
+  next_step:
     if (progress)
       made_progress = 1;
     if (!progress)
@@ -561,6 +685,16 @@ static void vectis_kore_ws_upstream_event(void *userdata, int error) {
   state->upstream_ready = state->upstream_event.flags;
   state->upstream_event.flags = 0;
   if (error) {
+    if (state->phase == VECTIS_KORE_WS_READ_HEAD) {
+      vectis_kore_ws_pump(state);
+      return;
+    }
+    if (state->phase == VECTIS_KORE_WS_REJECTION) {
+      /* A readable hangup can still contain the last body bytes. Let
+       * curl_easy_recv distinguish clean EOF from a transport failure. */
+      vectis_kore_ws_pump(state);
+      return;
+    }
     if (state->phase != VECTIS_KORE_WS_RELAY) {
       state->error_status = 502;
       state->phase = VECTIS_KORE_WS_ERROR;
@@ -617,6 +751,7 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
   if (state == NULL)
     return vectis_kore_ws_reject(request, 500);
   state->upstream_fd = CURL_SOCKET_BAD;
+  vectis_proxy_ws_rejection_init(&state->rejection);
   state->downstream = request->owner;
   state->request = request;
   state->app = app;
