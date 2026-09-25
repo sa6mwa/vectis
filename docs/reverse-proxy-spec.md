@@ -557,6 +557,14 @@ and malformed WebSocket key/version or subprotocol offers for a selected proxy
 before an upstream connection starts. Run proxy `auth`/`preflight`/`rewrite`
 at this boundary; a locally rejected proxy request follows a defined
 drain-or-close policy so unread body bytes cannot become the next request.
+
+Before this boundary, Kore owns the request-header timeout. Patch `0036`
+keeps its connection timeout sweep scheduled while a client has sent only
+partial headers: no `http_request` exists yet to wake the worker. The live
+admission test sends an unterminated header block, verifies that the configured
+timeout closes it without contacting the origin, and then fills all sixteen
+proxy slots normally.
+
 On `TAKEOVER`, clear Kore's inherited `connection->http_timeout` immediately:
 the pre-body hook runs before Kore clears the header timer on its ordinary
 header-only path. The proxy then owns connect, idle, write-progress, and

@@ -96,14 +96,7 @@ static void *origin_main(void *userdata) {
   return NULL;
 }
 
-static int connect_app(unsigned short port, int websocket) {
-  static const char http_request[] =
-      "GET /proxy/stream HTTP/1.1\r\nHost: localhost\r\n\r\n";
-  static const char ws_request[] =
-      "GET /proxy/stream HTTP/1.1\r\nHost: localhost\r\n"
-      "Connection: Upgrade\r\nUpgrade: websocket\r\n"
-      "Sec-WebSocket-Version: 13\r\n"
-      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+static int connect_app_raw(unsigned short port) {
   struct sockaddr_in address;
   struct timeval timeout;
   int attempt;
@@ -126,6 +119,20 @@ static int connect_app(unsigned short port, int websocket) {
   timeout.tv_usec = 0;
   assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
          0);
+  return fd;
+}
+
+static int connect_app(unsigned short port, int websocket) {
+  static const char http_request[] =
+      "GET /proxy/stream HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  static const char ws_request[] =
+      "GET /proxy/stream HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+      "Sec-WebSocket-Version: 13\r\n"
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+  int fd;
+
+  fd = connect_app_raw(port);
   if (websocket)
     send_all(fd, ws_request, sizeof(ws_request) - 1u);
   else
@@ -173,6 +180,7 @@ int main(void) {
   char response[2048];
   int clients[TEST_EXCHANGES];
   int overflow;
+  int slow;
   int i;
 
   memset(&origin, 0, sizeof(origin));
@@ -185,6 +193,7 @@ int main(void) {
   config.tls.bind = "127.0.0.1";
   config.tls.port = app_port;
   config.server.worker_count = 1u;
+  config.server.request_header_timeout_ms = 1000L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   vectis_proxy_route_config_init(&proxy);
@@ -194,6 +203,17 @@ int main(void) {
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
+
+  slow = connect_app_raw(app_port);
+  send_all(slow, "GET /proxy/stream HTTP/1.1\r\nHost: localhost",
+           sizeof("GET /proxy/stream HTTP/1.1\r\nHost: localhost") - 1u);
+  read_all(slow, response, sizeof(response));
+  assert(close(slow) == 0);
+  assert(__sync_fetch_and_add(&origin.accepted, 0) == 0);
+  pending.fd = origin.listener;
+  pending.events = POLLIN;
+  pending.revents = 0;
+  assert(poll(&pending, 1u, 100) == 0);
 
   for (i = 0; i < TEST_EXCHANGES; ++i) {
     clients[i] = connect_app(app_port, 0);
