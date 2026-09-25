@@ -36,6 +36,15 @@
 #define MAX_RSS_DELTA_KB (CONCURRENT_TRANSFERS * 4096u)
 #define ISOLATED_RSS_DELTA_KB (CONCURRENT_TRANSFERS * 1024u)
 
+#if defined(__SANITIZE_ADDRESS__)
+extern size_t __sanitizer_get_current_allocated_bytes(void);
+static unsigned long sampled_peak_allocated_kb;
+static unsigned long allocated_kb(void) {
+  return (unsigned long)((__sanitizer_get_current_allocated_bytes() + 1023u) /
+                         1024u);
+}
+#endif
+
 static unsigned long sampled_peak_rss_kb;
 static unsigned long rss_kb(void);
 
@@ -335,6 +344,9 @@ pause_download(char *data, size_t size, size_t count, void *arg)
 {
   struct client_state *state;
   unsigned long current_rss;
+#if defined(__SANITIZE_ADDRESS__)
+  unsigned long current_allocated;
+#endif
   size_t amount;
   size_t i;
 
@@ -342,6 +354,11 @@ pause_download(char *data, size_t size, size_t count, void *arg)
   current_rss = rss_kb();
   if (current_rss > sampled_peak_rss_kb)
     sampled_peak_rss_kb = current_rss;
+#if defined(__SANITIZE_ADDRESS__)
+  current_allocated = allocated_kb();
+  if (current_allocated > sampled_peak_allocated_kb)
+    sampled_peak_allocated_kb = current_allocated;
+#endif
   amount = size * count;
   if (!state->resume) {
     state->paused = 1;
@@ -449,6 +466,12 @@ main(void)
   unsigned long peak_after_wait;
   unsigned long peak_after_resume;
   unsigned long peak_after_cleanup;
+#if defined(__SANITIZE_ADDRESS__)
+  unsigned long allocated_baseline;
+  unsigned long allocated_wait;
+  unsigned long allocated_resume;
+  unsigned long allocated_cleanup;
+#endif
   size_t generated_at_pause;
   size_t generated_after_wait;
   time_t resume_start;
@@ -516,6 +539,10 @@ main(void)
     assert(curl_easy_setopt(easy[i], CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   }
   baseline = rss_kb();
+#if defined(__SANITIZE_ADDRESS__)
+  allocated_baseline = allocated_kb();
+  sampled_peak_allocated_kb = allocated_baseline;
+#endif
   baseline_hwm = high_water_rss_kb();
   sampled_peak_rss_kb = baseline;
   baseline_fds = open_fd_count();
@@ -545,6 +572,9 @@ main(void)
     assert(curl_multi_perform(multi, &running) == CURLM_OK);
   }
   after_wait = rss_kb();
+#if defined(__SANITIZE_ADDRESS__)
+  allocated_wait = allocated_kb();
+#endif
   peak_after_wait = observed_peak_rss_kb(after_wait, peak_at_pause);
   generated_after_wait = __sync_fetch_and_add(&counts->generated, 0);
   if (!cancel_after_pause) {
@@ -568,6 +598,9 @@ main(void)
     for (i = 0; i < CONCURRENT_TRANSFERS; i++)
       assert(states[i].received == RESPONSE_SIZE);
     after_resume = rss_kb();
+#if defined(__SANITIZE_ADDRESS__)
+    allocated_resume = allocated_kb();
+#endif
     peak_after_resume = observed_peak_rss_kb(after_resume,
         peak_after_wait);
   } else {
@@ -575,6 +608,9 @@ main(void)
     for (i = 0; i < CONCURRENT_TRANSFERS; i++)
       assert(states[i].received == 0);
     after_resume = after_wait;
+#if defined(__SANITIZE_ADDRESS__)
+    allocated_resume = allocated_wait;
+#endif
     peak_after_resume = peak_after_wait;
   }
   cleanup_start = time(NULL);
@@ -596,6 +632,14 @@ main(void)
   X509_free(cert);
   EVP_PKEY_free(key);
   after_cleanup = rss_kb();
+#if defined(__SANITIZE_ADDRESS__)
+  allocated_cleanup = allocated_kb();
+  fprintf(stderr,
+          "asan live heap: baseline=%luKB wait=%luKB "
+          "resumed=%luKB cleanup=%luKB callback_peak=%luKB\n",
+          allocated_baseline, allocated_wait, allocated_resume,
+          allocated_cleanup, sampled_peak_allocated_kb);
+#endif
   peak_after_cleanup = observed_peak_rss_kb(after_cleanup,
       peak_after_resume);
   after_hwm = high_water_rss_kb();
@@ -629,19 +673,33 @@ main(void)
   assert(after_wait <= after_pause + 4096u);
   if (cancel_after_pause && after_cleanup >= baseline)
     assert(after_cleanup - baseline <= MAX_RSS_DELTA_KB);
+#if defined(__SANITIZE_ADDRESS__)
+  assert(allocated_wait <= allocated_baseline + MAX_RSS_DELTA_KB);
+  assert(allocated_resume <= allocated_baseline + MAX_RSS_DELTA_KB);
+  assert(allocated_cleanup <= allocated_baseline + MAX_RSS_DELTA_KB);
+  assert(sampled_peak_allocated_kb - allocated_baseline <= MAX_RSS_DELTA_KB);
+#else
   assert(after_resume >= baseline);
   assert(after_resume - baseline <= MAX_RSS_DELTA_KB);
+#endif
   assert(peak_at_pause >= after_pause);
   assert(peak_after_wait >= after_wait);
   assert(peak_after_resume >= after_resume);
   assert(peak_after_resume >= baseline);
+#if !defined(__SANITIZE_ADDRESS__)
   assert(peak_after_resume - baseline <= MAX_RSS_DELTA_KB);
+#endif
   assert(peak_after_cleanup >= after_cleanup);
-  assert(peak_after_cleanup - baseline <= MAX_RSS_DELTA_KB);
   assert(after_hwm >= baseline_hwm);
+#if !defined(__SANITIZE_ADDRESS__)
+  assert(peak_after_cleanup - baseline <= MAX_RSS_DELTA_KB);
   assert(after_hwm - baseline_hwm <= MAX_RSS_DELTA_KB);
   if (isolated_server)
     assert(peak_after_cleanup - baseline <= ISOLATED_RSS_DELTA_KB);
+#else
+  if (isolated_server)
+    assert(allocated_cleanup <= allocated_baseline + ISOLATED_RSS_DELTA_KB);
+#endif
   assert(munmap(counts, sizeof(*counts)) == 0);
   return 0;
 }

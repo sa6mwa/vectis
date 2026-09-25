@@ -65,6 +65,13 @@ vectis_add_unit_test(vectis_unit_proxy_route_selection
   test_proxy_route_selection.c)
 vectis_add_unit_test(vectis_unit_proxy_url test_proxy_url.c)
 if(VECTIS_WITH_KORE_RUNTIME)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME vectis_unit_forked_kore_sanitizer
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_forked_kore_sanitizer.sh"
+        "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh")
+    set_tests_properties(vectis_unit_forked_kore_sanitizer PROPERTIES
+      LABELS "unit;local" TIMEOUT 15)
+  endif()
   vectis_add_unit_test(vectis_unit_proxy_framing test_proxy_framing.c)
   vectis_add_unit_test(vectis_unit_proxy_headers test_proxy_headers.c)
   vectis_add_unit_test(vectis_unit_proxy_http test_proxy_http.c)

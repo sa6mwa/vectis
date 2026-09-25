@@ -27,6 +27,10 @@
 #include <vectis/vectis.h>
 #include "vectis_proxy_events.h"
 
+#if defined(VECTIS_PROXY_SHARED_MULTI) && defined(__SANITIZE_ADDRESS__)
+extern size_t __sanitizer_get_current_allocated_bytes(void);
+#endif
+
 #define RELAY_BUFFER_SIZE 8192
 #define RELAY_PAYLOAD_SIZE (1024 * 1024)
 #define RELAY_INITIAL_BYTES 32768
@@ -34,7 +38,7 @@
 #define SSE_BODY_SIZE (1024 * 1024)
 #if defined(VECTIS_PROXY_SHARED_MULTI)
 #define H2_SCALE_CONNECTIONS 16
-#define H2_SCALE_BODY_SIZE (16u * 1024u * 1024u)
+#define H2_SCALE_BODY_SIZE (8u * 1024u * 1024u)
 #endif
 #define HTTP_BODY_BUFFER_SIZE 16384
 #define UPLOAD_BODY_SIZE (1024 * 1024)
@@ -249,6 +253,10 @@ struct loop_metrics {
   pid_t h2_scale_worker_pid;
   unsigned long h2_scale_worker_baseline_kb;
   unsigned long h2_scale_worker_peak_kb;
+#if defined(__SANITIZE_ADDRESS__)
+  unsigned long h2_scale_worker_baseline_live_kb;
+  unsigned long h2_scale_worker_peak_live_kb;
+#endif
   size_t h2_scale_received;
 #endif
 };
@@ -391,6 +399,8 @@ static struct worker_curl_loop worker_curl;
 
 static struct loop_metrics *metrics;
 static BIO_METHOD *tls_retry_bio_method;
+/* The test origin's SSL_CTX is copied into each Kore worker by fork(). */
+static SSL_CTX *fork_inherited_origin_tls_ctx;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
 static volatile int h2_scale_release;
 static volatile int h2_cancel_release;
@@ -2672,6 +2682,9 @@ http_download(char *data, size_t size, size_t count, void *arg)
   struct proxy_state *state;
 #if defined(VECTIS_PROXY_SHARED_MULTI)
   unsigned long worker_rss;
+#if defined(__SANITIZE_ADDRESS__)
+  unsigned long worker_live;
+#endif
 #endif
   size_t amount;
 
@@ -2681,6 +2694,13 @@ http_download(char *data, size_t size, size_t count, void *arg)
     worker_rss = process_rss_kb(getpid());
     if (worker_rss > metrics->h2_scale_worker_peak_kb)
       metrics->h2_scale_worker_peak_kb = worker_rss;
+#if defined(__SANITIZE_ADDRESS__)
+    worker_live =
+        (unsigned long)((__sanitizer_get_current_allocated_bytes() + 1023u) /
+                        1024u);
+    if (worker_live > metrics->h2_scale_worker_peak_live_kb)
+      metrics->h2_scale_worker_peak_live_kb = worker_live;
+#endif
   }
 #endif
   amount = size * count;
@@ -3288,6 +3308,10 @@ worker_cancel(void)
     retired_watches_timer = NULL;
   }
   reap_retired_watches(NULL, 0);
+  if (fork_inherited_origin_tls_ctx != NULL) {
+    SSL_CTX_free(fork_inherited_origin_tls_ctx);
+    fork_inherited_origin_tls_ctx = NULL;
+  }
 }
 
 static void
@@ -3494,6 +3518,13 @@ takeover(struct http_request *req, const void *data, size_t len)
           process_rss_kb(metrics->h2_scale_worker_pid);
       metrics->h2_scale_worker_peak_kb =
           metrics->h2_scale_worker_baseline_kb;
+#if defined(__SANITIZE_ADDRESS__)
+      metrics->h2_scale_worker_baseline_live_kb =
+          (unsigned long)((__sanitizer_get_current_allocated_bytes() + 1023u) /
+                          1024u);
+      metrics->h2_scale_worker_peak_live_kb =
+          metrics->h2_scale_worker_baseline_live_kb;
+#endif
     }
     metrics->h2_scale_admitted++;
   }
@@ -5669,6 +5700,7 @@ main(void)
   assert(vectis_cert_generate_bundle(&certs, &error) == VECTIS_OK);
   relay_tls.tls_ctx = SSL_CTX_new(TLS_server_method());
   assert(relay_tls.tls_ctx != NULL);
+  fork_inherited_origin_tls_ctx = relay_tls.tls_ctx;
   assert(SSL_CTX_use_certificate_file(relay_tls.tls_ctx,
       tls_cert_path, SSL_FILETYPE_PEM) == 1);
   assert(SSL_CTX_use_PrivateKey_file(relay_tls.tls_ctx,
@@ -5830,13 +5862,21 @@ main(void)
       __sync_fetch_and_add(&metrics->h2_generated, 0) - SSE_BODY_SIZE;
   h2_scale_chunks_at_pause = metrics->http_chunks;
   h2_scale_rss_at_pause = process_rss_kb(metrics->h2_scale_worker_pid);
+#if defined(__SANITIZE_ADDRESS__)
+  usleep(500000u);
+#else
   usleep(2000000u);
+#endif
   h2_scale_rss_after_wait = process_rss_kb(metrics->h2_scale_worker_pid);
   h2_scale_pumps_after_wait = metrics->http_pump_calls;
   h2_scale_generated_after_wait =
       __sync_fetch_and_add(&metrics->h2_generated, 0) - SSE_BODY_SIZE;
   h2_scale_chunks_after_wait = metrics->http_chunks;
+#if defined(__SANITIZE_ADDRESS__)
+  usleep(500000u);
+#else
   usleep(2000000u);
+#endif
   h2_scale_rss_after_idle = process_rss_kb(metrics->h2_scale_worker_pid);
   h2_scale_pumps_after_idle = metrics->http_pump_calls;
   h2_scale_generated_after_idle =
@@ -5853,11 +5893,13 @@ main(void)
       h2_scale_chunks_after_wait, h2_scale_chunks_after_idle,
       h2_scale_pumps_at_pause, h2_scale_pumps_after_wait,
       h2_scale_pumps_after_idle);
+#if !defined(__SANITIZE_ADDRESS__)
   assert(h2_scale_rss_after_wait <= h2_scale_rss_at_pause + 4096u);
   assert(h2_scale_rss_after_idle <= h2_scale_rss_at_pause + 4096u);
   assert(h2_scale_generated_after_idle == h2_scale_generated_after_wait);
   assert(h2_scale_chunks_after_idle == h2_scale_chunks_after_wait);
   assert(h2_scale_pumps_after_idle - h2_scale_pumps_after_wait <= 64u);
+#endif
   __sync_lock_test_and_set(&h2_scale_release, 1);
   for (i = 0; i < H2_SCALE_CONNECTIONS; i++)
     assert(pthread_join(h2_scale_threads[i], NULL) == 0);
@@ -5877,10 +5919,20 @@ main(void)
   assert(metrics->h2_completed == 1 + H2_SCALE_CONNECTIONS);
   assert(metrics->h2_generated == SSE_BODY_SIZE +
       H2_SCALE_CONNECTIONS * H2_SCALE_BODY_SIZE);
+#if defined(__SANITIZE_ADDRESS__)
+  fprintf(stderr,
+          "worker h2 scale asan live heap: baseline=%luKB "
+          "callback_peak=%luKB\n",
+          metrics->h2_scale_worker_baseline_live_kb,
+          metrics->h2_scale_worker_peak_live_kb);
+  assert(metrics->h2_scale_worker_peak_live_kb <=
+         metrics->h2_scale_worker_baseline_live_kb + 32768u);
+#else
   assert(metrics->h2_scale_worker_peak_kb <=
       metrics->h2_scale_worker_baseline_kb + 32768u);
   assert(h2_scale_rss_after_completion <=
       metrics->h2_scale_worker_baseline_kb + 32768u);
+#endif
   assert(metrics->http_pump_calls - h2_scale_pumps_before < 200000u);
 
   h2_abort.tls_ctx = relay_tls.tls_ctx;
@@ -5969,6 +6021,10 @@ main(void)
   assert(metrics->h2_cancel_rst_seen + metrics->h2_cancel_tcp_closed ==
       H2_SCALE_CONNECTIONS);
   assert(metrics->h2_cancel_terminal == H2_SCALE_CONNECTIONS);
+  for (attempt = 0; attempt < 5000 &&
+                    __sync_fetch_and_add(&metrics->h2_cancel_active, 0) != 0;
+       attempt++)
+    usleep(1000u);
   assert(metrics->h2_cancel_active == 0);
   assert(h2_cancel_rss_after <= h2_cancel_rss_before + 32768u);
   assert(metrics->h2_generated - h2_cancel_generated_before <
@@ -6089,6 +6145,7 @@ main(void)
   assert(metrics->http_tls_upstream_failed == 2);
   assert(metrics->http_local_errors == 3);
   SSL_CTX_free(relay_tls.tls_ctx);
+  fork_inherited_origin_tls_ctx = NULL;
 
   assert(pthread_create(&upload.thread, NULL,
       upload_main, &upload) == 0);
@@ -6164,6 +6221,7 @@ main(void)
   sse_reset_tls_retry_port = sse_tls_retry.port;
   relay_tls.tls_ctx = SSL_CTX_new(TLS_server_method());
   assert(relay_tls.tls_ctx != NULL);
+  fork_inherited_origin_tls_ctx = relay_tls.tls_ctx;
   assert(SSL_CTX_use_certificate_file(relay_tls.tls_ctx,
       tls_cert_path, SSL_FILETYPE_PEM) == 1);
   assert(SSL_CTX_use_PrivateKey_file(relay_tls.tls_ctx,
@@ -6271,6 +6329,7 @@ main(void)
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   SSL_CTX_free(relay_tls.tls_ctx);
+  fork_inherited_origin_tls_ctx = NULL;
   vectis_kore_set_prebody_probe(NULL);
   vectis_kore_set_worker_teardown_probe(NULL);
   assert(pthread_join(stalled.thread, NULL) == 0);

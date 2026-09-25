@@ -107,7 +107,7 @@ stop_test_group() {
 }
 
 finish() {
-  local result=$?
+  local result=$? report
 
   trap - EXIT
   if (( expected_exit != 0 )) && [[ ! -f $run_dir/kore.pid ]]; then
@@ -127,6 +127,12 @@ finish() {
   if [[ -n $runner_pid ]]; then
     wait "$runner_pid" 2>/dev/null || true
   fi
+  for report in "$run_dir"/asan.* "$run_dir"/ubsan.*; do
+    [[ -f $report ]] || continue
+    printf 'forked Kore worker sanitizer report: %s\n' "$report" >&2
+    cat -- "$report" >&2
+    result=1
+  done
   rm -rf -- "$run_dir"
   exit "$result"
 }
@@ -135,6 +141,8 @@ trap finish EXIT
 trap 'exit 143' TERM INT
 (
   cd "$run_dir" || exit 2
+  export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}log_path=$run_dir/asan"
+  export UBSAN_OPTIONS="${UBSAN_OPTIONS:+$UBSAN_OPTIONS:}log_path=$run_dir/ubsan"
   # Keep the session leader alive after the test exits so its ID cannot be
   # reused while the wrapper tears down Kore's separate process group.
   exec setsid bash -c '

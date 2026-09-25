@@ -31,3 +31,4 @@
 0031-kore-drain-readable-bytes-before-read-half-close.patch
 0032-kore-match-host-header-name-exactly.patch
 0033-kore-validate-request-header-block.patch
+0034-kore-release-tls-domain-key-references.patch

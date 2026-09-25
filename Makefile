@@ -15,13 +15,20 @@ VALGRIND_PRESET := valgrind
 ASAN_PRESET := asan
 COVERAGE_PRESET := coverage
 FUZZ_PRESET := fuzz
+PROXY_FAST_TESTS := \
+	vectis_unit_proxy_route_selection \
+	vectis_unit_proxy_http vectis_unit_proxy_http_upstream \
+	vectis_unit_proxy_ws_handshake vectis_unit_proxy_ws_wire \
+	vectis_unit_kore_proxy_live vectis_unit_kore_proxy_ws_live \
+	vectis_unit_proxy_curl_http2_pause
+PROXY_FAST_TEST_REGEX := ^vectis_unit_(proxy_(route_selection|http|http_upstream|ws_handshake|ws_wire|curl_http2_pause)|kore_proxy_(live|ws_live))$$
 
 .PHONY: \
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-debug-lua build-release build-asan build-valgrind build-coverage build-fuzz \
 	bench-metrics-storage perf-gate \
-	test test-debug test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-proxy-fast test-proxy-asan-fast test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy verify-release-matrix release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
@@ -33,6 +40,8 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run all debug CTest tests with the pinned Bootlin runtime.' \
+		'make test-proxy-fast    Build and run eight focused proxy tests in Debug.' \
+		'make test-proxy-asan-fast Build and run the same focused proxy tests under ASan/UBSan.' \
 		'make run-example EXAMPLE=mdf_render [ARGS=...]  Run a built example.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
 		'make test-vendor-kore-lifecycle Exercise Kore pin refresh and patch reapplication.' \
@@ -313,6 +322,16 @@ prerelease:
 
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)
+
+test-proxy-fast: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) proxy-fast-configure $(CMAKE) --preset $(DEBUG_PRESET)
+	$(TIMED) proxy-fast-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target $(PROXY_FAST_TESTS)
+	$(TIMED) proxy-fast-test $(CTEST) --preset $(DEBUG_PRESET) -R '$(PROXY_FAST_TEST_REGEX)'
+
+test-proxy-asan-fast: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) proxy-asan-fast-configure $(CMAKE) --preset $(ASAN_PRESET)
+	$(TIMED) proxy-asan-fast-build $(CMAKE) --build --preset $(ASAN_PRESET) --target $(PROXY_FAST_TESTS)
+	$(TIMED) proxy-asan-fast-test $(CTEST) --preset $(ASAN_PRESET) -R '$(PROXY_FAST_TEST_REGEX)'
 
 test-e2e:
 	$(TIMED) test-e2e bash ./scripts/test-e2e.sh
