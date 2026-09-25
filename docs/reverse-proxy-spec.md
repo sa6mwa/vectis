@@ -1230,13 +1230,26 @@ pausing, and duplex behavior. The direct and proxied profiles have different
 downstream protocols by design, so their latency delta includes HTTP version
 translation. The direct Go client may also multiplex concurrent HTTP/2
 requests, while Vectis admits one active stream per upstream connection;
-interpret concurrent SSE results with that pooling difference. A long-lived
-soak and numerical latency thresholds still require a dedicated runner;
-shared-host JSON samples are not release thresholds. The `/proc` resource
-samples are Linux-only and observational. Direct resource fields measure the
-origin process; proxied fields measure the Vectis process group, so those
-figures are not a memory delta. The conservative 256 MiB worker admission
-target is checked through the admission and memory tests described above.
+interpret concurrent SSE results with that pooling difference. Repeatable
+long-lived soak results and numerical latency thresholds still require a
+dedicated runner;
+shared-host JSON samples are not release thresholds.
+
+`make bench-proxy-soak` supplies the opt-in direct/proxied SSE and WebSocket
+churn workload and signals app shutdown while streams remain active. It runs
+for 60 seconds per path by default; `PROXY_SOAK_ARGS="--seconds 600 --tls"`
+selects a longer trusted HTTPS/WSS run, and `PROXY_SOAK_ARGS="--smoke"` checks
+the harness in a few seconds. The runner bounds retained latency samples,
+records session counts, p50/p95/p99 latency, worker RSS, descriptors, CPU,
+active streams at shutdown, and graceful worker exit time. It has no latency
+or throughput pass threshold until repeated measurements on a dedicated
+runner establish one. The normal `test-all` gate does not run this soak.
+`/proc` resource samples are Linux-only and observational. The HTTP/2 direct
+resource fields measure the origin process; proxied fields measure the Vectis
+process group, so those figures are not a memory delta. The soak's direct
+resource fields are null because its origin runs inside the harness process.
+The conservative 256 MiB worker admission target is checked through the
+admission and memory tests described above.
 
 ## External API notes
 

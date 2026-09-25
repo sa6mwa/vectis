@@ -238,13 +238,15 @@ def http_trial(host, port, secure, context, path, chunks=0, slow_reader=False):
         conn.close()
 
 
-def sse_trial(host, port, secure, context, events):
+def sse_trial(host, port, secure, context, events, on_ready=None):
     conn = connection(host, port, secure, context)
     try:
         conn.request("GET", "/sse")
         response = conn.getresponse()
         if response.status != 200 or response.getheader("Content-Type") != "text/event-stream":
             raise RuntimeError("SSE status/content type mismatch")
+        if on_ready is not None:
+            on_ready()
         delays = []
         pending = b""
         while len(delays) < events:
@@ -333,7 +335,8 @@ def duplex_trial(host, port, secure, context, chunks):
     return asyncio.run(duplex_async(host, port, secure, context, chunks))
 
 
-def ws_trial(host, port, secure, context, echoes):
+def ws_trial(host, port, secure, context, echoes, interval_seconds=0,
+             on_ready=None):
     sock = socket.create_connection((host, port), 15)
     if secure:
         sock = context.wrap_socket(sock, server_hostname=host)
@@ -355,6 +358,8 @@ def ws_trial(host, port, secure, context, echoes):
         if (not headers.startswith(b"HTTP/1.1 101 ") or
                 b"Sec-WebSocket-Accept: " + expected not in headers):
             raise RuntimeError(f"WebSocket handshake rejected: {headers!r}")
+        if on_ready is not None:
+            on_ready()
         delays = []
         for _ in range(echoes):
             body = b"proxy-benchmark"
@@ -366,6 +371,8 @@ def ws_trial(host, port, secure, context, echoes):
             if frame != bytes((0x82, len(body))) or read_exact(sock, len(body)) != body:
                 raise RuntimeError("WebSocket echo mismatch")
             delays.append((time.monotonic_ns() - start) / 1e6)
+            if interval_seconds:
+                time.sleep(interval_seconds)
         sock.sendall(b"\x88\x80" + os.urandom(4))
         sock.settimeout(5)
         if sock.recv(1):
@@ -402,6 +409,8 @@ class ResourceSampler:
         self.peak_worker_fds = 0
         self.cpu_start = None
         self.cpu_last = None
+        self.cpu_ticks = 0
+        self.cpu_by_process = {}
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def run(self):
@@ -409,7 +418,6 @@ class ResourceSampler:
             pids = pids_for_group(self.pid)
             fd_count = 0
             group_rss = 0
-            cpu_ticks = 0
             for pid in pids:
                 try:
                     status = Path(f"/proc/{pid}/status").read_text()
@@ -419,7 +427,12 @@ class ResourceSampler:
                     )
                     group_rss += rss
                     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-                    cpu_ticks += int(fields[11]) + int(fields[12])
+                    process_key = (pid, int(fields[19]))
+                    cpu_ticks = int(fields[11]) + int(fields[12])
+                    previous = self.cpu_by_process.get(process_key)
+                    if previous is not None:
+                        self.cpu_ticks += max(0, cpu_ticks - previous)
+                    self.cpu_by_process[process_key] = cpu_ticks
                     if pid != self.pid:
                         self.peak_worker_rss_bytes = max(self.peak_worker_rss_bytes, rss)
                     fds = len(os.listdir(f"/proc/{pid}/fd"))
@@ -433,8 +446,8 @@ class ResourceSampler:
                 self.peak_process_group_rss_bytes, group_rss
             )
             if self.cpu_start is None:
-                self.cpu_start = cpu_ticks
-            self.cpu_last = cpu_ticks
+                self.cpu_start = 0
+            self.cpu_last = self.cpu_ticks
             self.stop.wait(0.02)
 
     def __enter__(self):

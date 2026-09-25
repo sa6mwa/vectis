@@ -45,7 +45,7 @@ PROXY_FAST_TEST_REGEX := ^($(subst $(space),|,$(strip $(PROXY_FAST_TESTS))))$$
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-debug-lua build-release build-asan build-valgrind build-coverage build-fuzz \
-	bench-metrics-storage bench-proxy bench-proxy-h2 perf-gate \
+	bench-metrics-storage bench-proxy bench-proxy-h2 bench-proxy-soak perf-gate \
 	test test-debug test-proxy-fast test-proxy-asan-fast test-proxy-lua-fast test-proxy-lua-asan-fast test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
@@ -104,6 +104,7 @@ help:
 		'make bench-metrics-storage Time encrypted Pouch layouts for 6m/12m (Python 3.9+; METRICS_BENCH_ARGS=--smoke for a short check).' \
 		'make bench-proxy        Compare direct and proxied HTTP/SSE/WS locally (PROXY_BENCH_ARGS="--smoke" for a short check).' \
 		'make bench-proxy-h2     Compare direct HTTP/2 and proxied HTTP/1.1-to-HTTP/2 locally (PROXY_H2_BENCH_ARGS="--smoke").' \
+		'make bench-proxy-soak   Run opt-in SSE/WebSocket churn and app-shutdown soak (PROXY_SOAK_ARGS="--smoke").' \
 		'make perf-gate          Gate encrypted metrics recovery through HTTPS readiness (Linux; Python 3).' \
 		'make deps-debug         Provision host debug dependencies into .cache/.' \
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
@@ -311,6 +312,11 @@ bench-proxy-h2: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) bench-proxy-h2-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
 	$(TIMED) bench-proxy-h2-go env TMPDIR=$(ROOT)/build GOCACHE=$(ROOT)/build/go-cache GOPATH=$(ROOT)/build/go-path GOMODCACHE=$(ROOT)/build/go-modcache GOPROXY=off GOTOOLCHAIN=local GO111MODULE=off CGO_ENABLED=0 $(GO) build -o $(ROOT)/build/proxy_h2_helper $(ROOT)/bench/proxy_h2_helper.go
 	$(TIMED) bench-proxy-h2 python3 -B $(ROOT)/bench/proxy_h2.py --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis --helper $(ROOT)/build/proxy_h2_helper $(PROXY_H2_BENCH_ARGS)
+
+bench-proxy-soak: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) bench-proxy-soak-configure $(CMAKE) --preset $(DEBUG_PRESET)
+	$(TIMED) bench-proxy-soak-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
+	$(TIMED) bench-proxy-soak python3 -B $(ROOT)/bench/proxy_soak.py --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis $(PROXY_SOAK_ARGS)
 
 fuzz: build-fuzz
 
