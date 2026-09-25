@@ -31,7 +31,8 @@ jobs:
       - name: Prepare pinned dependencies and Kore
         run: |
           CC=clang AR=ar RANLIB=ranlib bash scripts/deps.sh deps-arm64-apple-darwin
-          bash scripts/vendor-kore.sh apply
+          VECTIS_KORE_UPSTREAM_URL=https://github.com/jorisvink/kore.git \
+            bash scripts/vendor-kore.sh apply
 
       - name: Configure native Darwin build
         run: cmake --preset darwin-debug
