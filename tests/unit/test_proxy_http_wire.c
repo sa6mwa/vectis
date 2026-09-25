@@ -112,6 +112,22 @@ static void test_fixed_and_bodyless(void) {
   vectis_proxy_http_wire_plan_cleanup(&plan);
   vectis_proxy_headers_cleanup(&headers);
   vectis_proxy_http_response_cleanup(&response);
+
+  vectis_proxy_http_response_init(&response, 0);
+  line(&response, "HTTP/1.1 205 Reset Content\r\n");
+  line(&response, "Content-Length: 0\r\n");
+  line(&response, "\r\n");
+  vectis_proxy_headers_init(&headers);
+  assert(vectis_proxy_headers_sanitize_response(&response.headers, &headers) ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_http_wire_plan_build(&response, &headers, 1, &plan,
+                                           &error) == VECTIS_OK);
+  assert(!plan.chunked && !plan.body_allowed);
+  assert(strstr(plan.head, "Content-Length:") == NULL);
+  assert(strstr(plan.head, "Transfer-Encoding:") == NULL);
+  vectis_proxy_http_wire_plan_cleanup(&plan);
+  vectis_proxy_headers_cleanup(&headers);
+  vectis_proxy_http_response_cleanup(&response);
 }
 
 int main(void) {

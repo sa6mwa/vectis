@@ -142,6 +142,15 @@ static void test_chunked_and_head(void) {
   assert(vectis_proxy_http_response_body(&response, 1u, NULL) ==
          VECTIS_PROXY_HEADER_INVALID);
   vectis_proxy_http_response_cleanup(&response);
+
+  vectis_proxy_http_response_init(&response, 0);
+  accept(&response, "HTTP/1.1 205 Reset Content\r\n");
+  accept(&response, "Transfer-Encoding: chunked\r\n");
+  assert(accept(&response, "\r\n") == VECTIS_PROXY_HTTP_FINAL);
+  assert(!response.body_allowed && response.chunked);
+  assert(vectis_proxy_http_response_finish(&response, NULL) ==
+         VECTIS_PROXY_HEADER_OK);
+  vectis_proxy_http_response_cleanup(&response);
 }
 
 static void test_rejections(void) {
@@ -163,6 +172,23 @@ static void test_rejections(void) {
   accept(&response, "HTTP/1.1 204 No Content\r\n");
   accept(&response, "Content-Length: 1\r\n");
   reject(&response, "\r\n", VECTIS_PROXY_HEADER_INVALID);
+  vectis_proxy_http_response_cleanup(&response);
+
+  vectis_proxy_http_response_init(&response, 0);
+  accept(&response, "HTTP/1.1 205 Reset Content\r\n");
+  accept(&response, "Content-Length: 1\r\n");
+  reject(&response, "\r\n", VECTIS_PROXY_HEADER_INVALID);
+  vectis_proxy_http_response_cleanup(&response);
+
+  vectis_proxy_http_response_init(&response, 0);
+  accept(&response, "HTTP/1.1 205 Reset Content\r\n");
+  accept(&response, "Content-Length: 0\r\n");
+  assert(accept(&response, "\r\n") == VECTIS_PROXY_HTTP_FINAL);
+  assert(!response.body_allowed);
+  assert(vectis_proxy_http_response_finish(&response, NULL) ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_http_response_body(&response, 1u, NULL) ==
+         VECTIS_PROXY_HEADER_INVALID);
   vectis_proxy_http_response_cleanup(&response);
 
   vectis_proxy_http_response_init(&response, 0);

@@ -100,7 +100,7 @@ vectis_proxy_response_header_at(const vectis_proxy_response *response,
 /**
  * Edit downstream metadata through bounded copies. The status must remain a
  * final non-101 status and preserve the upstream body eligibility (including
- * HEAD and the 204/304 rules). Transport framing, hop-by-hop, forwarding,
+ * HEAD and the 204/205/304 rules). Transport framing, hop-by-hop, forwarding,
  * and WebSocket handshake fields are owned by Vectis and cannot be edited.
  * Any failed setter rejects the response even if the hook ignores its error.
  */

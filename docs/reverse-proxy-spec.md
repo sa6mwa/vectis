@@ -207,7 +207,9 @@ available.
   responses or status codes that forbid one. Preserve a valid upstream
   representation `Content-Length` on HEAD or `304` when HTTP permits it,
   without treating that value as bytes to send; omit forbidden framing on
-  `1xx` and `204`.
+  `1xx` and `204`. Treat [`205` as a no-content final status](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.3.6):
+  accept a zero declared length or empty chunked framing, reject nonzero
+  content, and do not carry a body into a rewritten `205` response.
   Validate any upstream declared length against body bytes even when
   downstream framing is chunked; a mismatch after headers aborts the
   downstream connection.

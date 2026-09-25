@@ -54,6 +54,9 @@ static vectis_status invalid(vectis_proxy_response *response, void *userdata,
   if (kind == 8)
     assert(vectis_proxy_response_set_status(response, 600, error) ==
            VECTIS_ERR_INVALID);
+  if (kind == 9)
+    assert(vectis_proxy_response_set_status(response, 205, error) ==
+           VECTIS_ERR_INVALID);
   return VECTIS_OK;
 }
 
@@ -100,7 +103,7 @@ static void check_invalid(void) {
   upstream.status = 200;
   upstream.body_allowed = 1;
   vectis_proxy_headers_init(&sanitized);
-  for (kind = 1; kind <= 8; ++kind) {
+  for (kind = 1; kind <= 9; ++kind) {
     status = 0;
     assert(vectis_proxy_response_apply(&upstream, &sanitized, invalid, &kind,
                                        &status, &error) == VECTIS_ERR_INVALID);

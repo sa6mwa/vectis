@@ -43,8 +43,8 @@ vectis_status vectis_proxy_response_set_status(vectis_proxy_response *response,
                      "proxy response view is required");
     return VECTIS_ERR_INVALID;
   }
-  body_allowed =
-      !response->upstream->head_request && status != 204 && status != 304;
+  body_allowed = !response->upstream->head_request && status != 204 &&
+                 status != 205 && status != 304;
   if (status < 200 || status > 599 || status == 101 ||
       body_allowed != response->upstream->body_allowed) {
     response->failure = VECTIS_ERR_INVALID;

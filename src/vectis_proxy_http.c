@@ -261,13 +261,19 @@ vectis_proxy_header_status vectis_proxy_http_response_header(
         response->phase = VECTIS_PROXY_HTTP_EXPECT_STATUS;
         return VECTIS_PROXY_HEADER_OK;
       }
-      response->body_allowed = !response->head_request &&
-                               response->status != 204 &&
-                               response->status != 304;
+      response->body_allowed =
+          !response->head_request && response->status != 204 &&
+          response->status != 205 && response->status != 304;
       if (!response->body_allowed && response->status == 204 &&
           (response->has_content_length || response->chunked)) {
         if (reason != NULL)
           *reason = "upstream 204 response has forbidden framing";
+        return VECTIS_PROXY_HEADER_INVALID;
+      }
+      if (response->status == 205 && response->has_content_length &&
+          response->content_length != 0u) {
+        if (reason != NULL)
+          *reason = "upstream 205 response has nonzero Content-Length";
         return VECTIS_PROXY_HEADER_INVALID;
       }
       response->phase = VECTIS_PROXY_HTTP_READING_BODY;

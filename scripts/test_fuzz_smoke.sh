@@ -25,6 +25,7 @@ proxy_headers_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_headers"
 proxy_ws_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_ws_handshake"
 proxy_url_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_url"
 proxy_http_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_http"
+proxy_response_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_response"
 
 if [ ! -x "$json_target" ]; then
   echo "missing fuzz target: $json_target" >&2
@@ -52,6 +53,10 @@ if [ ! -x "$proxy_url_target" ]; then
 fi
 if [ ! -x "$proxy_http_target" ]; then
   echo "missing fuzz target: $proxy_http_target" >&2
+  exit 1
+fi
+if [ ! -x "$proxy_response_target" ]; then
+  echo "missing fuzz target: $proxy_response_target" >&2
   exit 1
 fi
 
@@ -94,4 +99,10 @@ for seed in "$repo_root"/tests/fuzz/corpus/proxy_http/*; do
   seed_name=$(basename -- "$seed")
   AFL_QUIET=1 "$afl_showmap" -o "$tmp_dir/proxy-http-$seed_name.map" -- \
     "$proxy_http_target" <"$seed" >/dev/null
+done
+
+for seed in "$repo_root"/tests/fuzz/corpus/proxy_response/*; do
+  seed_name=$(basename -- "$seed")
+  AFL_QUIET=1 "$afl_showmap" -o "$tmp_dir/proxy-response-$seed_name.map" -- \
+    "$proxy_response_target" <"$seed" >/dev/null
 done
