@@ -12,6 +12,7 @@
 #include "vectis_proxy_local.h"
 #include "vectis_proxy_response.h"
 #include "vectis_proxy_select.h"
+#include "vectis_proxy_telemetry.h"
 #include "vectis_proxy_upload.h"
 #include "vectis_proxy_url.h"
 #include "vectis_proxy_ws_handshake.h"
@@ -41,6 +42,7 @@ typedef struct vectis_kore_proxy_state {
   vectis_proxy_http_wire_plan wire;
   vectis_proxy_upload_buffer upload;
   vectis_proxy_curl_transfer *transfer;
+  vectis_proxy_telemetry telemetry;
   vectis_error failure;
   struct curl_slist *request_headers;
   struct kore_timer *wake_timer;
@@ -91,6 +93,29 @@ static void vectis_kore_proxy_unlink(vectis_kore_proxy_state *state) {
   state->next = NULL;
 }
 
+static void vectis_kore_proxy_record(vectis_kore_proxy_state *state) {
+  if (!state->active)
+    return;
+  state->telemetry.status = state->request != NULL && state->request->status
+                                ? state->request->status
+                                : state->error_status;
+  if (strcmp(state->telemetry.error_category, "none") == 0) {
+    if (state->failure.code == VECTIS_ERR_TIMEOUT) {
+      state->telemetry.disconnect_side = "upstream";
+      state->telemetry.error_category = "timeout";
+    } else if (state->failure.code != VECTIS_OK) {
+      state->telemetry.disconnect_side = "upstream";
+      state->telemetry.error_category = "upstream";
+    } else if (!state->final_queued ||
+               !TAILQ_EMPTY(&state->connection->send_queue)) {
+      state->telemetry.disconnect_side = "downstream";
+      state->telemetry.error_category = "disconnect";
+    }
+  }
+  vectis_proxy_telemetry_emit(&state->telemetry, vectis_logger(state->app),
+                              kore_time_ms());
+}
+
 static void vectis_kore_proxy_free(vectis_kore_proxy_state *state) {
   if (state == NULL)
     return;
@@ -106,6 +131,7 @@ static void vectis_kore_proxy_free(vectis_kore_proxy_state *state) {
     vectis_proxy_curl_cancel(state->transfer);
     state->transfer = NULL;
   }
+  vectis_kore_proxy_record(state);
   vectis_kore_proxy_unlink(state);
   if (state->request != NULL && state->active) {
     state->request->flags |= HTTP_REQUEST_DELETE;
@@ -223,10 +249,11 @@ static void vectis_kore_proxy_wake(void *userdata, u_int64_t now) {
   vectis_kore_proxy_schedule(state);
 }
 
-static void vectis_kore_proxy_upload_consumed(void *userdata) {
+static void vectis_kore_proxy_upload_consumed(void *userdata, size_t amount) {
   vectis_kore_proxy_state *state;
 
   state = (vectis_kore_proxy_state *)userdata;
+  state->telemetry.upstream_bytes += (uint64_t)amount;
   vectis_kore_proxy_progress(state);
   vectis_kore_proxy_request_wake(state);
 }
@@ -459,10 +486,13 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
       if (vectis_proxy_http_wire_chunk(&state->wire, body, body_length,
                                        state->frame, state->frame_capacity,
                                        &written, &error) != VECTIS_OK) {
+        state->telemetry.disconnect_side = "worker";
+        state->telemetry.error_category = "internal";
         kore_connection_disconnect(connection);
         return 0;
       }
       net_send_queue(connection, state->frame, written);
+      state->telemetry.downstream_bytes += (uint64_t)body_length;
       vectis_proxy_http_upstream_consume(&state->upstream, body_length);
       vectis_kore_proxy_schedule(state);
       return 1;
@@ -470,6 +500,8 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     if (state->transfer != NULL && state->upstream.paused) {
       if (vectis_proxy_http_upstream_resume(&state->upstream, &error) !=
           VECTIS_OK) {
+        state->telemetry.disconnect_side = "worker";
+        state->telemetry.error_category = "internal";
         kore_connection_disconnect(connection);
         return 0;
       }
@@ -483,6 +515,8 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
       if (vectis_proxy_http_wire_finish(
               &state->wire, &state->upstream.response.trailers,
               &state->final_wire, &state->final_length, &error) != VECTIS_OK) {
+        state->telemetry.disconnect_side = "worker";
+        state->telemetry.error_category = "internal";
         kore_connection_disconnect(connection);
         return 0;
       }
@@ -911,6 +945,8 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   state->next = vectis_kore_proxy_states;
   vectis_kore_proxy_states = state;
   state->active = 1;
+  vectis_proxy_telemetry_start(&state->telemetry, route->path, selected_url,
+                               "http", kore_time_ms());
   vectis_kore_proxy_progress(state);
   request->owner->hdlr_extra = state;
   request->owner->disconnect = vectis_kore_proxy_disconnect;
@@ -943,6 +979,9 @@ void vectis_kore_proxy_worker_cleanup(void) {
       vectis_proxy_curl_cancel(state->transfer);
       state->transfer = NULL;
     }
+    state->telemetry.disconnect_side = "worker";
+    state->telemetry.error_category = "shutdown";
+    vectis_kore_proxy_record(state);
     state->active = 0;
   }
 }

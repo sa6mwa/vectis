@@ -18,7 +18,7 @@ typedef struct vectis_proxy_upload_buffer {
   size_t capacity;
   size_t begin;
   size_t end;
-  void (*on_consume)(void *userdata);
+  void (*on_consume)(void *userdata, size_t amount);
   void *consume_userdata;
   int complete;
   int curl_paused;

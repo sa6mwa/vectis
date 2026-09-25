@@ -44,6 +44,32 @@ typedef struct test_probe {
   volatile unsigned long send_again;
 } test_probe;
 
+typedef struct proxy_log_capture {
+  size_t length;
+  char data[16384];
+} proxy_log_capture;
+
+static int proxy_log_write(void *userdata, const char *data, size_t length,
+                           size_t *written) {
+  static const char marker[] = "\"msg\":\"vectis.proxy.exchange\"";
+  proxy_log_capture *capture;
+  size_t i;
+
+  capture = (proxy_log_capture *)userdata;
+  for (i = 0u; i + sizeof(marker) - 1u <= length; ++i) {
+    if (memcmp(data + i, marker, sizeof(marker) - 1u) == 0) {
+      assert(length < sizeof(capture->data) - capture->length);
+      memcpy(capture->data + capture->length, data, length);
+      capture->length += length;
+      capture->data[capture->length] = '\0';
+      break;
+    }
+  }
+  if (written != NULL)
+    *written = length;
+  return 0;
+}
+
 #if defined(__linux__)
 static test_probe *active_probe;
 
@@ -651,6 +677,9 @@ int main(void) {
   unsigned short app_port;
   int mtls;
   test_probe *probe;
+  proxy_log_capture *logs;
+  pslog_config log_config;
+  pslog_logger *logger;
 
   assert(signal(SIGPIPE, SIG_IGN) != SIG_ERR);
   memset(&origin, 0, sizeof(origin));
@@ -662,6 +691,23 @@ int main(void) {
   origin.delay_head = getenv("VECTIS_PROXY_WSS_RETRY") != NULL;
   assert(!origin.cancel || origin.slow);
   assert(!origin.shutdown || (origin.slow && origin.cancel));
+  logs = NULL;
+  logger = NULL;
+  if (!origin.slow && !origin.delay_head) {
+    logs =
+        (proxy_log_capture *)mmap(NULL, sizeof(*logs), PROT_READ | PROT_WRITE,
+                                  MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    assert(logs != MAP_FAILED);
+    pslog_default_config(&log_config);
+    log_config.mode = PSLOG_MODE_JSON;
+    log_config.output.write = proxy_log_write;
+    log_config.output.close = NULL;
+    log_config.output.isatty = NULL;
+    log_config.output.userdata = logs;
+    log_config.output.owned = 0;
+    logger = pslog_new(&log_config);
+    assert(logger != NULL);
+  }
   probe = NULL;
   if (origin.slow || origin.delay_head) {
     probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
@@ -712,6 +758,7 @@ int main(void) {
                   (unsigned)origin.port) > 0);
   app_port = available_port();
   vectis_app_config_init(&app_config);
+  app_config.logger = logger;
   app_config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   app_config.tls.bind = "127.0.0.1";
   app_config.tls.port = app_port;
@@ -763,6 +810,14 @@ int main(void) {
     assert(vectis_stop(app, &error) == VECTIS_OK);
   }
   app->close(app);
+  if (logs != NULL) {
+    assert(strstr(logs->data, "\"kind\":\"websocket\"") != NULL);
+    assert(strstr(logs->data, "\"route\":\"/ws\"") != NULL);
+    assert(strstr(logs->data, "\"status\":101") != NULL);
+    assert(strstr(logs->data, "BBBB") == NULL);
+    logger->destroy(logger);
+    assert(munmap(logs, sizeof(*logs)) == 0);
+  }
   assert(close(origin.listener) == 0);
   SSL_CTX_free(origin.ctx);
   BIO_free(pem);

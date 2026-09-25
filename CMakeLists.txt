@@ -685,6 +685,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
     src/vectis_kore_proxy_local.c
     src/vectis_kore_proxy_ws.c
     src/vectis_proxy_events.c
+    src/vectis_proxy_telemetry.c
     src/vectis_proxy_curl.c
     src/vectis_proxy_select.c
     src/vectis_proxy_http.c

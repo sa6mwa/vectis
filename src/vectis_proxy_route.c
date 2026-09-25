@@ -42,6 +42,7 @@ static void vectis_proxy_route_data_free(void *userdata) {
   for (i = 0u; i < data->target_count; ++i) {
     free(data->targets[i]);
   }
+  free(data->path);
   free(data->targets);
   free(data->tls_ca_pem);
   free(data->tls_client_cert_pem);
@@ -246,6 +247,13 @@ vectis_register_proxy_route(vectis_app *app,
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate proxy route configuration");
+    return VECTIS_ERR_NOMEM;
+  }
+  data->path = vectis_proxy_copy_string(config->path);
+  if (data->path == NULL) {
+    vectis_proxy_route_data_free(data);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy proxy route path");
     return VECTIS_ERR_NOMEM;
   }
   data->targets = (char **)calloc(count, sizeof(*data->targets));

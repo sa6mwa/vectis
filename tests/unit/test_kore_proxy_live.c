@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -23,6 +24,32 @@ struct origin_server {
   volatile int finish_third;
   volatile int upload_first_seen;
 };
+
+typedef struct proxy_log_capture {
+  size_t length;
+  char data[16384];
+} proxy_log_capture;
+
+static int proxy_log_write(void *userdata, const char *data, size_t length,
+                           size_t *written) {
+  static const char marker[] = "\"msg\":\"vectis.proxy.exchange\"";
+  proxy_log_capture *capture;
+  size_t i;
+
+  capture = (proxy_log_capture *)userdata;
+  for (i = 0u; i + sizeof(marker) - 1u <= length; ++i) {
+    if (memcmp(data + i, marker, sizeof(marker) - 1u) == 0) {
+      assert(length < sizeof(capture->data) - capture->length);
+      memcpy(capture->data + capture->length, data, length);
+      capture->length += length;
+      capture->data[capture->length] = '\0';
+      break;
+    }
+  }
+  if (written != NULL)
+    *written = length;
+  return 0;
+}
 
 static void send_all(int fd, const char *data, size_t length) {
   ssize_t sent;
@@ -322,6 +349,9 @@ int main(void) {
   struct origin_server origin;
   vectis_proxy_route_config proxy;
   vectis_app_config config;
+  pslog_config log_config;
+  pslog_logger *logger;
+  proxy_log_capture *logs;
   vectis_route_config route;
   vectis_error error;
   vectis_app *app;
@@ -342,7 +372,20 @@ int main(void) {
   assert(snprintf(alternate, sizeof(alternate), "http://127.0.0.1:%u/alternate",
                   (unsigned)origin.port) > 0);
   alternates[0] = alternate;
+  logs = (proxy_log_capture *)mmap(NULL, sizeof(*logs), PROT_READ | PROT_WRITE,
+                                   MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  assert(logs != MAP_FAILED);
+  pslog_default_config(&log_config);
+  log_config.mode = PSLOG_MODE_JSON;
+  log_config.output.write = proxy_log_write;
+  log_config.output.close = NULL;
+  log_config.output.isatty = NULL;
+  log_config.output.userdata = logs;
+  log_config.output.owned = 0;
+  logger = pslog_new(&log_config);
+  assert(logger != NULL);
   vectis_app_config_init(&config);
+  config.logger = logger;
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = app_port;
@@ -558,6 +601,16 @@ int main(void) {
   assert(pthread_join(origin.thread, NULL) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
+  assert(strstr(logs->data, "\"msg\":\"vectis.proxy.exchange\"") != NULL);
+  assert(strstr(logs->data, "\"route\":\"/proxy/:id\"") != NULL);
+  assert(strstr(logs->data, "\"status\":202") != NULL);
+  assert(strstr(logs->data, "\"downstream_bytes\":10") != NULL);
+  assert(strstr(logs->data, "\"upstream_bytes\":32768,") != NULL);
+  assert(strstr(logs->data, "\"upstream_bytes\":3,") != NULL);
+  assert(strstr(logs->data, "q=1") == NULL);
+  assert(strstr(logs->data, "hello") == NULL);
+  logger->destroy(logger);
+  assert(munmap(logs, sizeof(*logs)) == 0);
   assert(close(origin.listener) == 0);
   return 0;
 }

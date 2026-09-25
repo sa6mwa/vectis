@@ -147,7 +147,7 @@ size_t vectis_proxy_upload_read(char *buffer, size_t size, size_t count,
     upload->end = 0u;
   }
   if (upload->on_consume != NULL)
-    upload->on_consume(upload->consume_userdata);
+    upload->on_consume(upload->consume_userdata, available);
   return available;
 }
 

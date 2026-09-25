@@ -1116,6 +1116,13 @@ file.
 - Record request ID, route, configured upstream name, status, bytes in each
   direction, duration, disconnect side, and error category. Do not log
   credentials, cookies, query secrets, WebSocket payloads, or SSE contents.
+  Emit one structured `vectis.proxy.exchange` event per accepted exchange on
+  teardown, including worker shutdown. The configured target URL identifies
+  the upstream; route registration rejects URL credentials and queries. HTTP
+  byte counts cover body bytes accepted by the next transport queue, excluding
+  framing. WebSocket counts cover relayed frame bytes, excluding handshake
+  bytes. A queued downstream byte is not a delivery acknowledgment. Status
+  zero means teardown occurred before any final response was committed.
 
 ## Verification strategy
 
