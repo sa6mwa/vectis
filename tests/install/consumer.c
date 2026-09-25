@@ -42,7 +42,9 @@ int main(void) {
   vectis_proxy_route_config_init(&proxy_config);
   if (proxy_config.path != NULL ||
       proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO ||
-      proxy_config.tls_ca_pem != NULL || proxy_config.rewrite != NULL ||
+      proxy_config.tls_ca_pem != NULL ||
+      proxy_config.tls_client_cert_pem != NULL ||
+      proxy_config.tls_client_key_pem != NULL || proxy_config.rewrite != NULL ||
       proxy_config.preflight != NULL || proxy_config.modify_response != NULL ||
       proxy_config.on_error != NULL ||
       vectis_proxy_inbound_header_count(NULL) != 0u ||

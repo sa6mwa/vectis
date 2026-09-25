@@ -1033,6 +1033,26 @@ do
   })
   assert(ok == nil and err.status == vectis.ERR_INVALID)
   ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "https://localhost:9",
+    tls_client_cert_pem = "certificate",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "https://localhost:9",
+    tls_client_key_pem = "key",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "https://localhost:9",
+    tls_client_cert_pem = "bad\0cert", tls_client_key_pem = "key",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
+    path = "/lua-smoke-proxy", target = "https://localhost:9",
+    tls_client_cert_pem = "cert", tls_client_key_pem = "",
+  })
+  assert(ok == nil and err.status == vectis.ERR_INVALID)
+  ok, err = server:proxy({
     path = "/lua-smoke-proxy", target = "http://127.0.0.1:9",
     rewrite = "not a function",
   })
@@ -1059,6 +1079,8 @@ do
     upstream_http_version = "http1", buffer_limit_bytes = 16384,
     connect_timeout_ms = 1000, idle_timeout_ms = 3000,
     tls_ca_pem = "-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----\n",
+    tls_client_cert_pem = "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----\n",
+    tls_client_key_pem = "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n",
   }) == true)
   assert(server:route_count() == 1)
   assert(server:proxy({

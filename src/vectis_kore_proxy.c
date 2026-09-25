@@ -881,6 +881,10 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   if (easy == NULL ||
       vectis_proxy_curl_set_ca(easy, route->tls_ca_pem,
                                route->tls_ca_pem_length, &error) != VECTIS_OK ||
+      vectis_proxy_curl_set_client_identity(
+          easy, route->tls_client_cert_pem, route->tls_client_cert_pem_length,
+          route->tls_client_key_pem, route->tls_client_key_pem_length,
+          &error) != VECTIS_OK ||
       vectis_proxy_http_upstream_init(
           &state->upstream, easy, selected_url, state->request_target,
           method_name, state->request_headers, route->buffer_limit_bytes,

@@ -18,6 +18,10 @@ static void test_route_ownership_and_selection(void) {
   char alternate[] = "http://backup.test/other";
   char ca_pem[] = "-----BEGIN CERTIFICATE-----\nexample\n"
                   "-----END CERTIFICATE-----\n";
+  char client_cert_pem[] = "-----BEGIN CERTIFICATE-----\nclient\n"
+                           "-----END CERTIFICATE-----\n";
+  char client_key_pem[] = "-----BEGIN PRIVATE KEY-----\nsecret\n"
+                          "-----END PRIVATE KEY-----\n";
   const char *alternates[1];
   vectis_proxy_route_config config;
   vectis_proxy_route_data *data;
@@ -40,11 +44,15 @@ static void test_route_ownership_and_selection(void) {
   config.alternate_targets = alternates;
   config.alternate_target_count = 1u;
   config.tls_ca_pem = ca_pem;
+  config.tls_client_cert_pem = client_cert_pem;
+  config.tls_client_key_pem = client_key_pem;
   assert(app->proxy_route(app, &config, &error) == VECTIS_OK);
   assert(app->route_count(app) == 1u);
   primary[8] = 'X';
   alternate[7] = 'X';
   ca_pem[27] = 'X';
+  client_cert_pem[27] = 'X';
+  client_key_pem[27] = 'X';
 
   request = vectis_internal_request_new(&error);
   response = vectis_internal_response_new(&error);
@@ -69,6 +77,12 @@ static void test_route_ownership_and_selection(void) {
   assert(data->tls_ca_pem[27] == '\n');
   assert(strstr(data->tls_ca_pem, "example") != NULL);
   assert(data->tls_ca_pem_length == strlen(data->tls_ca_pem));
+  assert(strstr(data->tls_client_cert_pem, "client") != NULL);
+  assert(strstr(data->tls_client_key_pem, "secret") != NULL);
+  assert(data->tls_client_cert_pem[27] == '\n');
+  assert(data->tls_client_key_pem[27] == '\n');
+  assert(data->tls_client_cert_pem_length == strlen(data->tls_client_cert_pem));
+  assert(data->tls_client_key_pem_length == strlen(data->tls_client_key_pem));
   assert(strcmp(vectis_request_path_param(request, "id"), "a") == 0);
 
   vectis_internal_request_cleanup(request);
@@ -127,6 +141,18 @@ static void test_invalid_targets(void) {
   config.tls_ca_pem = "";
   assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_INVALID);
   config.tls_ca_pem = NULL;
+  config.tls_client_cert_pem = "certificate";
+  assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_INVALID);
+  config.tls_client_cert_pem = NULL;
+  config.tls_client_key_pem = "key";
+  assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_INVALID);
+  config.tls_client_cert_pem = "";
+  assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_INVALID);
+  config.tls_client_cert_pem = "certificate";
+  config.tls_client_key_pem = "";
+  assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_INVALID);
+  config.tls_client_cert_pem = NULL;
+  config.tls_client_key_pem = NULL;
   assert(app->proxy_route(app, &config, &error) == VECTIS_OK);
   assert(app->proxy_route(app, &config, &error) == VECTIS_ERR_CONFLICT);
   app->close(app);

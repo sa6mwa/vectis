@@ -11470,6 +11470,7 @@ static int vectis_lua_app_proxy(lua_State *lua) {
   const char *kind;
   size_t count;
   size_t ca_length;
+  size_t client_pem_length;
   size_t i;
 
   server = vectis_lua_check_app(lua, 1);
@@ -11533,6 +11534,43 @@ static int vectis_lua_app_proxy(lua_State *lua) {
       return vectis_lua_push_error_text(
           lua, VECTIS_ERR_INVALID,
           "proxy tls_ca_pem must contain 1 to 262144 non-NUL bytes");
+    }
+  }
+  lua_pop(lua, 1);
+
+  lua_getfield(lua, 2, "tls_client_cert_pem");
+  if (!lua_isnil(lua, -1)) {
+    if (lua_type(lua, -1) != LUA_TSTRING) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "proxy tls_client_cert_pem must be PEM text");
+    }
+    config.tls_client_cert_pem = lua_tolstring(lua, -1, &client_pem_length);
+    if (client_pem_length == 0u || client_pem_length > 262144u ||
+        memchr(config.tls_client_cert_pem, '\0', client_pem_length) != NULL) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "proxy tls_client_cert_pem must contain 1 to 262144 non-NUL bytes");
+    }
+  }
+  lua_pop(lua, 1);
+
+  lua_getfield(lua, 2, "tls_client_key_pem");
+  if (!lua_isnil(lua, -1)) {
+    if (lua_type(lua, -1) != LUA_TSTRING) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID, "proxy tls_client_key_pem must be PEM text");
+    }
+    config.tls_client_key_pem = lua_tolstring(lua, -1, &client_pem_length);
+    if (client_pem_length == 0u || client_pem_length > 262144u ||
+        memchr(config.tls_client_key_pem, '\0', client_pem_length) != NULL) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "proxy tls_client_key_pem must contain 1 to 262144 non-NUL bytes");
     }
   }
   lua_pop(lua, 1);

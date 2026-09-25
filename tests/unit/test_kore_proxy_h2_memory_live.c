@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <nghttp2/nghttp2.h>
 #include <openssl/bio.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
@@ -164,6 +165,7 @@ static X509 *make_cert(EVP_PKEY *key) {
   assert(X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                     (const unsigned char *)"localhost", -1, -1,
                                     0) == 1);
+  assert(X509_set_issuer_name(cert, name) == 1);
   X509V3_set_ctx(&extension_context, cert, cert, NULL, NULL, 0);
   extension = X509V3_EXT_conf_nid(NULL, &extension_context,
                                   NID_subject_alt_name, "DNS:localhost");
@@ -536,9 +538,12 @@ int main(void) {
   X509 *cert;
   BIO *pem;
   BUF_MEM *pem_data;
+  BIO *key_pem;
+  BUF_MEM *key_pem_data;
   struct pollfd pending;
   unsigned short app_port;
   char *ca_pem;
+  char *client_key_pem;
   char target[128];
   char ws_target[128];
   char head[2048];
@@ -557,10 +562,12 @@ int main(void) {
   size_t generated_later;
   size_t buffer_limit;
   int mixed;
+  int mtls;
   int h2_connections;
 
   (void)signal(SIGPIPE, SIG_IGN);
   mixed = getenv("VECTIS_PROXY_MIXED_MEMORY") != NULL;
+  mtls = getenv("VECTIS_PROXY_H2_MTLS") != NULL;
   h2_connections = mixed ? TEST_MIXED_CONNECTIONS : TEST_CONNECTIONS;
   probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -577,6 +584,20 @@ int main(void) {
   assert(ca_pem != NULL);
   memcpy(ca_pem, pem_data->data, pem_data->length);
   ca_pem[pem_data->length] = '\0';
+  key_pem = NULL;
+  client_key_pem = NULL;
+  if (mtls) {
+    key_pem = BIO_new(BIO_s_mem());
+    assert(key_pem != NULL);
+    assert(PEM_write_bio_PrivateKey(key_pem, key, NULL, NULL, 0, NULL, NULL) ==
+           1);
+    BIO_get_mem_ptr(key_pem, &key_pem_data);
+    assert(key_pem_data != NULL);
+    client_key_pem = (char *)malloc(key_pem_data->length + 1u);
+    assert(client_key_pem != NULL);
+    memcpy(client_key_pem, key_pem_data->data, key_pem_data->length);
+    client_key_pem[key_pem_data->length] = '\0';
+  }
   memset(&origin, 0, sizeof(origin));
   origin.probe = probe;
   origin.connections = h2_connections;
@@ -585,6 +606,11 @@ int main(void) {
   assert(origin.ctx != NULL);
   assert(SSL_CTX_use_certificate(origin.ctx, cert) == 1);
   assert(SSL_CTX_use_PrivateKey(origin.ctx, key) == 1);
+  if (mtls) {
+    assert(X509_STORE_add_cert(SSL_CTX_get_cert_store(origin.ctx), cert) == 1);
+    SSL_CTX_set_verify(origin.ctx,
+                       SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+  }
   SSL_CTX_set_alpn_select_cb(origin.ctx, select_h2, &origin);
   origin.port = listen_port(&origin.listener);
   if (mixed)
@@ -604,6 +630,10 @@ int main(void) {
   proxy.methods = VECTIS_HTTP_METHODS_GET;
   proxy.target = target;
   proxy.tls_ca_pem = ca_pem;
+  if (mtls) {
+    proxy.tls_client_cert_pem = ca_pem;
+    proxy.tls_client_key_pem = client_key_pem;
+  }
   buffer_limit =
       getenv("VECTIS_PROXY_H2_LARGE_BUFFER") != NULL ? 1048576u : 8192u;
   proxy.buffer_limit_bytes = buffer_limit;
@@ -621,6 +651,10 @@ int main(void) {
     assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   }
   free(ca_pem);
+  if (client_key_pem != NULL) {
+    OPENSSL_cleanse(client_key_pem, strlen(client_key_pem));
+    free(client_key_pem);
+  }
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
   if (mixed)
@@ -737,6 +771,7 @@ int main(void) {
     assert(close(ws_origin.listener) == 0);
   SSL_CTX_free(origin.ctx);
   BIO_free(pem);
+  BIO_free(key_pem);
   X509_free(cert);
   EVP_PKEY_free(key);
   assert(munmap(probe, sizeof(*probe)) == 0);

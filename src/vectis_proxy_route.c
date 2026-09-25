@@ -4,6 +4,7 @@
 
 #include <curl/curl.h>
 #include <curl/urlapi.h>
+#include <openssl/crypto.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -16,6 +17,7 @@
 #define VECTIS_PROXY_MAX_BUFFER_LIMIT_BYTES 1048576u
 #define VECTIS_PROXY_MAX_TARGETS 16u
 #define VECTIS_PROXY_MAX_CA_PEM_BYTES 262144u
+#define VECTIS_PROXY_MAX_CLIENT_PEM_BYTES 262144u
 
 static char *vectis_proxy_copy_string(const char *value) {
   char *copy;
@@ -42,6 +44,11 @@ static void vectis_proxy_route_data_free(void *userdata) {
   }
   free(data->targets);
   free(data->tls_ca_pem);
+  free(data->tls_client_cert_pem);
+  if (data->tls_client_key_pem != NULL) {
+    OPENSSL_cleanse(data->tls_client_key_pem, data->tls_client_key_pem_length);
+    free(data->tls_client_key_pem);
+  }
   free(data);
 }
 
@@ -171,6 +178,8 @@ vectis_register_proxy_route(vectis_app *app,
   size_t i;
   size_t count;
   size_t ca_pem_length;
+  size_t client_cert_pem_length;
+  size_t client_key_pem_length;
   const char *target;
 
   if (app == NULL || app->impl == NULL || config == NULL) {
@@ -207,6 +216,28 @@ vectis_register_proxy_route(vectis_app *app,
     if (ca_pem_length == 0u || ca_pem_length > VECTIS_PROXY_MAX_CA_PEM_BYTES) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "proxy tls_ca_pem must contain 1 to 262144 bytes");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  if ((config->tls_client_cert_pem == NULL) !=
+      (config->tls_client_key_pem == NULL)) {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "proxy TLS client certificate and key must be set together");
+    return VECTIS_ERR_INVALID;
+  }
+  client_cert_pem_length = 0u;
+  client_key_pem_length = 0u;
+  if (config->tls_client_cert_pem != NULL) {
+    client_cert_pem_length = strlen(config->tls_client_cert_pem);
+    client_key_pem_length = strlen(config->tls_client_key_pem);
+    if (client_cert_pem_length == 0u ||
+        client_cert_pem_length > VECTIS_PROXY_MAX_CLIENT_PEM_BYTES ||
+        client_key_pem_length == 0u ||
+        client_key_pem_length > VECTIS_PROXY_MAX_CLIENT_PEM_BYTES) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "proxy TLS client certificate and key must each contain "
+                       "1 to 262144 bytes");
       return VECTIS_ERR_INVALID;
     }
   }
@@ -268,6 +299,20 @@ vectis_register_proxy_route(vectis_app *app,
       vectis_proxy_route_data_free(data);
       vectis_set_error(error, VECTIS_ERR_NOMEM,
                        "failed to copy proxy TLS CA bundle");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (config->tls_client_cert_pem != NULL) {
+    data->tls_client_cert_pem_length = client_cert_pem_length;
+    data->tls_client_cert_pem =
+        vectis_proxy_copy_string(config->tls_client_cert_pem);
+    data->tls_client_key_pem_length = client_key_pem_length;
+    data->tls_client_key_pem =
+        vectis_proxy_copy_string(config->tls_client_key_pem);
+    if (data->tls_client_cert_pem == NULL || data->tls_client_key_pem == NULL) {
+      vectis_proxy_route_data_free(data);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy proxy TLS client identity");
       return VECTIS_ERR_NOMEM;
     }
   }

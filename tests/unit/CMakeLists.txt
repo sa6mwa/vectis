@@ -106,6 +106,12 @@ if(VECTIS_WITH_KORE_RUNTIME)
         15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
     set_tests_properties(vectis_unit_kore_proxy_h2_memory_large PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
+    add_test(NAME vectis_unit_kore_proxy_h2_mtls_live
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_H2_MTLS=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+    set_tests_properties(vectis_unit_kore_proxy_h2_mtls_live PROPERTIES
+      LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_mixed_memory_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_MIXED_MEMORY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
@@ -154,6 +160,14 @@ if(VECTIS_WITH_KORE_RUNTIME)
     test_kore_proxy_ws_rejection_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_wss_live
     test_kore_proxy_wss_live.c)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME vectis_unit_kore_proxy_wss_mtls_live
+      COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
+        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
+    set_tests_properties(vectis_unit_kore_proxy_wss_mtls_live PROPERTIES
+      LABELS "unit;local" TIMEOUT 180)
+  endif()
   vectis_add_unit_test(vectis_unit_proxy_route_registration
     test_proxy_route_registration.c)
   vectis_add_unit_test(vectis_unit_proxy_director

@@ -13,6 +13,10 @@ typedef struct vectis_proxy_route_data {
   size_t buffer_limit_bytes;
   char *tls_ca_pem;
   size_t tls_ca_pem_length;
+  char *tls_client_cert_pem;
+  size_t tls_client_cert_pem_length;
+  char *tls_client_key_pem;
+  size_t tls_client_key_pem_length;
   vectis_proxy_rewrite_fn rewrite;
   void *rewrite_userdata;
   vectis_proxy_preflight_fn preflight;

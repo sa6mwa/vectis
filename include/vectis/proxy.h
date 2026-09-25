@@ -200,6 +200,12 @@ struct vectis_proxy_route_config {
    * default CA bundle for this route; peer and hostname checks remain on.
    * A nonempty bundle may contain at most 256 KiB of PEM text. */
   const char *tls_ca_pem;
+  /* Optional PEM client certificate chain and private key for HTTPS/WSS
+   * upstream authentication. Both must be set together. Each is borrowed
+   * until registration returns, then copied, and may contain 1 to 256 KiB
+   * of PEM text. No certificate or key file is created. */
+  const char *tls_client_cert_pem;
+  const char *tls_client_key_pem;
   /* Optional synchronous rewrite hook and borrowed application context. */
   vectis_proxy_rewrite_fn rewrite;
   void *rewrite_userdata;

@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <netinet/in.h>
 #include <openssl/bio.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
@@ -29,6 +30,7 @@ typedef struct tls_origin {
   int hello_count;
   int ws_offered_alpn;
   int http_offered_alpn;
+  int require_client_cert;
 } tls_origin;
 
 static const char client_head[] =
@@ -146,6 +148,7 @@ static void *origin_main(void *userdata) {
   unsigned char header[sizeof(client_big_head)];
   unsigned char chunk[4096];
   SSL *ssl;
+  X509 *peer_cert;
   size_t used;
   size_t offset;
   size_t i;
@@ -163,6 +166,11 @@ static void *origin_main(void *userdata) {
   assert(ssl != NULL);
   assert(SSL_set_fd(ssl, fd) == 1);
   assert(SSL_accept(ssl) == 1);
+  if (origin->require_client_cert) {
+    peer_cert = SSL_get_peer_certificate(ssl);
+    assert(peer_cert != NULL);
+    X509_free(peer_cert);
+  }
   used = 0u;
   do {
     got = SSL_read(ssl, request + used, (int)(sizeof(request) - used - 1u));
@@ -212,6 +220,11 @@ static void *origin_main(void *userdata) {
   assert(ssl != NULL);
   assert(SSL_set_fd(ssl, fd) == 1);
   assert(SSL_accept(ssl) == 1);
+  if (origin->require_client_cert) {
+    peer_cert = SSL_get_peer_certificate(ssl);
+    assert(peer_cert != NULL);
+    X509_free(peer_cert);
+  }
   used = 0u;
   do {
     got = SSL_read(ssl, request + used, (int)(sizeof(request) - used - 1u));
@@ -413,18 +426,29 @@ int main(void) {
   X509 *cert;
   BIO *pem;
   BUF_MEM *pem_data;
+  BIO *key_pem;
+  BUF_MEM *key_pem_data;
   char *ca_pem;
+  char *client_key_pem;
   char target[128];
   unsigned short app_port;
+  int mtls;
 
   assert(signal(SIGPIPE, SIG_IGN) != SIG_ERR);
   memset(&origin, 0, sizeof(origin));
+  mtls = getenv("VECTIS_PROXY_WSS_MTLS") != NULL;
+  origin.require_client_cert = mtls;
   key = make_key();
   cert = make_cert(key);
   origin.ctx = SSL_CTX_new(TLS_server_method());
   assert(origin.ctx != NULL);
   assert(SSL_CTX_use_certificate(origin.ctx, cert) == 1);
   assert(SSL_CTX_use_PrivateKey(origin.ctx, key) == 1);
+  if (mtls) {
+    assert(X509_STORE_add_cert(SSL_CTX_get_cert_store(origin.ctx), cert) == 1);
+    SSL_CTX_set_verify(origin.ctx,
+                       SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+  }
   SSL_CTX_set_client_hello_cb(origin.ctx, check_client_hello, &origin);
   origin.port = listen_origin(&origin);
   pem = BIO_new(BIO_s_mem());
@@ -436,6 +460,20 @@ int main(void) {
   assert(ca_pem != NULL);
   memcpy(ca_pem, pem_data->data, pem_data->length);
   ca_pem[pem_data->length] = '\0';
+  key_pem = NULL;
+  client_key_pem = NULL;
+  if (mtls) {
+    key_pem = BIO_new(BIO_s_mem());
+    assert(key_pem != NULL);
+    assert(PEM_write_bio_PrivateKey(key_pem, key, NULL, NULL, 0, NULL, NULL) ==
+           1);
+    BIO_get_mem_ptr(key_pem, &key_pem_data);
+    assert(key_pem_data != NULL);
+    client_key_pem = (char *)malloc(key_pem_data->length + 1u);
+    assert(client_key_pem != NULL);
+    memcpy(client_key_pem, key_pem_data->data, key_pem_data->length);
+    client_key_pem[key_pem_data->length] = '\0';
+  }
   assert(snprintf(target, sizeof(target), "https://localhost:%u/backend",
                   (unsigned)origin.port) > 0);
   app_port = available_port();
@@ -451,13 +489,21 @@ int main(void) {
   proxy.methods = VECTIS_HTTP_METHODS_GET;
   proxy.target = target;
   proxy.tls_ca_pem = ca_pem;
+  if (mtls) {
+    proxy.tls_client_cert_pem = ca_pem;
+    proxy.tls_client_key_pem = client_key_pem;
+  }
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
   proxy.path = "/http";
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
-  free(ca_pem);
   proxy.path = "/ws-untrusted";
   proxy.tls_ca_pem = NULL;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
+  free(ca_pem);
+  if (client_key_pem != NULL) {
+    OPENSSL_cleanse(client_key_pem, strlen(client_key_pem));
+    free(client_key_pem);
+  }
   assert(app->start(app, &error) == VECTIS_OK);
   assert(pthread_create(&origin.thread, NULL, origin_main, &origin) == 0);
   run_trusted(app_port);
@@ -472,6 +518,7 @@ int main(void) {
   assert(close(origin.listener) == 0);
   SSL_CTX_free(origin.ctx);
   BIO_free(pem);
+  BIO_free(key_pem);
   X509_free(cert);
   EVP_PKEY_free(key);
   return 0;

@@ -79,6 +79,45 @@ vectis_status vectis_proxy_curl_set_ca(CURL *easy, char *pem, size_t pem_length,
   return VECTIS_OK;
 }
 
+vectis_status vectis_proxy_curl_set_client_identity(CURL *easy, char *cert_pem,
+                                                    size_t cert_length,
+                                                    char *key_pem,
+                                                    size_t key_length,
+                                                    vectis_error *error) {
+  struct curl_blob blob;
+
+  if (easy == NULL || (cert_pem == NULL) != (key_pem == NULL) ||
+      (cert_pem == NULL && (cert_length != 0u || key_length != 0u)) ||
+      (cert_pem != NULL && (cert_length == 0u || key_length == 0u))) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "invalid proxy TLS client identity configuration");
+    return VECTIS_ERR_INVALID;
+  }
+  if (cert_pem == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  blob.data = cert_pem;
+  blob.len = cert_length;
+  blob.flags = CURL_BLOB_COPY;
+  if (curl_easy_setopt(easy, CURLOPT_SSLCERT_BLOB, &blob) != CURLE_OK ||
+      curl_easy_setopt(easy, CURLOPT_SSLCERTTYPE, "PEM") != CURLE_OK) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to configure proxy TLS client certificate");
+    return VECTIS_ERR_STATE;
+  }
+  blob.data = key_pem;
+  blob.len = key_length;
+  if (curl_easy_setopt(easy, CURLOPT_SSLKEY_BLOB, &blob) != CURLE_OK ||
+      curl_easy_setopt(easy, CURLOPT_SSLKEYTYPE, "PEM") != CURLE_OK) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to configure proxy TLS client key");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 int vectis_proxy_curl_configure_http(CURL *easy, int force_http1) {
   if (easy == NULL || (force_http1 != 0 && force_http1 != 1))
     return 0;

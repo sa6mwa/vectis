@@ -789,7 +789,11 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
           CURLE_OK ||
       curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) != CURLE_OK ||
       vectis_proxy_curl_set_ca(easy, route->tls_ca_pem,
-                               route->tls_ca_pem_length, &error) != VECTIS_OK) {
+                               route->tls_ca_pem_length, &error) != VECTIS_OK ||
+      vectis_proxy_curl_set_client_identity(
+          easy, route->tls_client_cert_pem, route->tls_client_cert_pem_length,
+          route->tls_client_key_pem, route->tls_client_key_pem_length,
+          &error) != VECTIS_OK) {
     curl_easy_cleanup(easy);
     vectis_kore_ws_free(state);
     return vectis_kore_ws_reject(request, 500);

@@ -13,6 +13,15 @@ typedef void (*vectis_proxy_curl_done_fn)(CURL *easy, CURLcode result,
 vectis_status vectis_proxy_curl_set_ca(CURL *easy, char *pem, size_t pem_length,
                                        vectis_error *error);
 
+/* Copy an optional PEM client certificate and key into a TLS easy handle.
+ * The pair is required together; no filesystem paths or temporary files are
+ * used. */
+vectis_status vectis_proxy_curl_set_client_identity(CURL *easy, char *cert_pem,
+                                                    size_t cert_length,
+                                                    char *key_pem,
+                                                    size_t key_length,
+                                                    vectis_error *error);
+
 /* Configure the shared HTTP transport policy before submitting an easy.
  * The HTTP/2-capable pool requires TLS 1.2 or newer even if its origin falls
  * back to HTTP/1.1. The forced HTTP/1.1 pool retains libcurl's TLS policy. */
