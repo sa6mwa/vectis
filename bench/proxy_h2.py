@@ -71,6 +71,7 @@ def main():
     parser.add_argument("--chunks", type=int, default=256)
     parser.add_argument("--events", type=int, default=5)
     parser.add_argument("--concurrency", type=int, nargs="+", default=[1, 8, 16])
+    parser.add_argument("--buffer-limit", type=int, default=16384)
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     if args.smoke:
@@ -78,6 +79,8 @@ def main():
         args.events, args.concurrency = 2, [1]
     if args.warmup < 0 or args.repetitions < 1 or args.chunks < 2 or args.events < 1:
         parser.error("warmup, repetitions, chunks, or events out of range")
+    if not 8192 <= args.buffer_limit <= 1048576:
+        parser.error("buffer limit must be between 8192 and 1048576 bytes")
     if (not args.concurrency
             or any(value < 1 or value > 16 for value in args.concurrency)
             or len(set(args.concurrency)) != len(args.concurrency)):
@@ -113,7 +116,8 @@ def main():
         try:
             common.wait_ready(origin_port, origin, origin_log)
             proxy = common.launch_proxy(binary, proxy_port, origin_port,
-                                        directory, ca_pem, bundle)
+                                        directory, ca_pem, bundle,
+                                        args.buffer_limit)
             direct_protocol, direct = read_stats(
                 helper, f"https://localhost:{origin_port}", cert, 2, args, origin.pid
             )
@@ -151,6 +155,7 @@ def main():
                     "warmup": args.warmup, "repetitions": args.repetitions,
                     "chunk_bytes": 16384, "chunks": args.chunks,
                     "events": args.events, "concurrency": args.concurrency,
+                    "buffer_limit_bytes": args.buffer_limit,
                     "direct_protocol": direct_protocol,
                     "proxy_downstream_protocol": proxy_protocol,
                     "origin_protocol": "HTTP/2.0",

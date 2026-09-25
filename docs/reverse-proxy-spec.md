@@ -1290,6 +1290,17 @@ resource fields are null because its origin runs inside the harness process.
 The conservative 256 MiB worker admission target is checked through the
 admission and memory tests described above.
 
+The HTTP proxy requests at most 512 KiB for libcurl's receive buffer even
+when a route permits a 1 MiB body queue. `--buffer-limit 1048576` on the local
+HTTP/1.1 and HTTP/2 benchmark runners exercises that configuration. On the
+shared development host, the 16-connection HTTP/2 download fixture measured
+35,584 KiB peak worker RSS with a 1 MiB curl buffer request and 27,908 KiB
+with 512 KiB; the duplex fixture measured 93,352 KiB and 78,148 KiB. In
+five-trial 16 MiB slow-reader runs, proxied HTTP/1.1 median completion was
+714 ms and 718 ms, and HTTP/2 was 1,185 ms and 1,205 ms. Requests of 16 KiB
+and 64 KiB had much larger slow-reader costs. These local samples motivated
+the cap; they are exploratory, not a numerical performance gate.
+
 ## External API notes
 
 The transport choices above depend on documented libcurl behavior:

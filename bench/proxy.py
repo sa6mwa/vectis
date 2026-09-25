@@ -514,11 +514,13 @@ def wait_ready(port, process, log_path):
     raise TimeoutError(f"Vectis did not listen on {port}: {log_path.read_text()}")
 
 
-def launch_proxy(binary, port, origin_port, directory, ca_pem=None, tls_bundle=None):
+def launch_proxy(binary, port, origin_port, directory, ca_pem=None, tls_bundle=None,
+                 buffer_limit=None):
     ca_field = ""
     if ca_pem:
         ca_field = f", tls_ca_pem = {json.dumps(ca_pem)}"
     scheme = "https" if ca_pem else "http"
+    buffer_field = f", buffer_limit_bytes={buffer_limit}" if buffer_limit else ""
     lua = directory / "proxy.lua"
     routes = ("proto", "small", "download", "upload", "duplex", "sse")
     server_tls = (
@@ -534,11 +536,11 @@ def launch_proxy(binary, port, origin_port, directory, ca_pem=None, tls_bundle=N
     for path in routes:
         lines.append(
             f'assert(server:proxy({{path="/{path}", '
-            f'target="{scheme}://127.0.0.1:{origin_port}"{ca_field}}}) == true)'
+            f'target="{scheme}://127.0.0.1:{origin_port}"{ca_field}{buffer_field}}}) == true)'
         )
     lines.append(
         f'assert(server:proxy({{path="/ws", '
-        f'target="{scheme}://127.0.0.1:{origin_port}"{ca_field}}}) == true)'
+        f'target="{scheme}://127.0.0.1:{origin_port}"{ca_field}{buffer_field}}}) == true)'
     )
     lines.extend((
         'assert(server:start() == true)',
@@ -676,6 +678,8 @@ def main():
                 "duplex", "sse", "ws"),
                         help="run only the selected measurement profiles")
     parser.add_argument("--tls", action="store_true", help="use a local trusted HTTPS/WSS origin")
+    parser.add_argument("--buffer-limit", type=int, default=16384,
+                        help="proxy route buffer limit in bytes")
     parser.add_argument("--smoke", action="store_true", help="short harness verification")
     args = parser.parse_args()
     if args.smoke:
@@ -683,6 +687,8 @@ def main():
         args.warmup = 0
     if args.warmup < 0:
         parser.error("warmup must be nonnegative")
+    if not 8192 <= args.buffer_limit <= 1048576:
+        parser.error("buffer limit must be between 8192 and 1048576 bytes")
     if min(args.repetitions, args.chunks, args.events, args.echoes, *args.concurrency) < 1:
         parser.error("repetitions, chunks, events, echoes, and concurrency must be positive")
     if args.chunks < 2 and "duplex" in args.profiles:
@@ -721,7 +727,8 @@ def main():
         thread.start()
         process = None
         try:
-            process = launch_proxy(binary, proxy_port, origin_port, directory, ca_pem, tls_bundle)
+            process = launch_proxy(binary, proxy_port, origin_port, directory,
+                                   ca_pem, tls_bundle, args.buffer_limit)
             client_host = "localhost" if args.tls else "127.0.0.1"
             direct = measure(client_host, origin_port, args.tls, client_context, args)
             proxied = measure(client_host, proxy_port, args.tls, client_context, args, process.pid)
@@ -749,6 +756,7 @@ def main():
                                "chunks": args.chunks, "events": args.events,
                                "echoes": args.echoes, "concurrency": args.concurrency,
                                "upstream_tls": args.tls,
+                               "buffer_limit_bytes": args.buffer_limit,
                                "profiles": args.profiles},
                 "direct": direct, "proxied": proxied,
                 "added_latency_ms": added,

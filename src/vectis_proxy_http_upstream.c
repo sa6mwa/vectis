@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Keep curl's receive request separate from the route's bounded body queue.
+ * Smaller curl buffers fragmented slow-reader transfers in local profiling. */
+#define VECTIS_PROXY_CURL_RECEIVE_BUFFER_MAX 524288u
+
 static size_t vectis_proxy_http_upstream_header(char *data, size_t size,
                                                 size_t count, void *userdata) {
   vectis_proxy_http_upstream *upstream;
@@ -151,7 +155,11 @@ vectis_status vectis_proxy_http_upstream_init(
   if (code == CURLE_OK)
     code = curl_easy_setopt(easy, CURLOPT_WRITEDATA, upstream);
   if (code == CURLE_OK)
-    code = curl_easy_setopt(easy, CURLOPT_BUFFERSIZE, (long)buffer_limit);
+    code = curl_easy_setopt(
+        easy, CURLOPT_BUFFERSIZE,
+        (long)(buffer_limit < VECTIS_PROXY_CURL_RECEIVE_BUFFER_MAX
+                   ? buffer_limit
+                   : VECTIS_PROXY_CURL_RECEIVE_BUFFER_MAX));
   if (code == CURLE_OK)
     code =
         curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, connect_timeout_ms);
