@@ -754,6 +754,19 @@ later plateau, and 18,144 KiB after teardown. The executable ceiling is
 slow-reader test, not a measurement of the exact occupancy of each relay
 buffer or a bound for every active WebSocket workload.
 
+A separate bidirectional variant sends a masked 4 MiB client frame on each
+of the sixteen tunnels while every origin also sends a 4 MiB frame. The
+origins have small receive buffers and do not consume the client frames;
+the clients have small receive buffers and do not consume the origin frames.
+The test waits for bytes to reach all sixteen origins, then checks the same
+four-second RSS plateau, `503` admission, slot reuse, and FD recovery. In a
+local x86-64 Linux Debug run, the worker measured 8,560 KiB before the first
+connection, 37,512 KiB at the sampled peak and later plateau, and 28,956 KiB
+after teardown. Both client and origin sockets accepted 64 MiB of frame
+payload. The ASan variant passed the same behavioral checks and its 256 MiB
+aggregate RSS ceiling. These figures include allocator retention and do not
+establish a per-tunnel allocator bound.
+
 The mixed production-route smoke holds eight certificate-verified HTTP/2
 slow-reader downloads and eight cleartext WebSocket tunnels in the same worker.
 Each WebSocket origin sends one 4 MiB frame to a client that stops reading;

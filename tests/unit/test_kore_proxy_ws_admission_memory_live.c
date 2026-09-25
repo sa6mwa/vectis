@@ -43,6 +43,8 @@ static const char ws_response[] =
     "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
 static const unsigned char frame_header[] = {0x82u, 0x7fu, 0u,    0u, 0u,
                                              0u,    0u,    0x40u, 0u, 0u};
+static const unsigned char masked_frame_header[] = {
+    0x82u, 0xffu, 0u, 0u, 0u, 0u, 0u, 0x40u, 0u, 0u, 0u, 0u, 0u, 0u};
 
 typedef struct test_probe {
   volatile pid_t worker_pid;
@@ -60,6 +62,7 @@ typedef struct test_origin {
   volatile int producer_done;
   volatile size_t produced;
   int filled;
+  int bidirectional;
 } test_origin;
 
 static unsigned long process_rss_kb(pid_t pid) {
@@ -197,9 +200,67 @@ static void produce_frames(test_origin *origin) {
   (void)__sync_lock_test_and_set(&origin->producer_done, 1);
 }
 
+static size_t send_masked_frames(const int *clients) {
+  unsigned char payload[4096];
+  size_t offsets[TEST_CONNECTIONS];
+  const unsigned char *data;
+  size_t length;
+  size_t produced;
+  ssize_t amount;
+  unsigned idle;
+  int active;
+  int progress;
+  int i;
+
+  memset(payload, 'C', sizeof(payload));
+  memset(offsets, 0, sizeof(offsets));
+  idle = 0u;
+  while (idle < 200u) {
+    active = 0;
+    progress = 0;
+    for (i = 0; i < TEST_CONNECTIONS; ++i) {
+      if (offsets[i] == sizeof(masked_frame_header) + TEST_FRAME_SIZE)
+        continue;
+      active = 1;
+      if (offsets[i] < sizeof(masked_frame_header)) {
+        data = masked_frame_header + offsets[i];
+        length = sizeof(masked_frame_header) - offsets[i];
+      } else {
+        data = payload;
+        length = sizeof(payload);
+        if (length > sizeof(masked_frame_header) + TEST_FRAME_SIZE - offsets[i])
+          length = sizeof(masked_frame_header) + TEST_FRAME_SIZE - offsets[i];
+      }
+      amount = send(clients[i], data, length, MSG_DONTWAIT);
+      if (amount > 0) {
+        offsets[i] += (size_t)amount;
+        progress = 1;
+      } else {
+        assert(amount == -1);
+        assert(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
+      }
+    }
+    if (!active)
+      break;
+    if (progress)
+      idle = 0u;
+    else {
+      ++idle;
+      usleep(1000u);
+    }
+  }
+  produced = 0u;
+  for (i = 0; i < TEST_CONNECTIONS; ++i) {
+    assert(offsets[i] >= sizeof(masked_frame_header));
+    produced += offsets[i] - sizeof(masked_frame_header);
+  }
+  return produced;
+}
+
 static void *origin_main(void *userdata) {
   test_origin *origin;
   char request[2048];
+  int receive_buffer;
   size_t used;
   ssize_t amount;
   int i;
@@ -208,6 +269,11 @@ static void *origin_main(void *userdata) {
   for (i = 0; i < TEST_CONNECTIONS + 1; ++i) {
     origin->clients[i] = accept(origin->listener, NULL, NULL);
     assert(origin->clients[i] >= 0);
+    if (origin->bidirectional && i < TEST_CONNECTIONS) {
+      receive_buffer = 4096;
+      assert(setsockopt(origin->clients[i], SOL_SOCKET, SO_RCVBUF,
+                        &receive_buffer, sizeof(receive_buffer)) == 0);
+    }
     used = 0u;
     request[0] = '\0';
     while (strstr(request, "\r\n\r\n") == NULL) {
@@ -306,6 +372,8 @@ int main(void) {
   unsigned long after_close;
   unsigned at_headers_fds;
   unsigned after_close_fds;
+  size_t client_produced;
+  int bidirectional;
 
   (void)signal(SIGPIPE, SIG_IGN);
   probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE,
@@ -313,7 +381,10 @@ int main(void) {
   assert(probe != MAP_FAILED);
   memset(probe, 0, sizeof(*probe));
   memset(&origin, 0, sizeof(origin));
-  origin.filled = getenv("VECTIS_PROXY_WS_FILLED_BUFFER") != NULL;
+  bidirectional = getenv("VECTIS_PROXY_WS_BIDIRECTIONAL") != NULL;
+  origin.bidirectional = bidirectional;
+  origin.filled =
+      bidirectional || getenv("VECTIS_PROXY_WS_FILLED_BUFFER") != NULL;
   origin.port = listen_port(&origin.listener);
   app_port = listen_port(&overflow);
   assert(close(overflow) == 0);
@@ -345,6 +416,7 @@ int main(void) {
   }
   assert(probe->worker_pid > 0);
   assert(__sync_fetch_and_add(&origin.accepted, 0u) == TEST_CONNECTIONS);
+  client_produced = bidirectional ? send_masked_frames(clients) : 0u;
   if (origin.filled) {
     for (i = 0; i < 500; ++i) {
       if (__sync_fetch_and_add(&origin.producer_done, 0) != 0)
@@ -352,6 +424,32 @@ int main(void) {
       usleep(10000u);
     }
     assert(i < 500);
+  }
+  if (bidirectional) {
+    unsigned char byte;
+    int ready;
+    int attempt;
+
+    assert(client_produced >= (size_t)TEST_CONNECTIONS * 1048576u);
+    ready = 0;
+    for (attempt = 0; attempt < 200; ++attempt) {
+      ready = 0;
+      for (i = 0; i < TEST_CONNECTIONS; ++i) {
+        ssize_t amount;
+
+        amount = recv(origin.clients[i], &byte, 1u, MSG_PEEK | MSG_DONTWAIT);
+        assert(amount == 1 ||
+               (amount == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)));
+        if (amount == 1)
+          ++ready;
+      }
+      if (ready == TEST_CONNECTIONS)
+        break;
+      usleep(10000u);
+    }
+    fprintf(stderr, "bidirectional upstreams ready=%d/%d sent=%lu\n", ready,
+            TEST_CONNECTIONS, (unsigned long)client_produced);
+    assert(ready == TEST_CONNECTIONS);
   }
   at_headers = process_rss_kb(probe->worker_pid);
   at_headers_fds = process_fd_count(probe->worker_pid);
@@ -370,9 +468,11 @@ int main(void) {
   later = process_rss_kb(probe->worker_pid);
   fprintf(stderr,
           "production websocket worker: baseline=%luKB headers=%luKB "
-          "warmup=%luKB peak=%luKB later=%luKB fds=%u,%u produced=%lu\n",
+          "warmup=%luKB peak=%luKB later=%luKB fds=%u,%u "
+          "origin_produced=%lu client_produced=%lu\n",
           probe->baseline_rss_kb, at_headers, after_warmup, peak, later,
-          probe->baseline_fds, at_headers_fds, (unsigned long)origin.produced);
+          probe->baseline_fds, at_headers_fds, (unsigned long)origin.produced,
+          (unsigned long)client_produced);
   assert(peak <= probe->baseline_rss_kb + TEST_MAX_RSS_DELTA_KB);
   assert(later <= after_warmup + 4096u);
   assert(at_headers_fds <= probe->baseline_fds + 64u);
