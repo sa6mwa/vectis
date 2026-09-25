@@ -50,10 +50,8 @@ typedef struct vectis_kore_proxy_state {
   char *request_target;
   char *authority;
   char *final_wire;
-  char *frame;
   unsigned char *read_chunk;
   const unsigned char *surplus;
-  size_t frame_capacity;
   size_t read_capacity;
   size_t read_length;
   size_t read_offset;
@@ -150,7 +148,6 @@ static void vectis_kore_proxy_free(vectis_kore_proxy_state *state) {
   free(state->request_target);
   free(state->authority);
   free(state->final_wire);
-  free(state->frame);
   free(state->read_chunk);
   free(state);
 }
@@ -399,7 +396,8 @@ static void vectis_kore_proxy_done(CURL *easy, CURLcode result,
 static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   struct connection *connection;
   vectis_proxy_local_response local;
-  const unsigned char *body;
+  unsigned char *body;
+  const unsigned char *wire;
   vectis_error error;
   size_t body_length;
   size_t written;
@@ -493,15 +491,16 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
   if (state->headers_queued && !state->final_queued) {
     body = vectis_proxy_http_upstream_body(&state->upstream, &body_length);
     if (body != NULL) {
-      if (vectis_proxy_http_wire_chunk(&state->wire, body, body_length,
-                                       state->frame, state->frame_capacity,
-                                       &written, &error) != VECTIS_OK) {
+      if (vectis_proxy_http_wire_chunk_in_place(
+              &state->wire, body, body_length, VECTIS_PROXY_HTTP_BODY_HEADROOM,
+              VECTIS_PROXY_HTTP_BODY_TAILROOM, &wire, &written,
+              &error) != VECTIS_OK) {
         state->telemetry.disconnect_side = "worker";
         state->telemetry.error_category = "internal";
         kore_connection_disconnect(connection);
         return 0;
       }
-      net_send_queue(connection, state->frame, written);
+      net_send_queue(connection, wire, written);
       state->send_retry_read = 0;
       state->telemetry.downstream_bytes += (uint64_t)body_length;
       vectis_proxy_http_upstream_consume(&state->upstream, body_length);
@@ -851,18 +850,6 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
                                         "invalid proxy request body\n");
       }
     }
-  }
-  state->frame_capacity = (route->buffer_limit_bytes > CURL_MAX_WRITE_SIZE
-                               ? route->buffer_limit_bytes
-                               : CURL_MAX_WRITE_SIZE) +
-                          32u;
-  state->frame = (char *)malloc(state->frame_capacity);
-  if (state->frame == NULL) {
-    vectis_proxy_director_cleanup(&directed);
-    vectis_proxy_headers_cleanup(&outbound);
-    vectis_proxy_headers_cleanup(&inbound);
-    vectis_kore_proxy_free(state);
-    return vectis_kore_proxy_reject(request, 500, "proxy allocation failed\n");
   }
   if (directed.host != NULL &&
       !vectis_kore_proxy_add_header(state, "Host", authority)) {

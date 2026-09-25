@@ -7,6 +7,8 @@
 #include <vectis/vectis.h>
 
 typedef struct vectis_proxy_http_upstream vectis_proxy_http_upstream;
+#define VECTIS_PROXY_HTTP_BODY_HEADROOM 32u
+#define VECTIS_PROXY_HTTP_BODY_TAILROOM 2u
 typedef void (*vectis_proxy_http_upstream_ready_fn)(
     vectis_proxy_http_upstream *upstream, vectis_proxy_http_event event,
     void *userdata);
@@ -30,6 +32,7 @@ struct vectis_proxy_http_upstream {
   vectis_proxy_http_response response;
   vectis_proxy_headers outbound_headers;
   CURL *easy;
+  unsigned char *body_storage;
   unsigned char *body;
   size_t body_capacity;
   size_t body_length;
@@ -49,9 +52,10 @@ vectis_status vectis_proxy_http_upstream_init(
     vectis_proxy_http_upstream_ready_fn ready, void *userdata,
     vectis_error *error);
 
-/* The pointer remains valid until the next consume or cleanup. */
-const unsigned char *
-vectis_proxy_http_upstream_body(const vectis_proxy_http_upstream *upstream,
+/* The pointer and reserved framing space remain valid until the next consume
+ * or cleanup. The caller may write only in that framing space. */
+unsigned char *
+vectis_proxy_http_upstream_body(vectis_proxy_http_upstream *upstream,
                                 size_t *length);
 void vectis_proxy_http_upstream_consume(vectis_proxy_http_upstream *upstream,
                                         size_t length);

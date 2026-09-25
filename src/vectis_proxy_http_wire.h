@@ -28,6 +28,14 @@ vectis_proxy_http_wire_chunk(const vectis_proxy_http_wire_plan *plan,
                              char *buffer, size_t capacity, size_t *written,
                              vectis_error *error);
 
+/* Frame a held body chunk using caller-owned space before and after it.
+ * The body bytes stay in place; the returned span remains valid until the
+ * caller reuses or frees that storage. */
+vectis_status vectis_proxy_http_wire_chunk_in_place(
+    const vectis_proxy_http_wire_plan *plan, unsigned char *body,
+    size_t body_length, size_t headroom, size_t tailroom,
+    const unsigned char **wire, size_t *written, vectis_error *error);
+
 /* Emit the final chunk only after the upstream transfer and trailers finish.
  * out is owned by the caller. A fixed-length response has no final bytes. */
 vectis_status

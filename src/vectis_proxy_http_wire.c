@@ -202,6 +202,52 @@ invalid_chunk:
   return VECTIS_ERR_INVALID;
 }
 
+vectis_status vectis_proxy_http_wire_chunk_in_place(
+    const vectis_proxy_http_wire_plan *plan, unsigned char *body,
+    size_t body_length, size_t headroom, size_t tailroom,
+    const unsigned char **wire, size_t *written, vectis_error *error) {
+  char prefix[32];
+  size_t prefix_length;
+  int count;
+
+  if (wire != NULL)
+    *wire = NULL;
+  if (written != NULL)
+    *written = 0u;
+  if (plan == NULL || !plan->body_allowed || body == NULL ||
+      body_length == 0u || wire == NULL || written == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "invalid in-place proxy response chunk");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!plan->chunked) {
+    *wire = body;
+    *written = body_length;
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  count =
+      snprintf(prefix, sizeof(prefix), "%lx\r\n", (unsigned long)body_length);
+  if (count < 0 || (size_t)count >= sizeof(prefix)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "proxy response chunk length is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  prefix_length = (size_t)count;
+  if (headroom < prefix_length || tailroom < 2u ||
+      body_length > (size_t)-1 - prefix_length - 2u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "proxy response chunk exceeds framing space");
+    return VECTIS_ERR_INVALID;
+  }
+  memcpy(body - prefix_length, prefix, prefix_length);
+  memcpy(body + body_length, "\r\n", 2u);
+  *wire = body - prefix_length;
+  *written = body_length + prefix_length + 2u;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 vectis_status
 vectis_proxy_http_wire_finish(const vectis_proxy_http_wire_plan *plan,
                               const vectis_proxy_headers *trailers, char **out,

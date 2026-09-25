@@ -130,8 +130,43 @@ static void test_fixed_and_bodyless(void) {
   vectis_proxy_http_response_cleanup(&response);
 }
 
+static void test_in_place_chunk(void) {
+  vectis_proxy_http_wire_plan plan;
+  vectis_error error;
+  unsigned char storage[64];
+  unsigned char *body;
+  const unsigned char *wire;
+  size_t written;
+
+  memset(&plan, 0, sizeof(plan));
+  plan.body_allowed = 1;
+  body = storage + 32u;
+  memcpy(body, "abc", 3u);
+  plan.chunked = 1;
+  assert(vectis_proxy_http_wire_chunk_in_place(&plan, body, 3u, 32u,
+                                               sizeof(storage) - 35u, &wire,
+                                               &written, &error) == VECTIS_OK);
+  assert(written == 8u && memcmp(wire, "3\r\nabc\r\n", written) == 0);
+  assert(memcmp(body, "abc", 3u) == 0);
+
+  assert(vectis_proxy_http_wire_chunk_in_place(
+             &plan, body, 3u, 2u, sizeof(storage) - 35u, &wire, &written,
+             &error) == VECTIS_ERR_INVALID);
+  assert(wire == NULL && written == 0u);
+  assert(vectis_proxy_http_wire_chunk_in_place(&plan, body, 3u, 32u, 1u, &wire,
+                                               &written,
+                                               &error) == VECTIS_ERR_INVALID);
+  assert(wire == NULL && written == 0u);
+
+  plan.chunked = 0;
+  assert(vectis_proxy_http_wire_chunk_in_place(&plan, body, 3u, 0u, 0u, &wire,
+                                               &written, &error) == VECTIS_OK);
+  assert(wire == body && written == 3u);
+}
+
 int main(void) {
   test_http2_chunked_with_trailers();
   test_fixed_and_bodyless();
+  test_in_place_chunk();
   return 0;
 }
