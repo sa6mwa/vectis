@@ -59,7 +59,7 @@ EOF
 chmod +x "$osxcross_bin/$host-clang"
 cp "$osxcross_bin/$host-clang" "$osxcross_bin/$host-clang++"
 
-for tool in ar ranlib otool strip install_name_tool; do
+for tool in ar ranlib nm otool strip install_name_tool; do
   cat >"$osxcross_bin/$host-$tool" <<'EOF'
 #!/bin/sh
 out=
@@ -123,6 +123,23 @@ EOF
 
 OSXCROSS_ROOT="$osxcross_root" CPKT_OSXCROSS_HOST="$host" \
   "${CMAKE:-cmake}" -P "$work/check-toolchain.cmake"
+
+if ! OSXCROSS_ROOT="$osxcross_root" CPKT_OSXCROSS_HOST="$host" \
+    VECTIS_LINKER_ROUTE_LOG="$log" TMPDIR="$work" \
+    PATH="$host_bin:$osxcross_bin:$PATH" \
+    bash "$repo_root/scripts/osxcross_available.sh"; then
+  echo "complete synthetic osxcross toolchain was not detected" >&2
+  exit 1
+fi
+mv "$osxcross_bin/$host-nm" "$osxcross_bin/$host-nm.missing"
+if OSXCROSS_ROOT="$osxcross_root" CPKT_OSXCROSS_HOST="$host" \
+    VECTIS_LINKER_ROUTE_LOG="$log" TMPDIR="$work" \
+    PATH="$host_bin:$osxcross_bin:$PATH" \
+    bash "$repo_root/scripts/osxcross_available.sh"; then
+  echo "incomplete synthetic osxcross toolchain was accepted" >&2
+  exit 1
+fi
+mv "$osxcross_bin/$host-nm.missing" "$osxcross_bin/$host-nm"
 
 : >"$log"
 PATH="$osxcross_bin:$host_bin:$PATH" VECTIS_LINKER_ROUTE_LOG="$log" \

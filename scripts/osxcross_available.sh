@@ -10,7 +10,7 @@ fi
 host=${VECTIS_OSXCROSS_HOST:-${CPKT_OSXCROSS_HOST:-arm64-apple-darwin25}}
 bin_dir="$osxcross_root/bin"
 
-for tool in clang ar ranlib ld otool; do
+for tool in clang clang++ ar ranlib nm ld otool strip; do
   if [ ! -x "$bin_dir/$host-$tool" ]; then
     exit 1
   fi
