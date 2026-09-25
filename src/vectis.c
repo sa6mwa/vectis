@@ -34586,12 +34586,12 @@ vectis_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
   attr_key.capacity = 0u;
   open_index = SIZE_MAX;
   empty = xmlTextReaderIsEmptyElement(reader);
-  space = xmlTextReaderGetAttribute(reader, BAD_CAST "xml:space");
+  space = xmlTextReaderGetAttribute(reader, (const xmlChar *)"xml:space");
   space_preserve = parent_space_preserve;
   if (space != NULL) {
-    if (xmlStrEqual(space, BAD_CAST "preserve")) {
+    if (xmlStrEqual(space, (const xmlChar *)"preserve")) {
       space_preserve = 1;
-    } else if (xmlStrEqual(space, BAD_CAST "default")) {
+    } else if (xmlStrEqual(space, (const xmlChar *)"default")) {
       space_preserve = 0;
     }
     xmlFree(space);
