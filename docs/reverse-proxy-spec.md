@@ -1164,6 +1164,11 @@ evidence is integration and end-to-end behavior.
 | Failure and lifecycle | DNS/connect/TLS failure, upstream reset before and after headers, malformed upstream headers, slowloris, callback rejection, partial request body, downstream reset while idle or with a queued response write, downstream TLS close, worker shutdown, app stop, and connection limits. Before any downstream header write attempt, remove an unwritten proxy-owned netbuf and send a complete local `502` for upstream transport failure; after a write attempt, end the downstream stream without a successful chunk terminator, including TLS `WANT_*` with zero netbuf offset. Cover the case where Kore has queued a response but has not attempted a write, and assert exactly one request/connection teardown, no orphan transfer, retained curl handle, leaked fd, hanging test process, or accidentally reusable connection with unread request bytes. |
 | Sanitizers and fuzzing | ASan/UBSan integration runs; bounded fuzz targets for URL/header rewrite, chunk parser, trailer parser, and upgrade response validation. |
 
+The `vectis_fuzz_proxy_director` target mutates the C request rewrite setters
+through the actual director preparation path. Its corpus includes accepted and
+rejected edits; it checks that ignored setter failures still reject admission
+and that successful rewrites retain bounded, editable headers.
+
 Use local fixtures rather than a public network service. Every test fixture
 starts under the test runner, has a hard deadline, and is joined or killed on
 all exits. Resource assertions use per-test worker/child ownership rather than

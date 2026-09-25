@@ -31,6 +31,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_fuzzer(vectis_fuzz_proxy_ws_handshake
     fuzz_vectis_proxy_ws_handshake.c)
   vectis_add_fuzzer(vectis_fuzz_proxy_url fuzz_vectis_proxy_url.c)
+  vectis_add_fuzzer(vectis_fuzz_proxy_director fuzz_vectis_proxy_director.c)
   vectis_add_fuzzer(vectis_fuzz_proxy_http fuzz_vectis_proxy_http.c)
   vectis_add_fuzzer(vectis_fuzz_proxy_response
     fuzz_vectis_proxy_response.c)
