@@ -67,56 +67,69 @@ typedef vectis_status (*vectis_proxy_on_error_fn)(
  * Synchronous request rewrite, called after Vectis validates and sanitizes
  * the inbound headers and before any upstream connection. Both views are
  * borrowed for this call. Returning an error rejects the request locally.
+ * A failed outbound edit rejects the request even if its error is ignored.
  * The callback must not block, retain either view, or consume a request body.
  */
 typedef vectis_status (*vectis_proxy_rewrite_fn)(
     const vectis_proxy_inbound *inbound, vectis_proxy_outbound *outbound,
     void *userdata, vectis_error *error);
 
-/** Borrowed raw request metadata. NULL means no query or path parameter. */
+/** Return the inbound method; the view is borrowed for the callback. */
 vectis_http_method vectis_proxy_inbound_method(const vectis_proxy_inbound *in);
+/** Return the validated raw path, borrowed until the callback returns. */
 const char *vectis_proxy_inbound_path(const vectis_proxy_inbound *in);
+/** Return the raw query, or NULL when absent; borrowed for the callback. */
 const char *vectis_proxy_inbound_query(const vectis_proxy_inbound *in);
+/** Return the inbound Host value, borrowed until the callback returns. */
 const char *vectis_proxy_inbound_host(const vectis_proxy_inbound *in);
+/** Return nonzero when this request is a validated WebSocket upgrade. */
 int vectis_proxy_inbound_websocket(const vectis_proxy_inbound *in);
+/** Return a borrowed route capture, or NULL when the name is unmatched. */
 const char *vectis_proxy_inbound_path_param(const vectis_proxy_inbound *in,
                                             const char *name);
+/** Return the number of inbound request header fields, including repeats. */
 size_t vectis_proxy_inbound_header_count(const vectis_proxy_inbound *in);
-/** Header names and values remain valid only during the owning callback. */
+/** Read one inbound header; output strings are borrowed for the callback. */
 vectis_status vectis_proxy_inbound_header_at(const vectis_proxy_inbound *in,
                                              size_t index, const char **name,
                                              const char **value);
 
 /**
- * Mutate sanitized outbound metadata. Setters copy strings before returning.
- * Target indices refer to target (zero) followed by alternate_targets in
- * registration order. Only end-to-end fields may be edited through these
- * helpers; Host has its own setter. Vectis validates the final raw target and
- * handshake again before connecting.
+ * Select the configured target at index zero or an alternate in registration
+ * order. An unconfigured index fails admission even if the error is ignored.
  */
 vectis_status vectis_proxy_outbound_select_target(vectis_proxy_outbound *out,
                                                   size_t index,
                                                   vectis_error *error);
+/** Set the forwarded method; WebSocket upgrades must retain GET. */
 vectis_status vectis_proxy_outbound_set_method(vectis_proxy_outbound *out,
                                                vectis_http_method method,
                                                vectis_error *error);
+/** Copy a validated raw origin-form path for the upstream request. */
 vectis_status vectis_proxy_outbound_set_path(vectis_proxy_outbound *out,
                                              const char *raw_path,
                                              vectis_error *error);
+/** Copy the raw query; NULL removes it. Final target validation still applies.
+ */
 vectis_status vectis_proxy_outbound_set_query(vectis_proxy_outbound *out,
                                               const char *raw_query,
                                               vectis_error *error);
+/** Copy an explicit Host value; NULL restores the selected target authority. */
 vectis_status vectis_proxy_outbound_set_host(vectis_proxy_outbound *out,
                                              const char *host,
                                              vectis_error *error);
+/** Append a copied end-to-end request header, preserving repeated fields. */
 vectis_status vectis_proxy_outbound_add_header(vectis_proxy_outbound *out,
                                                const char *name,
                                                const char *value,
                                                vectis_error *error);
+/** Replace all fields with this name by one copied end-to-end header. */
 vectis_status vectis_proxy_outbound_set_header(vectis_proxy_outbound *out,
                                                const char *name,
                                                const char *value,
                                                vectis_error *error);
+/** Remove all fields with this name; transport, forwarding, and handshake
+ * fields are owned by Vectis. */
 vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
                                                   const char *name,
                                                   vectis_error *error);
@@ -126,37 +139,42 @@ vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
  * committed. Receives no body. Called for HTTP, SSE, and non-101 WebSocket
  * rejections; a validated 101 handshake bypasses it. The view is borrowed
  * only for this call and must not be retained or used to block the worker.
- * Returning an error rejects the upstream response before commitment.
+ * Returning an error or ignoring a failed edit rejects the upstream response
+ * before commitment.
  */
 typedef vectis_status (*vectis_proxy_modify_response_fn)(
     vectis_proxy_response *response, void *userdata, vectis_error *error);
 
-/** Inspect the current downstream status and sanitized end-to-end headers. */
+/** Return the current downstream final status before headers are committed. */
 int vectis_proxy_response_status(const vectis_proxy_response *response);
+/** Return the number of sanitized downstream response header fields. */
 size_t
 vectis_proxy_response_header_count(const vectis_proxy_response *response);
+/** Read one response header; output strings are borrowed for the callback. */
 vectis_status
 vectis_proxy_response_header_at(const vectis_proxy_response *response,
                                 size_t index, const char **name,
                                 const char **value);
 
 /**
- * Edit downstream metadata through bounded copies. The status must remain a
- * final non-101 status and preserve the upstream body eligibility (including
- * HEAD and the 204/205/304 rules). Transport framing, hop-by-hop, forwarding,
- * and WebSocket handshake fields are owned by Vectis and cannot be edited.
- * Any failed setter rejects the response even if the hook ignores its error.
+ * Set a final non-101 status without changing whether the upstream body can be
+ * sent. HEAD and 204/205/304 body rules remain in force. Failed edits are
+ * sticky even if the response hook ignores their error.
  */
 vectis_status vectis_proxy_response_set_status(vectis_proxy_response *response,
                                                int status, vectis_error *error);
+/** Append a copied end-to-end response header, preserving repeated fields. */
 vectis_status vectis_proxy_response_add_header(vectis_proxy_response *response,
                                                const char *name,
                                                const char *value,
                                                vectis_error *error);
+/** Replace all fields with this name by one copied end-to-end header. */
 vectis_status vectis_proxy_response_set_header(vectis_proxy_response *response,
                                                const char *name,
                                                const char *value,
                                                vectis_error *error);
+/** Remove all fields with this name; transport, forwarding, and handshake
+ * fields are owned by Vectis. */
 vectis_status
 vectis_proxy_response_remove_header(vectis_proxy_response *response,
                                     const char *name, vectis_error *error);
@@ -182,6 +200,7 @@ struct vectis_proxy_route_config {
    * configured target. Each string and the array are borrowed until this
    * registration call returns, then copied by Vectis. */
   const char *const *alternate_targets;
+  /* Number of additional configured targets in alternate_targets. */
   size_t alternate_target_count;
   /* Zero selects VECTIS_PROXY_HTTP_AUTO. */
   vectis_proxy_http_version upstream_http_version;
@@ -205,18 +224,23 @@ struct vectis_proxy_route_config {
    * until registration returns, then copied, and may contain 1 to 256 KiB
    * of PEM text. No certificate or key file is created. */
   const char *tls_client_cert_pem;
+  /* PEM key paired with tls_client_cert_pem; copied and cleansed on release. */
   const char *tls_client_key_pem;
   /* Optional synchronous rewrite hook and borrowed application context. */
   vectis_proxy_rewrite_fn rewrite;
+  /* Caller-owned context; retain it until app->close() completes. */
   void *rewrite_userdata;
   /* Optional headers-time admission hook and borrowed application context. */
   vectis_proxy_preflight_fn preflight;
+  /* Caller-owned context; retain it until app->close() completes. */
   void *preflight_userdata;
   /* Optional final response hook and borrowed application context. */
   vectis_proxy_modify_response_fn modify_response;
+  /* Caller-owned context; retain it until app->close() completes. */
   void *modify_response_userdata;
   /* Optional uncommitted gateway-error hook and borrowed context. */
   vectis_proxy_on_error_fn on_error;
+  /* Caller-owned context; retain it until app->close() completes. */
   void *on_error_userdata;
 };
 
