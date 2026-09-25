@@ -159,10 +159,15 @@ inside one raw segment, and a proxy parameter captures its escaped spelling.
 Forwarding still uses the original raw target, not that parameter. A proxy
 literal pattern cannot contain percent escapes under current route
 registration rules, so escaped-path fallback depends on a parameter or regex
-pattern. Prove this behavior, including encoded percent and colon, mixed-case
-escapes, and overlaps with every existing route kind before fixing the public
-contract. Public proxy registration and production admission now use this
-fallback; the remaining overlap and encoded-path cases still need verification.
+pattern. Tests must cover encoded percent and colon, mixed-case escapes, and
+overlaps with every existing route kind. Public proxy registration and
+production admission now use this fallback. Decoded-path proxy matches also
+validate the original raw path before
+`preflight`, so a raw fragment or control byte cannot bypass the proxy path
+policy. Selector unit tests cover mixed-case escapes, escaped slash/percent/
+colon, raw colon, dot segments, malformed escapes, and double-escape attempts;
+the production listener rejects a raw fragment before invoking `preflight`.
+The remaining route-overlap combinations still need live verification.
 
 This follows Go's newer `Rewrite(in, out)` model rather than copying the
 behavior of its older `Director`: sanitize first, then let application code
@@ -483,8 +488,9 @@ marker probe covers ordinary regex overlap in both registration orders and
 escaped-path fallback over cleartext and TLS. It also covers WebSocket
 priority, static file and `405` behavior, and both registration orders for
 proxy-marker versus live-upload POST routes with a live body callback. The
-test-only selector needs production integration and complete header framing.
-This adds no further Kore transport surface.
+production pre-body path now calls the shared selector and validates complete
+request-header framing before proxy takeover. This adds no further Kore
+transport surface.
 
 Kore's current request-body behavior is method-based: GET, HEAD, OPTIONS,
 COPY, and MOVE are marked complete at request creation; most other methods

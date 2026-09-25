@@ -91,6 +91,11 @@ vectis_status vectis_proxy_select_route(vectis_app *app,
   free(decoded);
   if (status == VECTIS_OK) {
     if (handler == vectis_proxy_route_marker) {
+      /* Decoded-path matching can accept a raw fragment or control byte.
+       * Reject it before a proxy preflight callback observes the request. */
+      status = vectis_internal_proxy_validate_raw_path(raw_path, error);
+      if (status != VECTIS_OK)
+        return status;
       *selected = (vectis_proxy_route_data *)userdata;
     }
     vectis_error_clear(error);

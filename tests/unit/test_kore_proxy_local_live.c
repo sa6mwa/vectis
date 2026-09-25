@@ -340,6 +340,14 @@ int main(void) {
   assert(pthread_create(&heartbeat.thread, NULL, stall_main, &heartbeat) == 0);
 
   length = request_app(app_port,
+                       "GET /proxy/preflight/a#b HTTP/1.1\r\n"
+                       "Host: localhost\r\n\r\n",
+                       response, sizeof(response) - 1u);
+  assert(length != 0u && strstr(response, "HTTP/1.1 400 ") == response);
+  assert(strstr(response, "proxy route selection failed") != NULL);
+  assert(strstr(response, "X-Local: preflight\r\n") == NULL);
+
+  length = request_app(app_port,
                        "POST /proxy/preflight/deny HTTP/1.1\r\n"
                        "Host: localhost\r\nContent-Length: 100\r\n\r\nx",
                        response, sizeof(response) - 1u);
