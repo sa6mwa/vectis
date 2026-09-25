@@ -1217,14 +1217,26 @@ is registered as two short CTest integration cases (HTTP and TLS); they
 assert behavior and set no performance threshold. The harness owns its
 origin, proxy process group, temporary certificate, and teardown.
 
-This local comparison uses an HTTP/1.1 origin. Existing deterministic C
-fixtures exercise certificate-verified HTTP/2 memory, pausing, and duplex
-behavior. A repeatable direct-versus-proxy HTTP/2 throughput profile,
-long-lived soak, and numerical latency thresholds still require a dedicated
-runner and pinned H2 origin fixture. Do not use the shared-host JSON samples
-as release thresholds. The `/proc` resource samples are Linux-only and
-observational; the conservative 256 MiB worker admission target is checked
-through the admission and memory tests described above.
+This local comparison uses an HTTP/1.1 origin. The opt-in
+`make bench-proxy-h2` profile uses a local Go TLS origin and the same Go client
+for direct HTTP/2 and proxied HTTP/1.1-to-HTTP/2 requests. It verifies both
+client protocols and that the origin receives HTTP/2, then measures small
+requests, streaming download, slow upload and reader, duplex response before
+upload EOF, and SSE at 1, 8, and 16 streams. `PROXY_H2_BENCH_ARGS="--smoke"`
+runs a short functional check. The Go helper uses the standard library and is
+built only for this opt-in target; normal CTest does not compile it. Existing
+deterministic C fixtures separately check certificate-verified HTTP/2 memory,
+pausing, and duplex behavior. The direct and proxied profiles have different
+downstream protocols by design, so their latency delta includes HTTP version
+translation. The direct Go client may also multiplex concurrent HTTP/2
+requests, while Vectis admits one active stream per upstream connection;
+interpret concurrent SSE results with that pooling difference. A long-lived
+soak and numerical latency thresholds still require a dedicated runner;
+shared-host JSON samples are not release thresholds. The `/proc` resource
+samples are Linux-only and observational. Direct resource fields measure the
+origin process; proxied fields measure the Vectis process group, so those
+figures are not a memory delta. The conservative 256 MiB worker admission
+target is checked through the admission and memory tests described above.
 
 ## External API notes
 

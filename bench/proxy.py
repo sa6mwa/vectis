@@ -397,6 +397,7 @@ class ResourceSampler:
         self.pid = pid
         self.stop = threading.Event()
         self.peak_worker_rss_bytes = 0
+        self.peak_process_group_rss_bytes = 0
         self.peak_fd_count = 0
         self.peak_worker_fds = 0
         self.cpu_start = None
@@ -407,6 +408,7 @@ class ResourceSampler:
         while not self.stop.is_set():
             pids = pids_for_group(self.pid)
             fd_count = 0
+            group_rss = 0
             cpu_ticks = 0
             for pid in pids:
                 try:
@@ -415,6 +417,7 @@ class ResourceSampler:
                         int(line.split()[1]) * 1024 for line in status.splitlines()
                         if line.startswith("VmRSS:")
                     )
+                    group_rss += rss
                     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
                     cpu_ticks += int(fields[11]) + int(fields[12])
                     if pid != self.pid:
@@ -426,6 +429,9 @@ class ResourceSampler:
                 except (OSError, StopIteration):
                     continue
             self.peak_fd_count = max(self.peak_fd_count, fd_count)
+            self.peak_process_group_rss_bytes = max(
+                self.peak_process_group_rss_bytes, group_rss
+            )
             if self.cpu_start is None:
                 self.cpu_start = cpu_ticks
             self.cpu_last = cpu_ticks
@@ -487,7 +493,7 @@ def launch_proxy(binary, port, origin_port, directory, ca_pem=None, tls_bundle=N
         ca_field = f", tls_ca_pem = {json.dumps(ca_pem)}"
     scheme = "https" if ca_pem else "http"
     lua = directory / "proxy.lua"
-    routes = ("small", "download", "upload", "duplex", "sse")
+    routes = ("proto", "small", "download", "upload", "duplex", "sse")
     server_tls = (
         f'{{mode="manual", cert_key_bundle_path={json.dumps(str(tls_bundle))}, '
         f'domain="localhost"}}'
@@ -614,6 +620,7 @@ def measure(host, port, secure, context, args, worker_pid=None):
             result[f"ws_{count}"] = {"echo": distribution(ws)}
     result["resource"] = {
         "peak_worker_rss_bytes": sampler.peak_worker_rss_bytes or None,
+        "peak_process_group_rss_bytes": sampler.peak_process_group_rss_bytes or None,
         "peak_worker_fds": sampler.peak_worker_fds or None,
         "peak_process_group_fds": sampler.peak_fd_count or None,
         "process_group_cpu_seconds": round(
