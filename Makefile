@@ -8,6 +8,7 @@ CTEST := ctest
 TIMED := bash ./scripts/run_timed.sh
 KORE_PATCH_STAMP := $(ROOT)/build/.kore-runtime-patches-applied
 KORE_PATCH_FILES := $(wildcard $(ROOT)/vendor/kore/patches/*.patch)
+HOST_DEBUG_MANIFEST := $(ROOT)/.cache/deps/host-debug/manifest.txt
 
 DEBUG_PRESET := debug
 DEBUG_LUA_PRESET := debug-lua
@@ -41,7 +42,7 @@ PROXY_FAST_TEST_REGEX := ^($(subst $(space),|,$(strip $(PROXY_FAST_TESTS))))$$
 	deps-debug deps-release deps-cross \
 	build build-debug build-debug-lua build-release build-asan build-valgrind build-coverage build-fuzz \
 	bench-metrics-storage perf-gate \
-	test test-debug test-proxy-fast test-proxy-asan-fast test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-proxy-fast test-proxy-asan-fast test-proxy-lua-fast test-proxy-lua-asan-fast test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy verify-release-matrix release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
@@ -55,6 +56,8 @@ help:
 		'make test               Run all debug CTest tests with the pinned Bootlin runtime.' \
 		'make test-proxy-fast    Build and run focused proxy tests in Debug.' \
 		'make test-proxy-asan-fast Build and run the same focused proxy tests under ASan/UBSan.' \
+		'make test-proxy-lua-fast Build and run Lua proxy hook integration in Debug.' \
+		'make test-proxy-lua-asan-fast Build and run Lua proxy hook integration under ASan/UBSan.' \
 		'make run-example EXAMPLE=mdf_render [ARGS=...]  Run a built example.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
 		'make test-vendor-kore-lifecycle Exercise Kore pin refresh and patch reapplication.' \
@@ -161,6 +164,9 @@ test-darwin-linker-route:
 	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
 
 deps-debug:
+	$(TIMED) deps-debug bash ./scripts/deps.sh deps-host-debug
+
+$(HOST_DEBUG_MANIFEST): $(ROOT)/scripts/deps.sh
 	$(TIMED) deps-debug bash ./scripts/deps.sh deps-host-debug
 
 deps-release:
@@ -336,15 +342,37 @@ prerelease:
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)
 
-test-proxy-fast: deps-debug $(KORE_PATCH_STAMP)
-	$(TIMED) proxy-fast-configure $(CMAKE) --preset $(DEBUG_PRESET)
+test-proxy-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)
+	@if [ ! -f build/$(DEBUG_PRESET)/build.ninja ] || \
+		[ CMakePresets.json -nt build/$(DEBUG_PRESET)/build.ninja ]; then \
+		$(TIMED) proxy-fast-configure $(CMAKE) --preset $(DEBUG_PRESET); \
+	fi
 	$(TIMED) proxy-fast-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target $(PROXY_FAST_TESTS)
 	$(TIMED) proxy-fast-test $(CTEST) --preset $(DEBUG_PRESET) -R '$(PROXY_FAST_TEST_REGEX)'
 
-test-proxy-asan-fast: deps-debug $(KORE_PATCH_STAMP)
-	$(TIMED) proxy-asan-fast-configure $(CMAKE) --preset $(ASAN_PRESET)
+test-proxy-asan-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)
+	@if [ ! -f build/$(ASAN_PRESET)/build.ninja ] || \
+		[ CMakePresets.json -nt build/$(ASAN_PRESET)/build.ninja ]; then \
+		$(TIMED) proxy-asan-fast-configure $(CMAKE) --preset $(ASAN_PRESET); \
+	fi
 	$(TIMED) proxy-asan-fast-build $(CMAKE) --build --preset $(ASAN_PRESET) --target $(PROXY_FAST_TESTS)
 	$(TIMED) proxy-asan-fast-test $(CTEST) --preset $(ASAN_PRESET) -R '$(PROXY_FAST_TEST_REGEX)'
+
+test-proxy-lua-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)
+	@if [ ! -f build/$(DEBUG_PRESET)/build.ninja ] || \
+		[ CMakePresets.json -nt build/$(DEBUG_PRESET)/build.ninja ]; then \
+		$(TIMED) proxy-lua-fast-configure $(CMAKE) --preset $(DEBUG_PRESET); \
+	fi
+	$(TIMED) proxy-lua-fast-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
+	$(TIMED) proxy-lua-fast-test $(CTEST) --preset $(DEBUG_PRESET) -R '^vectis_lua_http$$'
+
+test-proxy-lua-asan-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)
+	@if [ ! -f build/$(ASAN_PRESET)/build.ninja ] || \
+		[ CMakePresets.json -nt build/$(ASAN_PRESET)/build.ninja ]; then \
+		$(TIMED) proxy-lua-asan-fast-configure $(CMAKE) --preset $(ASAN_PRESET); \
+	fi
+	$(TIMED) proxy-lua-asan-fast-build $(CMAKE) --build --preset $(ASAN_PRESET) --target vectis_bin
+	$(TIMED) proxy-lua-asan-fast-test $(CTEST) --preset $(ASAN_PRESET) -R '^vectis_lua_http$$'
 
 test-e2e:
 	$(TIMED) test-e2e bash ./scripts/test-e2e.sh
