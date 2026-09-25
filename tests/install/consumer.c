@@ -14,6 +14,10 @@
 #include <vectis/proxy.h>
 #include <vectis/vectis.h>
 
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+#error "libvectis installed C consumer must compile in C89 mode"
+#endif
+
 int main(void) {
   vectis_app_config config;
   vectis_http_client_config http_config;
