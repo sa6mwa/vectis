@@ -676,17 +676,22 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_apply_relocatable_paths(vectis_kore_runtime)
   list(APPEND vectis_sources
     src/vectis_kore_bridge.c
+    src/vectis_kore_proxy.c
     src/vectis_proxy_events.c
     src/vectis_proxy_curl.c
     src/vectis_proxy_select.c
     src/vectis_proxy_headers.c
     src/vectis_proxy_http.c
     src/vectis_proxy_http_upstream.c
+    src/vectis_proxy_http_wire.c
     src/vectis_proxy_framing.c
     $<TARGET_OBJECTS:vectis_kore_runtime>)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     set_source_files_properties(src/vectis_kore_bridge.c PROPERTIES
       COMPILE_OPTIONS "-std=gnu99;-Wno-pedantic;-Wno-long-long;-Wno-cast-qual;-Wno-missing-prototypes"
+      COMPILE_DEFINITIONS "KORE_USE_ACME;KORE_USE_CURL;KORE_USE_LONEJSON;KORE_USE_PSLOG;KORE_VECTIS_STATIC_RUNTIME;KORE_VECTIS_DIRECT_TLS;KORE_VECTIS_NO_SECCOMP;KORE_VECTIS_ACME_STATE_HOOK;TLS_BACKEND_OPENSSL"
+    )
+    set_source_files_properties(src/vectis_kore_proxy.c PROPERTIES
       COMPILE_DEFINITIONS "KORE_USE_ACME;KORE_USE_CURL;KORE_USE_LONEJSON;KORE_USE_PSLOG;KORE_VECTIS_STATIC_RUNTIME;KORE_VECTIS_DIRECT_TLS;KORE_VECTIS_NO_SECCOMP;KORE_VECTIS_ACME_STATE_HOOK;TLS_BACKEND_OPENSSL"
     )
   endif()

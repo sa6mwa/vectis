@@ -1,5 +1,6 @@
 #include "vectis_acme_state.h"
 #include "vectis_internal.h"
+#include "vectis_kore_proxy.h"
 #include "vectis_proxy_curl.h"
 
 #include <kore/acme.h>
@@ -47,7 +48,8 @@ int vectis_kore_http_redirect_route(struct http_request *req);
 int vectis_kore_body_chunk(struct http_request *req, const void *data,
                            size_t len);
 static int vectis_kore_prebody(struct http_request *req, const void *data,
-                              size_t len);
+                               size_t len);
+static vectis_http_method vectis_kore_method(int method);
 void vectis_kore_request_free(struct http_request *req);
 void vectis_kore_ws_connect(struct connection *connection);
 void vectis_kore_ws_message(struct connection *connection, u_int8_t opcode,
@@ -111,7 +113,7 @@ static u_int16_t vectis_kore_curl_timeout_default = 0u;
 static u_int64_t vectis_kore_curl_recv_max_default = 0u;
 static vectis_kore_runtime_config vectis_kore_current;
 static int (*vectis_kore_prebody_probe)(struct http_request *, const void *,
-                                       size_t);
+                                        size_t);
 static void (*vectis_kore_worker_teardown_probe)(void);
 
 void vectis_kore_set_worker_teardown_probe(void (*probe)(void)) {
@@ -119,6 +121,7 @@ void vectis_kore_set_worker_teardown_probe(void (*probe)(void)) {
 }
 
 void kore_worker_teardown(void) {
+  vectis_kore_proxy_worker_cleanup();
   vectis_proxy_curl_worker_cleanup();
   if (vectis_kore_worker_teardown_probe != NULL) {
     vectis_kore_worker_teardown_probe();
@@ -131,9 +134,15 @@ void vectis_kore_set_prebody_probe(int (*probe)(struct http_request *,
 }
 
 static int vectis_kore_prebody(struct http_request *req, const void *data,
-                              size_t len) {
+                               size_t len) {
+  vectis_app *app;
+
   if (vectis_kore_prebody_probe == NULL) {
-    return KORE_RESULT_OK;
+    (void)pthread_mutex_lock(&vectis_kore_mutex);
+    app = vectis_kore_current.app;
+    (void)pthread_mutex_unlock(&vectis_kore_mutex);
+    return vectis_kore_proxy_prebody(req, data, len, app,
+                                     vectis_kore_method(req->method));
   }
   return vectis_kore_prebody_probe(req, data, len);
 }
@@ -2184,8 +2193,8 @@ static int vectis_kore_hex_value(unsigned char value) {
 }
 
 vectis_status vectis_internal_kore_decode_request_path(const char *path,
-                                                      char **out,
-                                                      vectis_error *error) {
+                                                       char **out,
+                                                       vectis_error *error) {
   const unsigned char *input;
   unsigned char *output;
   char *decoded;
@@ -3414,8 +3423,7 @@ int vectis_kore_route(struct http_request *req) {
   if (status == VECTIS_OK) {
     status = vectis_internal_route_body_policy(app, method, path, &body_policy,
                                                &body_is_live_upload, NULL, NULL,
-                                               NULL,
-                                               &error);
+                                               NULL, &error);
     if (status == VECTIS_OK) {
       route_matched = 1;
     }
