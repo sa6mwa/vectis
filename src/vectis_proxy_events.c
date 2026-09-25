@@ -12,6 +12,13 @@ void kore_platform_event_schedule(int fd, int type, int flags, void *event);
 #include <sys/event.h>
 #endif
 
+void vectis_proxy_event_takeover(int fd) {
+  kore_platform_disable_read(fd);
+#if !defined(__linux__)
+  kore_platform_disable_write(fd);
+#endif
+}
+
 void vectis_proxy_event_update(int fd, struct kore_event *event, int previous,
                                int desired, int edge_triggered) {
   if (previous == desired) {

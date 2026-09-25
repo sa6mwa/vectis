@@ -816,6 +816,7 @@ int vectis_kore_proxy_ws_start(struct http_request *request,
   state->active = 1;
   request->owner->hdlr_extra = state;
   request->owner->disconnect = vectis_kore_ws_disconnect;
+  vectis_proxy_event_takeover(request->owner->fd);
   request->owner->evt.handle = vectis_kore_ws_downstream_event;
   request->owner->evt.flags &= ~KORE_EVENT_READ;
   request->owner->flags |= CONN_IS_BUSY;

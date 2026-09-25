@@ -618,11 +618,15 @@ otherwise a reentrant flush can process the predecessor netbuf twice. Gate
 application reads when the upload queue is full and explicitly
 drain on resume so an edge-triggered event is not lost. Track read/write
 readiness together: Linux's `kore_platform_disable_read()` removes the entire
-epoll registration and is appropriate only when neither direction needs a
-wakeup. On BSD, Kore registers read and write as separate kqueue filters and
-disables each direction independently. Keep one proxy-owned interest mask and
-translate it through a small platform adapter that uses Kore's existing event
-functions; do not add a new Kore transport hook just to schedule readiness.
+epoll registration, so steady-state updates use it only when neither direction
+needs a wakeup. On BSD, Kore registers read and write as separate kqueue
+filters and disables each direction independently. Keep one proxy-owned
+interest mask and translate it through a small platform adapter that uses
+Kore's existing event functions; do not add a new Kore transport hook just to
+schedule readiness.
+At takeover, clear Kore's inherited registration before installing the first
+proxy mask. On kqueue, clearing both filters is essential because a new
+read-only mask would otherwise leave Kore's writable filter active.
 The adapter must tolerate separate read and write callbacks from one kqueue
 wait cycle and preserve readable bytes reported together with `EV_EOF`.
 Re-register when a bounded queue becomes writable again. Handle

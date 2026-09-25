@@ -915,6 +915,7 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
   vectis_kore_proxy_progress(state);
   request->owner->hdlr_extra = state;
   request->owner->disconnect = vectis_kore_proxy_disconnect;
+  vectis_proxy_event_takeover(request->owner->fd);
   request->owner->evt.handle = vectis_kore_proxy_event;
   request->owner->evt.flags &= ~KORE_EVENT_READ;
   request->owner->flags |= CONN_IS_BUSY;
