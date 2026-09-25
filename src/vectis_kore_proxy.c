@@ -260,10 +260,12 @@ static void vectis_kore_proxy_upload_consumed(void *userdata, size_t amount) {
 
 static int vectis_kore_proxy_upload_drive(vectis_kore_proxy_state *state) {
   const unsigned char *data;
+  unsigned char *destination;
   vectis_proxy_frame_result result;
   struct connection *connection;
   size_t length;
   size_t consumed;
+  size_t direct_capacity;
   int ssl_error;
   ssize_t got;
 
@@ -285,6 +287,36 @@ static int vectis_kore_proxy_upload_drive(vectis_kore_proxy_state *state) {
         state->read_offset = 0u;
         state->read_length = 0u;
       }
+    } else if (state->upload.framer.phase == VECTIS_PROXY_PHASE_FIXED) {
+      destination =
+          vectis_proxy_upload_reserve_fixed(&state->upload, &direct_capacity);
+      if (destination == NULL)
+        break;
+      if (connection->tls != NULL) {
+        got = SSL_read(connection->tls, destination, (int)direct_capacity);
+        if (got <= 0) {
+          ssl_error = SSL_get_error(connection->tls, (int)got);
+          state->read_want_write = ssl_error == SSL_ERROR_WANT_WRITE;
+          if (ssl_error == SSL_ERROR_WANT_READ ||
+              ssl_error == SSL_ERROR_WANT_WRITE)
+            break;
+          kore_connection_disconnect(connection);
+          return 0;
+        }
+      } else {
+        do {
+          got = recv(connection->fd, destination, direct_capacity, 0);
+        } while (got < 0 && errno == EINTR);
+        if (got <= 0) {
+          if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            break;
+          kore_connection_disconnect(connection);
+          return 0;
+        }
+      }
+      state->read_want_write = 0;
+      vectis_kore_proxy_progress(state);
+      result = vectis_proxy_upload_commit_fixed(&state->upload, (size_t)got);
     } else {
       if (connection->tls != NULL) {
         got = SSL_read(connection->tls, state->read_chunk,
@@ -824,10 +856,12 @@ int vectis_kore_proxy_prebody(struct http_request *request, const void *surplus,
       state->upload.consume_userdata = state;
       state->surplus = (const unsigned char *)surplus;
       state->surplus_length = surplus_length;
-      state->read_capacity = route->buffer_limit_bytes;
-      state->read_chunk = (unsigned char *)malloc(state->read_capacity);
-      if (state->read_chunk == NULL)
-        status = VECTIS_ERR_NOMEM;
+      if (head.chunked) {
+        state->read_capacity = route->buffer_limit_bytes;
+        state->read_chunk = (unsigned char *)malloc(state->read_capacity);
+        if (state->read_chunk == NULL)
+          status = VECTIS_ERR_NOMEM;
+      }
     }
     if (status != VECTIS_OK) {
       vectis_proxy_director_cleanup(&directed);

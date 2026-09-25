@@ -88,8 +88,46 @@ static void test_chunked_trailers(void) {
   vectis_proxy_headers_cleanup(&headers);
 }
 
+static void test_fixed_direct_receive(void) {
+  vectis_proxy_upload_buffer upload;
+  vectis_proxy_headers headers;
+  vectis_error error;
+  unsigned char *space;
+  char chunk[8192];
+  size_t capacity;
+
+  vectis_proxy_headers_init(&headers);
+  assert(vectis_proxy_upload_init(&upload, 8192u, 0, 8197u, &headers, &error) ==
+         VECTIS_OK);
+  space = vectis_proxy_upload_reserve_fixed(&upload, &capacity);
+  assert(space != NULL && capacity == 8192u);
+  memset(space, 'a', capacity);
+  assert(vectis_proxy_upload_commit_fixed(&upload, capacity) ==
+         VECTIS_PROXY_FRAME_MORE);
+  assert(vectis_proxy_upload_full(&upload));
+  assert(vectis_proxy_upload_reserve_fixed(&upload, &capacity) == NULL);
+  assert(capacity == 0u);
+  assert(vectis_proxy_upload_read(chunk, 1u, 4096u, &upload) == 4096u);
+  space = vectis_proxy_upload_reserve_fixed(&upload, &capacity);
+  assert(space != NULL && capacity == 5u);
+  memset(space, 'b', capacity);
+  assert(vectis_proxy_upload_read(chunk, 1u, sizeof(chunk), &upload) == 4096u);
+  assert(memcmp(chunk, "aaaa", 4u) == 0);
+  assert(vectis_proxy_upload_reserve_fixed(&upload, &capacity) == space);
+  assert(capacity == 5u);
+  assert(vectis_proxy_upload_commit_fixed(&upload, capacity) ==
+         VECTIS_PROXY_FRAME_COMPLETE);
+  assert(upload.complete);
+  assert(vectis_proxy_upload_read(chunk, 1u, sizeof(chunk), &upload) == 5u);
+  assert(memcmp(chunk, "bbbbb", 5u) == 0);
+  assert(vectis_proxy_upload_read(chunk, 1u, sizeof(chunk), &upload) == 0u);
+  vectis_proxy_upload_cleanup(&upload);
+  vectis_proxy_headers_cleanup(&headers);
+}
+
 int main(void) {
   test_fixed_backpressure();
+  test_fixed_direct_receive();
   test_chunked_trailers();
   return 0;
 }

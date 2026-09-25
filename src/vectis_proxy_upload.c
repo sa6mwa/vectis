@@ -105,7 +105,7 @@ vectis_proxy_upload_feed(vectis_proxy_upload_buffer *upload,
   vectis_proxy_frame_result result;
 
   if (upload == NULL || upload->bytes == NULL || consumed == NULL ||
-      (data == NULL && length != 0u)) {
+      upload->fixed_reservation != 0u || (data == NULL && length != 0u)) {
     if (consumed != NULL)
       *consumed = 0u;
     return VECTIS_PROXY_FRAME_INVALID;
@@ -116,6 +116,58 @@ vectis_proxy_upload_feed(vectis_proxy_upload_buffer *upload,
   if (result == VECTIS_PROXY_FRAME_COMPLETE)
     upload->complete = 1;
   return result;
+}
+
+unsigned char *
+vectis_proxy_upload_reserve_fixed(vectis_proxy_upload_buffer *upload,
+                                  size_t *capacity) {
+  size_t available;
+
+  if (capacity != NULL)
+    *capacity = 0u;
+  if (upload == NULL || capacity == NULL || upload->bytes == NULL ||
+      upload->framer.phase != VECTIS_PROXY_PHASE_FIXED)
+    return NULL;
+  if (upload->fixed_reservation != 0u) {
+    *capacity = upload->fixed_reservation;
+    return upload->bytes + upload->end;
+  }
+  if (upload->begin == upload->end) {
+    upload->begin = 0u;
+    upload->end = 0u;
+  } else if (upload->begin != 0u && upload->end == upload->capacity) {
+    memmove(upload->bytes, upload->bytes + upload->begin,
+            upload->end - upload->begin);
+    upload->end -= upload->begin;
+    upload->begin = 0u;
+  }
+  available = upload->capacity - upload->end;
+  if (upload->framer.remaining < (uint64_t)available)
+    available = (size_t)upload->framer.remaining;
+  if (available == 0u)
+    return NULL;
+  *capacity = available;
+  upload->fixed_reservation = available;
+  return upload->bytes + upload->end;
+}
+
+vectis_proxy_frame_result
+vectis_proxy_upload_commit_fixed(vectis_proxy_upload_buffer *upload,
+                                 size_t length) {
+  if (upload == NULL || upload->bytes == NULL ||
+      upload->framer.phase != VECTIS_PROXY_PHASE_FIXED || length == 0u ||
+      length > upload->fixed_reservation ||
+      (uint64_t)length > upload->framer.remaining)
+    return VECTIS_PROXY_FRAME_INVALID;
+  upload->fixed_reservation = 0u;
+  upload->end += length;
+  upload->framer.remaining -= (uint64_t)length;
+  if (upload->framer.remaining == 0u) {
+    upload->framer.phase = VECTIS_PROXY_PHASE_COMPLETE;
+    upload->complete = 1;
+    return VECTIS_PROXY_FRAME_COMPLETE;
+  }
+  return VECTIS_PROXY_FRAME_MORE;
 }
 
 size_t vectis_proxy_upload_read(char *buffer, size_t size, size_t count,
@@ -142,7 +194,7 @@ size_t vectis_proxy_upload_read(char *buffer, size_t size, size_t count,
     return CURL_READFUNC_ABORT;
   memcpy(buffer, upload->bytes + upload->begin, available);
   upload->begin += available;
-  if (upload->begin == upload->end) {
+  if (upload->begin == upload->end && upload->fixed_reservation == 0u) {
     upload->begin = 0u;
     upload->end = 0u;
   }

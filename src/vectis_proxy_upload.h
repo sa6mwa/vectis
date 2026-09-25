@@ -18,6 +18,7 @@ typedef struct vectis_proxy_upload_buffer {
   size_t capacity;
   size_t begin;
   size_t end;
+  size_t fixed_reservation;
   void (*on_consume)(void *userdata, size_t amount);
   void *consume_userdata;
   int complete;
@@ -37,6 +38,15 @@ vectis_proxy_frame_result
 vectis_proxy_upload_feed(vectis_proxy_upload_buffer *upload,
                          const unsigned char *data, size_t length,
                          size_t *consumed);
+
+/* Fixed-length uploads may receive directly into the queue. Reserve returns
+ * space no larger than the remaining body; commit publishes received bytes. */
+unsigned char *
+vectis_proxy_upload_reserve_fixed(vectis_proxy_upload_buffer *upload,
+                                  size_t *capacity);
+vectis_proxy_frame_result
+vectis_proxy_upload_commit_fixed(vectis_proxy_upload_buffer *upload,
+                                 size_t length);
 
 /* libcurl read callback. Returns CURL_READFUNC_PAUSE while waiting for input,
  * and zero only after the framer has completed and the queue has drained. */
