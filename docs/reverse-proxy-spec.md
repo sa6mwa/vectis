@@ -720,10 +720,21 @@ more than 4 MiB growth after the first two seconds. It does not measure each
 connection's allocation separately. The ASan build uses a 256 MiB aggregate
 RSS ceiling for instrumentation redzones and quarantine while retaining the
 same streaming, plateau, and teardown checks.
+The Linux production-route WebSocket smoke holds sixteen HTTP/1.1 upgraded
+connections with 1 MiB route chunk limits and idle clients for three seconds.
+The pinned x86-64 Linux Release run measured 8,384 KiB worker RSS before the
+first connection, 9,908 KiB at the handshakes and sampled peak, and 9,844 KiB
+after teardown. Worker FDs were 14 / 48 / 16 before, during, and after. A
+seventeenth HTTP request and a seventeenth WebSocket handshake each received
+`503` without reaching the origin; after closing the sixteen tunnels, a new
+WebSocket handshake succeeded. These measurements cover idle retained handles,
+not filled 1 MiB relay buffers or a bound for every active WebSocket workload.
+
 The full admission reserve still needs mixed HTTP/1.1 and HTTP/2 uploads,
-retained WebSocket tunnels, both idle caches, maximum permitted headers and
-CA bundles, and a deployment worker-memory budget. The existing 16-slot
-exchange cap remains provisional until that gate is complete.
+WebSocket tunnels with filled relay buffers, both idle caches, maximum
+permitted headers and CA bundles, and a deployment worker-memory budget.
+The existing 16-slot exchange cap remains provisional until that gate is
+complete.
 
 ### Downstream response writer
 
