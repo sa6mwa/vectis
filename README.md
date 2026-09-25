@@ -331,6 +331,7 @@ make test-e2e
 `make test-e2e` resets generated state, starts the local services, runs lockd,
 MQTT, SSH, curl-backed SFTP, and libssh2-backed SFTP smoke tests, and then stops
 the services on success, failure, or interruption. Teardown failures fail the test.
+The teardown also checks that no checkout-named pods or containers remain.
 The rendered manifest, generated credentials, and service state are under
 `build/devenv/`; `make dev-reset` removes them after stopping the pods.
 `make dev-up` prints the effective checkout-specific ports. Override any port

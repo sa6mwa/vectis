@@ -162,6 +162,42 @@ if VECTIS_SSH_PORT=61000 VECTIS_MQTT_PORT=61000 \
   echo 'devenv accepted duplicate service ports' >&2
   exit 1
 fi
+mkdir -p "$version_work/podman-bin"
+cat > "$version_work/podman-bin/podman" <<'PODMAN'
+#!/usr/bin/env bash
+case "${1:-}" in
+  info) printf 'true\n' ;;
+  pod) [ "${2:-}" = exists ] || exit 2; exit 1 ;;
+  ps)
+    [ "${2:-}" = -a ] || exit 2
+    if [ "${MOCK_PODMAN_PS_FAIL:-0}" = 1 ]; then exit 125; fi
+    if [ -n "${MOCK_PODMAN_CONTAINER:-}" ]; then
+      printf '%s\n' "$MOCK_PODMAN_CONTAINER"
+    fi
+    ;;
+  *) exit 2 ;;
+esac
+PODMAN
+chmod +x "$version_work/podman-bin/podman"
+devenv_name="vectis-$(printf %s "$repo_root" | sha256sum | cut -c1-10)"
+fake_podman_path="$version_work/podman-bin:$PATH"
+PATH="$fake_podman_path" MOCK_PODMAN_CONTAINER=other-project-container \
+  "$repo_root/scripts/devenv.sh" down
+if PATH="$fake_podman_path" \
+   MOCK_PODMAN_CONTAINER="$devenv_name-minio-minio" \
+   "$repo_root/scripts/devenv.sh" down >"$version_work/devenv-down.log" 2>&1; then
+  echo 'devenv accepted an orphan container after pod removal' >&2
+  exit 1
+fi
+assert_contains "$version_work/devenv-down.log" \
+  "Podman container $devenv_name-minio-minio still exists"
+if PATH="$fake_podman_path" MOCK_PODMAN_PS_FAIL=1 \
+   "$repo_root/scripts/devenv.sh" down >"$version_work/devenv-down.log" 2>&1; then
+  echo 'devenv accepted a failed container inspection' >&2
+  exit 1
+fi
+assert_contains "$version_work/devenv-down.log" \
+  'Failed to inspect Vectis containers after devenv down'
 assert_c89_cmake_contract
 assert_lifecycle_surface_contract
 assert_contains "$repo_root/Makefile" '^perf-gate: build-debug'

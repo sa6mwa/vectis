@@ -129,6 +129,19 @@ case "$action" in
         status=1
       fi
     done
+    if ! containers=$(podman ps -a --format '{{.Names}}' --filter "name=$name-"); then
+      printf 'Failed to inspect Vectis containers after devenv down.\n' >&2
+      status=1
+    else
+      while IFS= read -r container; do
+        case "$container" in
+          "$name"-*)
+            printf 'Podman container %s still exists after devenv down.\n' "$container" >&2
+            status=1
+            ;;
+        esac
+      done <<< "$containers"
+    fi
     exit "$status"
     ;;
   reset)
