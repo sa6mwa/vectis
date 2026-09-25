@@ -13,15 +13,22 @@ function(vectis_add_unit_test target_name)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-      target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|local_live|overlap_live|unwritten_live|admission_live|h2_memory_live|ws_live|ws_admission_memory_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
+  if(target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|local_live|overlap_live|unwritten_live|admission_live|h2_memory_live|ws_live|ws_admission_memory_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
     set(kore_test_deadline 15)
     if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
       set(kore_test_deadline 30)
     endif()
-    add_test(NAME ${target_name} COMMAND bash
-      "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-      ${kore_test_deadline} 0 $<TARGET_FILE:${target_name}>)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_test(NAME ${target_name} COMMAND bash
+        "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
+        ${kore_test_deadline} 0 $<TARGET_FILE:${target_name}>)
+    elseif(APPLE)
+      add_test(NAME ${target_name} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test_darwin.py"
+        ${kore_test_deadline} 0 $<TARGET_FILE:${target_name}>)
+    else()
+      add_test(NAME ${target_name} COMMAND ${target_name})
+    endif()
   else()
     add_test(NAME ${target_name} COMMAND ${target_name})
   endif()

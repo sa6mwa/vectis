@@ -1,0 +1,52 @@
+name: Darwin kqueue proxy
+
+on:
+  push:
+    branches: [init, trunk]
+  pull_request:
+    branches: [trunk]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: darwin-kqueue-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proxy:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          brew install cmake ninja coreutils gnu-sed util-linux
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix gnu-sed)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix util-linux)/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare pinned dependencies and Kore
+        run: |
+          CC=clang AR=ar RANLIB=ranlib bash scripts/deps.sh deps-arm64-apple-darwin
+          bash scripts/vendor-kore.sh apply
+
+      - name: Configure native Darwin build
+        run: cmake --preset darwin-debug
+
+      - name: Build proxy integration tests
+        run: |
+          cmake --build --preset darwin-debug --parallel 2 --target \
+            vectis_unit_kore_proxy_live \
+            vectis_unit_kore_proxy_local_live \
+            vectis_unit_kore_proxy_overlap_live \
+            vectis_unit_kore_proxy_ws_live \
+            vectis_unit_kore_proxy_ws_rejection_live \
+            vectis_unit_kore_proxy_wss_live
+
+      - name: Exercise native kqueue HTTP, SSE, WebSocket, and WSS
+        run: |
+          ctest --preset darwin-debug --no-tests=error \
+            -R '^(vectis_unit_forked_kore_darwin_supervisor|vectis_unit_kore_proxy_(live|local_live|overlap_live|ws_live|ws_rejection_live|wss_live))$'

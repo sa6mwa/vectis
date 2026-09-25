@@ -1,4 +1,12 @@
 if(VECTIS_BUILD_TESTS)
+  if(APPLE)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME vectis_unit_forked_kore_darwin_supervisor
+      COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_SOURCE_DIR}/scripts/test_forked_kore_test_darwin.py")
+    set_tests_properties(vectis_unit_forked_kore_darwin_supervisor PROPERTIES
+      LABELS "unit;local;lifecycle" TIMEOUT 15)
+  endif()
   add_test(NAME vectis_byte_array_generator
     COMMAND "${CMAKE_COMMAND}"
             "-DGENERATOR=${CMAKE_SOURCE_DIR}/cmake/vectis_generate_byte_array.cmake"

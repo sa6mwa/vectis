@@ -132,6 +132,18 @@
       }
     },
     {
+      "name": "darwin-debug",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/arm64-apple-darwin",
+        "VECTIS_TARGET_ID": "arm64-apple-darwin",
+        "VECTIS_TARGET_ARCH": "arm64",
+        "VECTIS_TARGET_OS": "darwin",
+        "VECTIS_TARGET_LIBC": ""
+      }
+    },
+    {
       "name": "arm64-apple-darwin-release",
       "inherits": "x86_64-linux-gnu-release",
       "toolchainFile": "${sourceDir}/cmake/toolchains/arm64-apple-darwin.cmake",
@@ -189,12 +201,18 @@
     { "name": "aarch64-linux-musl-release", "configurePreset": "aarch64-linux-musl-release" },
     { "name": "armhf-linux-gnu-release", "configurePreset": "armhf-linux-gnu-release" },
     { "name": "armhf-linux-musl-release", "configurePreset": "armhf-linux-musl-release" },
+    { "name": "darwin-debug", "configurePreset": "darwin-debug" },
     { "name": "arm64-apple-darwin-release", "configurePreset": "arm64-apple-darwin-release" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "coverage", "configurePreset": "coverage" },
     { "name": "fuzz", "configurePreset": "fuzz" }
   ],
   "testPresets": [
+    {
+      "name": "darwin-debug",
+      "configurePreset": "darwin-debug",
+      "output": { "outputOnFailure": true }
+    },
     {
       "name": "debug",
       "configurePreset": "debug",
