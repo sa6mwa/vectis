@@ -1,4 +1,5 @@
 #include "vectis_proxy_ws_handshake.h"
+#include "vectis_proxy_ws_wire.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -7,6 +8,8 @@
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   vectis_proxy_headers request;
   vectis_proxy_headers response;
+  vectis_proxy_headers parsed;
+  vectis_proxy_ws_head_result head_result;
   const char *request_key;
   const char *request_version;
   const char *request_protocol;
@@ -16,6 +19,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   const char *response_extensions;
   char value[1025];
   unsigned selection;
+  unsigned parsed_status;
+  size_t parsed_length;
 
   if (size == 0u || size > sizeof(value))
     return 0;
@@ -54,6 +59,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                                  response_extensions);
   (void)vectis_proxy_ws_request_valid(VECTIS_HTTP_GET, &request, NULL);
   (void)vectis_proxy_ws_response_valid(&request, 101u, &response, NULL);
+  vectis_proxy_headers_init(&parsed);
+  head_result = vectis_proxy_ws_wire_response_head(
+      data + 1u, size - 1u, &parsed_length, &parsed_status, &parsed, NULL);
+  if (head_result == VECTIS_PROXY_WS_HEAD_COMPLETE && parsed_status == 101u)
+    (void)vectis_proxy_ws_response_valid(&request, parsed_status, &parsed,
+                                         NULL);
+  vectis_proxy_headers_cleanup(&parsed);
   vectis_proxy_headers_cleanup(&response);
   vectis_proxy_headers_cleanup(&request);
   return 0;
