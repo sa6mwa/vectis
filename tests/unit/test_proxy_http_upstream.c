@@ -265,11 +265,13 @@ static void test_head(void) {
   assert(vectis_proxy_http_upstream_init(
              &upstream, easy, url, "/head", "HEAD", NULL, 8192u, 5000L, 10000L,
              NULL, ready, &observation, &error) == VECTIS_OK);
+  assert(upstream.body_storage == NULL);
   result = curl_easy_perform(easy);
   assert(result == CURLE_OK);
   assert(observation.final == 1u && observation.body == 0u);
   assert(upstream.response.status == 304 && !upstream.response.body_allowed);
   assert(upstream.response.content_length == 123u);
+  assert(upstream.body_storage == NULL);
   assert(vectis_proxy_http_upstream_body(&upstream, &length) == NULL &&
          length == 0u);
   reason = NULL;
@@ -329,6 +331,7 @@ int main(void) {
   assert(vectis_proxy_http_upstream_init(
              &upstream, easy, url, "/rewritten?q=1&q=2", "GET", NULL, 8192u,
              5000L, 10000L, NULL, ready, &observation, &error) == VECTIS_OK);
+  assert(upstream.body_storage == NULL);
   assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
   running = 1;
   for (spins = 0; spins < 500 && observation.body == 0u; ++spins) {
@@ -337,6 +340,7 @@ int main(void) {
   }
   assert(observation.informational == 1u);
   assert(observation.final == 1u && observation.body == 1u);
+  assert(upstream.body_storage != NULL);
   assert(running == 1);
   body = vectis_proxy_http_upstream_body(&upstream, &length);
   assert(body != NULL && length != 0u && length <= 8192u);

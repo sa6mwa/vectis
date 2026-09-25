@@ -59,6 +59,16 @@ static size_t vectis_proxy_http_upstream_download(char *data, size_t size,
     return 0u;
   }
   if (length != 0u) {
+    if (upstream->body_storage == NULL) {
+      upstream->body_storage = (unsigned char *)malloc(
+          upstream->body_capacity + VECTIS_PROXY_HTTP_BODY_HEADROOM +
+          VECTIS_PROXY_HTTP_BODY_TAILROOM);
+      if (upstream->body_storage == NULL) {
+        upstream->failed = 1;
+        return 0u;
+      }
+      upstream->body = upstream->body_storage + VECTIS_PROXY_HTTP_BODY_HEADROOM;
+    }
     memcpy(upstream->body, data, length);
     upstream->body_offset = 0u;
     upstream->body_length = length;
@@ -100,15 +110,6 @@ vectis_status vectis_proxy_http_upstream_init(
   head = strcmp(method, "HEAD") == 0;
   capacity =
       buffer_limit > CURL_MAX_WRITE_SIZE ? buffer_limit : CURL_MAX_WRITE_SIZE;
-  upstream->body_storage =
-      (unsigned char *)malloc(capacity + VECTIS_PROXY_HTTP_BODY_HEADROOM +
-                              VECTIS_PROXY_HTTP_BODY_TAILROOM);
-  if (upstream->body_storage == NULL) {
-    vectis_set_error(error, VECTIS_ERR_NOMEM,
-                     "failed to allocate bounded proxy download chunk");
-    return VECTIS_ERR_NOMEM;
-  }
-  upstream->body = upstream->body_storage + VECTIS_PROXY_HTTP_BODY_HEADROOM;
   upstream->body_capacity = capacity;
   upstream->easy = easy;
   upstream->ready = ready;
