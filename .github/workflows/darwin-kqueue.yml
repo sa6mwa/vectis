@@ -35,7 +35,13 @@ jobs:
             bash scripts/vendor-kore.sh apply
 
       - name: Configure native Darwin build
-        run: cmake --preset darwin-debug
+        run: |
+          otool_path=$(xcrun --find otool)
+          cmake --preset darwin-debug \
+            -DCMAKE_OTOOL:FILEPATH="$otool_path" \
+            -DCPKT_OTOOL:FILEPATH="$otool_path" \
+            -D_cai_otool:FILEPATH="$otool_path" \
+            -DVECTIS_OTOOL:FILEPATH="$otool_path"
 
       - name: Build proxy integration tests
         run: |
