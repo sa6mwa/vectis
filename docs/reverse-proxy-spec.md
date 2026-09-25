@@ -182,6 +182,11 @@ offers only that version. Cleartext upstreams use HTTP/1.1. A route can force
 HTTP/1.1. An HTTP/2-only HTTPS upstream is supported for ordinary HTTP/SSE
 when the HTTP/2 memory gate below passes; a forced-HTTP/1.1 route fails with
 `502` before committing downstream headers.
+The HTTP/2-capable pool explicitly requires TLS 1.2 or newer, including when
+ALPN falls back to HTTP/1.1. In `vectis_unit_proxy_curl_tls_floor`, a local
+TLS 1.1 origin accepts both a forced-HTTP/1.1 request and an HTTP/2-preference
+control request without the floor, then rejects the configured HTTP/2-capable
+request.
 
 The supported WebSocket handshake is HTTP/1.1 `Upgrade: websocket` followed
 by a bounded raw byte relay. Reject `Upgrade: h2c` at header admission; it

@@ -13,6 +13,11 @@ typedef void (*vectis_proxy_curl_done_fn)(CURL *easy, CURLcode result,
 vectis_status vectis_proxy_curl_set_ca(CURL *easy, char *pem, size_t pem_length,
                                        vectis_error *error);
 
+/* Configure the shared HTTP transport policy before submitting an easy.
+ * The HTTP/2-capable pool requires TLS 1.2 or newer even if its origin falls
+ * back to HTTP/1.1. The forced HTTP/1.1 pool retains libcurl's TLS policy. */
+int vectis_proxy_curl_configure_http(CURL *easy, int force_http1);
+
 /* Submission takes ownership of easy only on success. Completion invokes
  * done while easy remains valid, then closes it. Cancellation never invokes
  * done. All calls run on the owning Kore worker. */

@@ -79,6 +79,20 @@ vectis_status vectis_proxy_curl_set_ca(CURL *easy, char *pem, size_t pem_length,
   return VECTIS_OK;
 }
 
+int vectis_proxy_curl_configure_http(CURL *easy, int force_http1) {
+  if (easy == NULL || (force_http1 != 0 && force_http1 != 1))
+    return 0;
+  return curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
+                          force_http1 ? CURL_HTTP_VERSION_1_1
+                                      : CURL_HTTP_VERSION_2TLS) == CURLE_OK &&
+         (force_http1 ||
+          curl_easy_setopt(easy, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2) ==
+              CURLE_OK) &&
+         curl_easy_setopt(easy, CURLOPT_NOPROXY, "*") == CURLE_OK &&
+         curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 0L) == CURLE_OK &&
+         curl_easy_setopt(easy, CURLOPT_HTTP_CONTENT_DECODING, 0L) == CURLE_OK;
+}
+
 static void vectis_proxy_curl_drive(vectis_proxy_curl_pool *pool,
                                     curl_socket_t fd, int flags);
 
@@ -340,12 +354,7 @@ static vectis_status vectis_proxy_curl_submit_internal(
   transfer->easy = easy;
   transfer->retain_completed = retain_completed;
   if (curl_easy_setopt(easy, CURLOPT_PRIVATE, transfer) != CURLE_OK ||
-      curl_easy_setopt(easy, CURLOPT_HTTP_VERSION,
-                       force_http1 ? CURL_HTTP_VERSION_1_1
-                                   : CURL_HTTP_VERSION_2TLS) != CURLE_OK ||
-      curl_easy_setopt(easy, CURLOPT_NOPROXY, "*") != CURLE_OK ||
-      curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 0L) != CURLE_OK ||
-      curl_easy_setopt(easy, CURLOPT_HTTP_CONTENT_DECODING, 0L) != CURLE_OK) {
+      !vectis_proxy_curl_configure_http(easy, force_http1)) {
     (void)curl_easy_setopt(easy, CURLOPT_PRIVATE, NULL);
     free(transfer);
     vectis_set_error(error, VECTIS_ERR_STATE,
