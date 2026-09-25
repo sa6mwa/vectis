@@ -9,8 +9,11 @@ and a fragmented message above 1 MiB in both directions, negotiated extension
 headers, interleaved ping/pong, and close code/reason bytes. Non-`101` replies
 use an incremental HTTP/1.1 rejection path. A cleartext live test covers a
 1 MiB fixed-length rejection that starts before the origin finishes sending,
-chunked trailers, and `103` followed by a close-delimited final response. A verified
-local WSS route now relays 128 KiB frames in both directions, rejects an
+chunked trailers, and `103` followed by a close-delimited final response.
+The same upgrade test sends a 32 KiB client frame before the upstream `101`
+with an 8 KiB route buffer; the origin observes no frame bytes before its
+handshake response and receives the frame intact afterward. A verified local
+WSS route now relays 128 KiB frames in both directions, rejects an
 untrusted peer, and shares its optional CA bundle with ordinary HTTPS. A
 slow-peer mTLS variant covers larger frames, bounded worker RSS, and
 downstream cancellation during a partial TLS response. A separate variant

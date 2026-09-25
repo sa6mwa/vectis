@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,9 @@ static const unsigned char later_client_frame[] = {
     0x81u, 0x82u, 0x55u, 0x66u, 0x77u, 0x88u, 'b' ^ 0x55, 'y' ^ 0x66};
 static const unsigned char early_server_frame[] = {0x81u, 0x02u, 'o', 'k'};
 static const unsigned char later_server_frame[] = {0x81u, 0x03u, 'b', 'y', 'e'};
+#define EARLY_BULK_SIZE 32768u
+static const unsigned char early_bulk_header[] = {0x82u, 0xfeu, 0x80u, 0x00u,
+                                                  0x12u, 0x34u, 0x56u, 0x78u};
 #define BIG_PAYLOAD_SIZE (1024u * 1024u)
 static const unsigned char big_client_header[] = {0x02u, 0xffu, 0u,    0u,   0u,
                                                   0u,    0u,    0x10u, 0u,   0u,
@@ -62,6 +66,7 @@ static const char upstream_head[] =
 
 typedef struct origin_server {
   int listener;
+  int early_ready[2];
   unsigned short port;
   pthread_t thread;
 } origin_server;
@@ -98,6 +103,8 @@ static void *origin_main(void *userdata) {
   unsigned char big_header[sizeof(big_client_header)];
   unsigned char big_chunk[4096];
   unsigned char control[sizeof(client_close)];
+  unsigned char ready;
+  struct pollfd pending;
   unsigned char
       response[sizeof(upstream_head) - 1u + sizeof(early_server_frame)];
   size_t used;
@@ -136,12 +143,25 @@ static void *origin_main(void *userdata) {
                 "sec-websocket-extensions: permessage-deflate; "
                 "client_no_context_takeover\r\n") != NULL);
   assert(used == strlen((const char *)request));
+  assert(read(origin->early_ready[0], &ready, 1u) == 1);
+  pending.fd = fd;
+  pending.events = POLLIN;
+  pending.revents = 0;
+  assert(poll(&pending, 1, 100) == 0);
   memcpy(response, upstream_head, sizeof(upstream_head) - 1u);
   memcpy(response + sizeof(upstream_head) - 1u, early_server_frame,
          sizeof(early_server_frame));
   send_all(fd, response, sizeof(response));
   read_exact(fd, frame, sizeof(frame));
   assert(memcmp(frame, early_client_frame, sizeof(frame)) == 0);
+  read_exact(fd, big_header, sizeof(early_bulk_header));
+  assert(memcmp(big_header, early_bulk_header, sizeof(early_bulk_header)) == 0);
+  for (offset = 0u; offset < EARLY_BULK_SIZE; offset += sizeof(big_chunk)) {
+    read_exact(fd, big_chunk, sizeof(big_chunk));
+    for (i = 0u; i < sizeof(big_chunk); ++i)
+      assert(big_chunk[i] ==
+             (unsigned char)('E' ^ big_mask[(offset + i) % 4u]));
+  }
   read_exact(fd, frame, sizeof(frame));
   assert(memcmp(frame, later_client_frame, sizeof(frame)) == 0);
   send_all(fd, later_server_frame, sizeof(later_server_frame));
@@ -184,6 +204,7 @@ static void listen_origin(origin_server *origin) {
   memset(origin, 0, sizeof(*origin));
   origin->listener = socket(AF_INET, SOCK_STREAM, 0);
   assert(origin->listener >= 0);
+  assert(pipe(origin->early_ready) == 0);
   memset(&address, 0, sizeof(address));
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -309,6 +330,7 @@ int main(void) {
   proxy.target = target;
   proxy.alternate_targets = alternates;
   proxy.alternate_target_count = 1u;
+  proxy.buffer_limit_bytes = 8192u;
   proxy.rewrite = rewrite_ws;
   proxy.modify_response = reject_modified_handshake;
   assert(app->proxy_route(app, &proxy, &error) == VECTIS_OK);
@@ -335,6 +357,13 @@ int main(void) {
   fd = connect_app(app_port);
   send_all(fd, client_head, sizeof(client_head) - 1u);
   send_all(fd, early_client_frame, sizeof(early_client_frame));
+  send_all(fd, early_bulk_header, sizeof(early_bulk_header));
+  for (offset = 0u; offset < EARLY_BULK_SIZE; offset += sizeof(big_chunk)) {
+    for (i = 0u; i < sizeof(big_chunk); ++i)
+      big_chunk[i] = (unsigned char)('E' ^ big_mask[(offset + i) % 4u]);
+    send_all(fd, big_chunk, sizeof(big_chunk));
+  }
+  assert(write(origin.early_ready[1], "x", 1u) == 1);
   used = 0u;
   do {
     got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
@@ -392,5 +421,7 @@ int main(void) {
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
   assert(close(origin.listener) == 0);
+  assert(close(origin.early_ready[0]) == 0);
+  assert(close(origin.early_ready[1]) == 0);
   return 0;
 }
