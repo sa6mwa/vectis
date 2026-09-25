@@ -136,6 +136,7 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "VECTIS_BUILD_BINARY": "OFF",
         "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/arm64-apple-darwin",
         "VECTIS_TARGET_ID": "arm64-apple-darwin",
         "VECTIS_TARGET_ARCH": "arm64",
