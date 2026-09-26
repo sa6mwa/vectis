@@ -12,6 +12,11 @@ typedef struct vectis_proxy_http_wire_plan {
   int body_allowed;
 } vectis_proxy_http_wire_plan;
 
+/* Format one sanitized, bounded interim response. The caller owns *wire. */
+vectis_status vectis_proxy_http_wire_interim_build(
+    int status, const vectis_proxy_headers *headers, char **wire,
+    size_t *wire_length, vectis_error *error);
+
 /* Format bounded HTTP/1.1 response metadata after response sanitization.
  * auto_version uses chunked output for every body-bearing response, so an
  * HTTP/2 upstream can still add trailers after declaring Content-Length. */

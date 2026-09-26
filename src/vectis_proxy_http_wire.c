@@ -20,6 +20,72 @@ static int vectis_proxy_http_wire_append(char *buffer, size_t capacity,
   return 1;
 }
 
+vectis_status vectis_proxy_http_wire_interim_build(
+    int status, const vectis_proxy_headers *headers, char **wire,
+    size_t *wire_length, vectis_error *error) {
+  char status_line[48];
+  char *buffer;
+  size_t capacity;
+  size_t used;
+  size_t i;
+  int count;
+
+  if (wire != NULL)
+    *wire = NULL;
+  if (wire_length != NULL)
+    *wire_length = 0u;
+  if (status < 100 || status >= 200 || status == 101 || headers == NULL ||
+      wire == NULL || wire_length == NULL ||
+      headers->count > VECTIS_PROXY_HEADER_COUNT_LIMIT ||
+      headers->bytes > VECTIS_PROXY_HEADER_BLOCK_LIMIT) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "invalid proxy informational response");
+    return VECTIS_ERR_INVALID;
+  }
+  capacity = 48u + headers->bytes + headers->count * 4u + 2u;
+  if (capacity > VECTIS_PROXY_WIRE_MAX_HEAD_BYTES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "proxy informational response exceeds wire limit");
+    return VECTIS_ERR_INVALID;
+  }
+  buffer = (char *)malloc(capacity);
+  if (buffer == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate proxy informational response");
+    return VECTIS_ERR_NOMEM;
+  }
+  count =
+      snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d \r\n", status);
+  used = 0u;
+  if (count < 0 || (size_t)count >= sizeof(status_line) ||
+      !vectis_proxy_http_wire_append(buffer, capacity, &used, status_line,
+                                     (size_t)count))
+    goto invalid;
+  for (i = 0u; i < headers->count; ++i) {
+    const char *name = headers->fields[i].name;
+    const char *value = headers->fields[i].value;
+    if (!vectis_proxy_http_wire_append(buffer, capacity, &used, name,
+                                       strlen(name)) ||
+        !vectis_proxy_http_wire_append(buffer, capacity, &used, ": ", 2u) ||
+        !vectis_proxy_http_wire_append(buffer, capacity, &used, value,
+                                       strlen(value)) ||
+        !vectis_proxy_http_wire_append(buffer, capacity, &used, "\r\n", 2u))
+      goto invalid;
+  }
+  if (!vectis_proxy_http_wire_append(buffer, capacity, &used, "\r\n", 2u))
+    goto invalid;
+  *wire = buffer;
+  *wire_length = used;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+
+invalid:
+  free(buffer);
+  vectis_set_error(error, VECTIS_ERR_INVALID,
+                   "failed to format proxy informational response");
+  return VECTIS_ERR_INVALID;
+}
+
 vectis_status vectis_proxy_http_wire_plan_build(
     const vectis_proxy_http_response *response,
     const vectis_proxy_headers *outbound_headers, int auto_version,

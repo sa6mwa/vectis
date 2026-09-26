@@ -25,7 +25,7 @@ void vectis_proxy_event_update(int fd, struct kore_event *event, int previous,
     return;
   }
 #if defined(__linux__)
-  if (desired == 0) {
+  if ((desired & (VECTIS_PROXY_EVENT_READ | VECTIS_PROXY_EVENT_WRITE)) == 0) {
     if (previous != 0) {
       kore_platform_disable_read(fd);
     }
@@ -34,7 +34,8 @@ void vectis_proxy_event_update(int fd, struct kore_event *event, int previous,
   kore_platform_event_schedule(
       fd,
       (desired & VECTIS_PROXY_EVENT_READ ? EPOLLIN : 0) |
-          (desired & VECTIS_PROXY_EVENT_WRITE ? EPOLLOUT : 0) | EPOLLRDHUP |
+          (desired & VECTIS_PROXY_EVENT_WRITE ? EPOLLOUT : 0) |
+          (desired & VECTIS_PROXY_EVENT_READ_CLOSED ? 0 : EPOLLRDHUP) |
           (edge_triggered ? EPOLLET : 0),
       0, event);
 #else

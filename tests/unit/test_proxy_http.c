@@ -83,8 +83,9 @@ static void test_http2_sse_and_trailers(void) {
   accept(&response, "HTTP/2 103 Early Hints\r\n");
   accept(&response, "Link: </a.css>; rel=preload\r\n");
   assert(accept(&response, "\r\n") == VECTIS_PROXY_HTTP_INFORMATIONAL);
-  assert(response.informational_count == 1u && response.headers.count == 0u);
+  assert(response.informational_count == 1u && response.headers.count == 1u);
   accept(&response, "HTTP/2 200\r\n");
+  assert(response.headers.count == 0u);
   accept(&response, "Content-Type: text/event-stream\r\n");
   assert(accept(&response, "\r\n") == VECTIS_PROXY_HTTP_FINAL);
   assert(response.http2 && response.body_allowed);

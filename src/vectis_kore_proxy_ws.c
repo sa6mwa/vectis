@@ -3,6 +3,7 @@
 #include "vectis_kore_proxy_local.h"
 
 #include "vectis_internal.h"
+#include "vectis_kore_hooks.h"
 #include "vectis_proxy_curl.h"
 #include "vectis_proxy_events.h"
 #include "vectis_proxy_telemetry.h"
@@ -421,6 +422,8 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
       state->request->status = (u_int16_t)state->rejection.downstream_status;
       vectis_internal_metrics_note_http_status(
           state->app, state->rejection.downstream_status);
+      vectis_kore_autoblock_http_status(state->request,
+                                        state->rejection.downstream_status);
       state->downstream->http_response_count++;
       state->phase = VECTIS_KORE_WS_REJECTION;
     }
@@ -456,6 +459,7 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
   free(wire);
   state->request->status = 101;
   vectis_internal_metrics_note_http_status(state->app, 101);
+  vectis_kore_autoblock_http_status(state->request, 101);
   state->downstream->http_response_count++;
   state->phase = VECTIS_KORE_WS_RELAY;
   return 1;

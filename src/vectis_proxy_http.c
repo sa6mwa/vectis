@@ -220,6 +220,9 @@ vectis_proxy_header_status vectis_proxy_http_response_header(
     }
   }
   if (response->phase == VECTIS_PROXY_HTTP_EXPECT_STATUS) {
+    /* Keep interim fields available to the callback until the next status
+     * line; they are still bounded by the ordinary header limits. */
+    vectis_proxy_headers_cleanup(&response->headers);
     name_copy = (char *)malloc(length - 1u);
     if (name_copy == NULL) {
       return VECTIS_PROXY_HEADER_NOMEM;
@@ -257,7 +260,6 @@ vectis_proxy_header_status vectis_proxy_http_response_header(
           return VECTIS_PROXY_HEADER_LIMIT;
         }
         *event = VECTIS_PROXY_HTTP_INFORMATIONAL;
-        vectis_proxy_headers_cleanup(&response->headers);
         response->phase = VECTIS_PROXY_HTTP_EXPECT_STATUS;
         return VECTIS_PROXY_HEADER_OK;
       }

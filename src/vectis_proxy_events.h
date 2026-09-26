@@ -5,6 +5,8 @@ struct kore_event;
 
 #define VECTIS_PROXY_EVENT_READ 0x01
 #define VECTIS_PROXY_EVENT_WRITE 0x02
+/* The read half reached EOF; keep writes armed without Linux RDHUP errors. */
+#define VECTIS_PROXY_EVENT_READ_CLOSED 0x04
 
 /* Discard Kore's read/write registration for an accepted connection before
  * its proxy owner installs an independent interest mask. */

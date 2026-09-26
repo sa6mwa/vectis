@@ -106,6 +106,13 @@ static void *origin_main(void *userdata) {
   assert(strstr(request, "X-Forwarded-Host: localhost\r\n") != NULL);
   assert(strstr(request, "198.51.100.9") == NULL);
   assert(strstr(request, "Connection:") == NULL);
+  send_all(fd,
+           "HTTP/1.1 100 Continue\r\n\r\n"
+           "HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n"
+           "Connection: X-Evil\r\nX-Evil: hidden\r\n\r\n",
+           strlen("HTTP/1.1 100 Continue\r\n\r\n"
+                  "HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n"
+                  "Connection: X-Evil\r\nX-Evil: hidden\r\n\r\n"));
   send_all(fd, first, sizeof(first) - 1u);
   server->first_sent = 1;
   for (spins = 0; spins < 500 && !server->allow_second; ++spins)
@@ -262,6 +269,21 @@ static void *origin_main(void *userdata) {
       fd, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
       strlen(
           "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n"));
+  assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
+  assert(strstr(request, "GET /api/proxy/halfclose HTTP/1.1\r\n") != NULL);
+  send_all(
+      fd, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+      strlen("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: "
+             "close\r\n\r\nok"));
   assert(close(fd) == 0);
   return NULL;
 }
@@ -541,6 +563,10 @@ int main(void) {
            used < sizeof(response) - 1u);
   assert(origin.first_sent);
   assert(strstr(response, "HTTP/1.1 202 ") != NULL);
+  assert(strstr(response, "HTTP/1.1 103 ") != NULL);
+  assert(strstr(response, "Link: </a.css>; rel=preload\r\n") != NULL);
+  assert(strstr(response, "HTTP/1.1 100 ") == NULL);
+  assert(strstr(response, "X-Evil") == NULL);
   assert(strstr(response, "X-Modified: yes\r\n") != NULL);
   assert(strstr(response, "Transfer-Encoding: chunked\r\n") != NULL);
   assert(strstr(response, "Set-Cookie: a=1\r\n") != NULL);
@@ -721,6 +747,25 @@ int main(void) {
   assert(strstr(response, "HTTP/1.1 200 ") != NULL);
   assert(strstr(response, "Content-Length: 5\r\n") == NULL);
   assert(strstr(response, "\r\n\r\n0\r\n\r\n") != NULL);
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd,
+           "GET /proxy/halfclose HTTP/1.1\r\nHost: localhost\r\n"
+           "Connection: close\r\n\r\n",
+           strlen("GET /proxy/halfclose HTTP/1.1\r\nHost: localhost\r\n"
+                  "Connection: close\r\n\r\n"));
+  assert(shutdown(fd, SHUT_WR) == 0);
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+  }
+  response[used] = '\0';
+  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  assert(strstr(response, "\r\n\r\n2\r\nok\r\n0\r\n\r\n") != NULL);
   assert(close(fd) == 0);
   assert(pthread_join(origin.thread, NULL) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);

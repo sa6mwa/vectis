@@ -978,15 +978,12 @@ int vectis_kore_autoblock_request_allowed(struct http_request *request) {
   return !blocked;
 }
 
-void vectis_kore_autoblock_http_status(struct http_request *request,
-                                       int status) {
+void vectis_kore_autoblock_http_status_ip(const char *ip, int status) {
   vectis_kore_autoblock_entry *entry;
-  char ip[64];
   char reason[32];
   size_t i;
 
-  if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_request_ip(request, ip, sizeof(ip)) ||
+  if (!vectis_kore_autoblock_enabled() || ip == NULL ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -1006,6 +1003,16 @@ void vectis_kore_autoblock_http_status(struct http_request *request,
     }
   }
   vectis_kore_autoblock_unlock();
+}
+
+void vectis_kore_autoblock_http_status(struct http_request *request,
+                                       int status) {
+  char ip[64];
+
+  if (!vectis_kore_autoblock_enabled())
+    return;
+  if (vectis_kore_request_ip(request, ip, sizeof(ip)))
+    vectis_kore_autoblock_http_status_ip(ip, status);
 }
 
 void vectis_kore_autoblock_connection_status(struct connection *connection,

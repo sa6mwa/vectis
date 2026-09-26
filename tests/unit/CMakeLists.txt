@@ -13,7 +13,7 @@ function(vectis_add_unit_test target_name)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
-  if(target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|local_live|overlap_live|unwritten_live|admission_live|h2_memory_live|ws_live|ws_admission_memory_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
+  if(target_name MATCHES "^vectis_unit_kore_(proxy_(curl_loop(_shared)?|curl_pool|direct_io|live|local_live|autoblock_live|overlap_live|unwritten_live|admission_live|h2_memory_live|ws_live|ws_admission_memory_live|go_ws_live|ws_rejection_live|wss_live)|prebody_handoff)$")
     set(kore_test_deadline 15)
     if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
       set(kore_test_deadline 30)
@@ -117,6 +117,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_proxy_ws_rejection
     test_proxy_ws_rejection.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_live test_kore_proxy_live.c)
+  vectis_add_unit_test(vectis_unit_kore_proxy_autoblock_live
+    test_kore_proxy_autoblock_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_local_live
     test_kore_proxy_local_live.c)
   vectis_add_unit_test(vectis_unit_kore_proxy_overlap_live

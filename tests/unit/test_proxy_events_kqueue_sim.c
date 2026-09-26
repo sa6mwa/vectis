@@ -92,5 +92,12 @@ int main(void) {
 
   vectis_proxy_event_update(42, &event, 0, 0, 0);
   assert(call_count == 10u);
+  vectis_proxy_event_update(42, &event, 0, VECTIS_PROXY_EVENT_READ, 0);
+  assert(call_count == 11u);
+  expect_call(10u, EVFILT_READ, EV_ADD, &event);
+  vectis_proxy_event_update(42, &event, VECTIS_PROXY_EVENT_READ,
+                            VECTIS_PROXY_EVENT_READ_CLOSED, 0);
+  assert(call_count == 12u);
+  expect_call(11u, EVFILT_READ, EV_DELETE, NULL);
   return 0;
 }

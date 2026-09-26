@@ -10,6 +10,8 @@ void vectis_kore_autoblock_tls_failure(struct connection *connection);
 int vectis_kore_autoblock_request_allowed(struct http_request *request);
 void vectis_kore_autoblock_http_status(struct http_request *request,
                                        int status);
+/* For a response whose request may be freed by the final socket flush. */
+void vectis_kore_autoblock_http_status_ip(const char *ip, int status);
 void vectis_kore_autoblock_connection_status(struct connection *connection,
                                              int status);
 void vectis_kore_autoblock_request_event(struct http_request *request,

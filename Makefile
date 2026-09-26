@@ -30,6 +30,8 @@ PROXY_FAST_TESTS := \
 	vectis_unit_proxy_telemetry \
 	vectis_unit_kore_response_write_timeout \
 	vectis_unit_kore_proxy_live vectis_unit_kore_proxy_local_live \
+	vectis_unit_kore_proxy_autoblock_live \
+	vectis_unit_kore_proxy_unwritten \
 	vectis_unit_kore_proxy_overlap_live \
 	vectis_unit_kore_proxy_ws_live vectis_unit_kore_proxy_ws_rejection_live \
 	vectis_unit_kore_proxy_wss_live

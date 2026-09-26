@@ -1,6 +1,7 @@
 #include "vectis_kore_proxy_local.h"
 
 #include "vectis_internal.h"
+#include "vectis_kore_hooks.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -79,6 +80,7 @@ int vectis_kore_proxy_local_send(struct http_request *request, vectis_app *app,
   request->status = (u_int16_t)response->status;
   connection->http_response_count++;
   vectis_internal_metrics_note_http_status(app, response->status);
+  vectis_kore_autoblock_http_status(request, response->status);
   free(head);
   return 1;
 failed:
