@@ -126,8 +126,56 @@ static void check_invalid(void) {
   vectis_proxy_headers_cleanup(&sanitized);
 }
 
+static vectis_status modify_borrowed(vectis_proxy_response *response,
+                                     void *userdata, vectis_error *error) {
+  const char *name;
+  const char *value;
+  int kind;
+
+  kind = *(int *)userdata;
+  assert(vectis_proxy_response_header_at(response, 0u, &name, &value) ==
+         VECTIS_OK);
+  if (kind == 1)
+    return vectis_proxy_response_set_header(response, name, value, error);
+  if (kind == 2)
+    return vectis_proxy_response_set_header(response, "X-Source", value, error);
+  return vectis_proxy_response_remove_header(response, name, error);
+}
+
+static void check_borrowed_edits(void) {
+  vectis_proxy_http_response upstream;
+  vectis_proxy_headers sanitized;
+  vectis_error error;
+  int status;
+  int kind;
+
+  memset(&upstream, 0, sizeof(upstream));
+  upstream.status = 200;
+  upstream.body_allowed = 1;
+  for (kind = 1; kind <= 3; ++kind) {
+    vectis_proxy_headers_init(&sanitized);
+    assert(vectis_proxy_headers_add(&sanitized, "X-Source", "original") ==
+           VECTIS_PROXY_HEADER_OK);
+    assert(vectis_proxy_headers_add(&sanitized, "X-Keep", "yes") ==
+           VECTIS_PROXY_HEADER_OK);
+    assert(vectis_proxy_headers_add(&sanitized, "x-source", "repeat") ==
+           VECTIS_PROXY_HEADER_OK);
+    assert(vectis_proxy_response_apply(&upstream, &sanitized, modify_borrowed,
+                                       &kind, &status, &error) == VECTIS_OK);
+    assert(sanitized.count == (kind == 3 ? 1u : 2u));
+    assert(strcmp(sanitized.fields[0].name, "X-Keep") == 0);
+    assert(strcmp(sanitized.fields[0].value, "yes") == 0);
+    if (kind != 3) {
+      assert(strcmp(sanitized.fields[1].name, "X-Source") == 0);
+      assert(strcmp(sanitized.fields[1].value, "original") == 0);
+    }
+    vectis_proxy_headers_cleanup(&sanitized);
+  }
+}
+
 int main(void) {
   check_modify();
   check_invalid();
+  check_borrowed_edits();
   return 0;
 }

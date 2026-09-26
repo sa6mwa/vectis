@@ -43,6 +43,13 @@ void vectis_proxy_headers_cleanup(vectis_proxy_headers *headers);
 vectis_proxy_header_status
 vectis_proxy_headers_add(vectis_proxy_headers *headers, const char *name,
                          const char *value);
+/* Inputs may alias strings owned by headers. Set preserves headers on failure.
+ */
+void vectis_proxy_headers_remove(vectis_proxy_headers *headers,
+                                 const char *name);
+vectis_proxy_header_status
+vectis_proxy_headers_set(vectis_proxy_headers *headers, const char *name,
+                         const char *value);
 
 /* Validate request framing and upgrade metadata before any upstream connect.
  * The returned head borrows from headers until headers_cleanup(). */

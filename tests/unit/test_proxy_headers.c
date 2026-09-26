@@ -225,12 +225,43 @@ static void test_header_limits(void) {
   vectis_proxy_headers_cleanup(&inbound);
 }
 
+static void test_replacement_limits(void) {
+  vectis_proxy_headers headers;
+  char name[32];
+  size_t i;
+  size_t bytes;
+
+  vectis_proxy_headers_init(&headers);
+  for (i = 0u; i < VECTIS_PROXY_HEADER_COUNT_LIMIT; ++i) {
+    (void)snprintf(name, sizeof(name), "X-%lu", (unsigned long)i);
+    add(&headers, name, "original");
+  }
+  bytes = headers.bytes;
+  assert(vectis_proxy_headers_set(&headers, "X-New", "value") ==
+         VECTIS_PROXY_HEADER_LIMIT);
+  assert(headers.count == VECTIS_PROXY_HEADER_COUNT_LIMIT);
+  assert(headers.bytes == bytes);
+  assert(contains(&headers, "X-0", "original"));
+  assert(vectis_proxy_headers_set(&headers, "X-0", "bad\r\nvalue") ==
+         VECTIS_PROXY_HEADER_INVALID);
+  assert(headers.bytes == bytes);
+  assert(contains(&headers, "X-0", "original"));
+  assert(vectis_proxy_headers_set(&headers, headers.fields[0].name,
+                                  headers.fields[0].value) ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(headers.count == VECTIS_PROXY_HEADER_COUNT_LIMIT);
+  assert(headers.bytes == bytes);
+  assert(contains(&headers, "X-0", "original"));
+  vectis_proxy_headers_cleanup(&headers);
+}
+
 int main(void) {
   test_sanitized_request();
   test_chunked_trailer_and_websocket();
   test_trailer_handoff();
   test_rejected_framing();
   test_header_limits();
+  test_replacement_limits();
   puts("proxy headers ok");
   return 0;
 }

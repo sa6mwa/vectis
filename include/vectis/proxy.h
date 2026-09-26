@@ -123,13 +123,16 @@ vectis_status vectis_proxy_outbound_add_header(vectis_proxy_outbound *out,
                                                const char *name,
                                                const char *value,
                                                vectis_error *error);
-/** Replace all fields with this name by one copied end-to-end header. */
+/** Replace all fields with this name by one copied end-to-end header.
+ * Name and value may be borrowed from header_at(); successful replacement
+ * invalidates strings borrowed from the removed fields. */
 vectis_status vectis_proxy_outbound_set_header(vectis_proxy_outbound *out,
                                                const char *name,
                                                const char *value,
                                                vectis_error *error);
-/** Remove all fields with this name; transport, forwarding, and handshake
- * fields are owned by Vectis. */
+/** Remove all fields with this name, which may be borrowed from header_at().
+ * Removed fields' borrowed strings become invalid. Transport, forwarding,
+ * and handshake fields are owned by Vectis. */
 vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
                                                   const char *name,
                                                   vectis_error *error);

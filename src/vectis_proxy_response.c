@@ -2,9 +2,7 @@
 
 #include "vectis_internal.h"
 
-#include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 int vectis_proxy_response_status(const vectis_proxy_response *response) {
   return response != NULL ? response->status : 0;
@@ -98,9 +96,6 @@ vectis_status vectis_proxy_response_add_header(vectis_proxy_response *response,
 vectis_status
 vectis_proxy_response_remove_header(vectis_proxy_response *response,
                                     const char *name, vectis_error *error) {
-  size_t i;
-  size_t length;
-
   if (response == NULL || response->headers == NULL ||
       !vectis_proxy_response_header_editable(name)) {
     if (response != NULL)
@@ -109,23 +104,7 @@ vectis_proxy_response_remove_header(vectis_proxy_response *response,
                      "proxy response cannot edit transport headers");
     return VECTIS_ERR_INVALID;
   }
-  for (i = 0u; i < response->headers->count;) {
-    if (strcasecmp(response->headers->fields[i].name, name) != 0) {
-      ++i;
-      continue;
-    }
-    length = strlen(response->headers->fields[i].name) +
-             strlen(response->headers->fields[i].value);
-    free(response->headers->fields[i].name);
-    if (i + 1u < response->headers->count)
-      memmove(&response->headers->fields[i], &response->headers->fields[i + 1u],
-              (response->headers->count - i - 1u) *
-                  sizeof(response->headers->fields[0]));
-    --response->headers->count;
-    response->headers->bytes -= length;
-    memset(&response->headers->fields[response->headers->count], 0,
-           sizeof(response->headers->fields[0]));
-  }
+  vectis_proxy_headers_remove(response->headers, name);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -136,10 +115,19 @@ vectis_status vectis_proxy_response_set_header(vectis_proxy_response *response,
                                                vectis_error *error) {
   vectis_status status;
 
-  status = vectis_proxy_response_remove_header(response, name, error);
+  if (response == NULL || response->headers == NULL ||
+      !vectis_proxy_response_header_editable(name)) {
+    if (response != NULL)
+      response->failure = VECTIS_ERR_INVALID;
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "proxy response cannot edit transport headers");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_proxy_response_header_status(
+      vectis_proxy_headers_set(response->headers, name, value), error);
   if (status != VECTIS_OK)
-    return status;
-  return vectis_proxy_response_add_header(response, name, value, error);
+    response->failure = status;
+  return status;
 }
 
 vectis_status vectis_proxy_response_apply(

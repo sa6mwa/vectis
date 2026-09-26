@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static int vectis_proxy_ascii_equal(const char *a, size_t length,
                                     const char *b) {
@@ -310,6 +311,70 @@ vectis_proxy_headers_add(vectis_proxy_headers *headers, const char *name,
   headers->fields[headers->count].value = value_copy;
   headers->count++;
   headers->bytes += name_length + value_length;
+  return VECTIS_PROXY_HEADER_OK;
+}
+
+void vectis_proxy_headers_remove(vectis_proxy_headers *headers,
+                                 const char *name) {
+  char *removed[VECTIS_PROXY_HEADER_COUNT_LIMIT];
+  size_t removed_count;
+  size_t kept;
+  size_t i;
+
+  if (headers == NULL || name == NULL)
+    return;
+  removed_count = 0u;
+  kept = 0u;
+  for (i = 0u; i < headers->count; ++i) {
+    if (strcasecmp(headers->fields[i].name, name) == 0) {
+      headers->bytes -=
+          strlen(headers->fields[i].name) + strlen(headers->fields[i].value);
+      removed[removed_count++] = headers->fields[i].name;
+    } else {
+      headers->fields[kept++] = headers->fields[i];
+    }
+  }
+  memset(&headers->fields[kept], 0,
+         (headers->count - kept) * sizeof(headers->fields[0]));
+  headers->count = kept;
+  /* The lookup name may live in one of these allocations. */
+  for (i = 0u; i < removed_count; ++i)
+    free(removed[i]);
+}
+
+vectis_proxy_header_status
+vectis_proxy_headers_set(vectis_proxy_headers *headers, const char *name,
+                         const char *value) {
+  vectis_proxy_headers replacement;
+  vectis_proxy_header_status status;
+  size_t remaining_count;
+  size_t remaining_bytes;
+  size_t i;
+
+  if (headers == NULL)
+    return VECTIS_PROXY_HEADER_INVALID;
+  vectis_proxy_headers_init(&replacement);
+  status = vectis_proxy_headers_add(&replacement, name, value);
+  if (status != VECTIS_PROXY_HEADER_OK)
+    return status;
+  remaining_count = headers->count;
+  remaining_bytes = headers->bytes;
+  for (i = 0u; i < headers->count; ++i) {
+    if (strcasecmp(headers->fields[i].name, replacement.fields[0].name) == 0) {
+      --remaining_count;
+      remaining_bytes -=
+          strlen(headers->fields[i].name) + strlen(headers->fields[i].value);
+    }
+  }
+  if (remaining_count == VECTIS_PROXY_HEADER_COUNT_LIMIT ||
+      replacement.bytes > VECTIS_PROXY_HEADER_BLOCK_LIMIT - remaining_bytes) {
+    vectis_proxy_headers_cleanup(&replacement);
+    return VECTIS_PROXY_HEADER_LIMIT;
+  }
+  vectis_proxy_headers_remove(headers, replacement.fields[0].name);
+  /* Transfer the validated copy without allocating it again. */
+  headers->fields[headers->count++] = replacement.fields[0];
+  headers->bytes += replacement.bytes;
   return VECTIS_PROXY_HEADER_OK;
 }
 

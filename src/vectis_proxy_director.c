@@ -5,7 +5,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 #define VECTIS_PROXY_DIRECTOR_STRING_LIMIT 65536u
 
@@ -225,9 +224,6 @@ vectis_status vectis_proxy_outbound_add_header(vectis_proxy_outbound *out,
 vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
                                                   const char *name,
                                                   vectis_error *error) {
-  size_t i;
-  size_t length;
-
   if (out == NULL || !vectis_proxy_request_header_editable(name)) {
     if (out != NULL)
       out->failure = VECTIS_ERR_INVALID;
@@ -236,22 +232,7 @@ vectis_status vectis_proxy_outbound_remove_header(vectis_proxy_outbound *out,
         "proxy rewrite cannot edit transport or handshake headers");
     return VECTIS_ERR_INVALID;
   }
-  for (i = 0u; i < out->headers.count;) {
-    if (strcasecmp(out->headers.fields[i].name, name) != 0) {
-      ++i;
-      continue;
-    }
-    length = strlen(out->headers.fields[i].name) +
-             strlen(out->headers.fields[i].value);
-    free(out->headers.fields[i].name);
-    if (i + 1u < out->headers.count)
-      memmove(&out->headers.fields[i], &out->headers.fields[i + 1u],
-              (out->headers.count - i - 1u) * sizeof(out->headers.fields[0]));
-    --out->headers.count;
-    out->headers.bytes -= length;
-    memset(&out->headers.fields[out->headers.count], 0,
-           sizeof(out->headers.fields[0]));
-  }
+  vectis_proxy_headers_remove(&out->headers, name);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -262,10 +243,19 @@ vectis_status vectis_proxy_outbound_set_header(vectis_proxy_outbound *out,
                                                vectis_error *error) {
   vectis_status status;
 
-  status = vectis_proxy_outbound_remove_header(out, name, error);
+  if (out == NULL || !vectis_proxy_request_header_editable(name)) {
+    if (out != NULL)
+      out->failure = VECTIS_ERR_INVALID;
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "proxy rewrite cannot edit transport or handshake headers");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_proxy_director_header_status(
+      vectis_proxy_headers_set(&out->headers, name, value), error);
   if (status != VECTIS_OK)
-    return status;
-  return vectis_proxy_outbound_add_header(out, name, value, error);
+    out->failure = status;
+  return status;
 }
 
 void vectis_proxy_director_cleanup(vectis_proxy_outbound *out) {
