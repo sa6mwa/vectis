@@ -102,9 +102,6 @@ extern u_int64_t kore_curl_recv_max;
 extern void http_server_version(const char *version);
 extern int http_pretty_error;
 
-static int vectis_kore_request_ip(struct http_request *request, char *out,
-                                  size_t out_size);
-
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int vectis_kore_runtime_active = 0;
 static int vectis_kore_dh_loaded = 0;
@@ -798,8 +795,8 @@ static int vectis_kore_header_forwarded_ip(const char *value, char *out,
  * TCP peer. X-Forwarded-For is resolved from the proxy side so clients cannot
  * select a leftmost value they injected before an intermediary appended to it.
  */
-static int vectis_kore_request_ip(struct http_request *request, char *out,
-                                  size_t out_size) {
+int vectis_kore_request_ip(struct http_request *request, char *out,
+                           size_t out_size) {
   const char *header;
   char peer[64];
 

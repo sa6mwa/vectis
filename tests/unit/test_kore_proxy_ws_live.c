@@ -54,6 +54,7 @@ static const char client_head[] =
     "Connection: Upgrade\r\nUpgrade: websocket\r\n"
     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
     "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: chat\r\n"
+    "X-Forwarded-For: 198.51.100.9\r\nX-Forwarded-Proto: https\r\n"
     "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover"
     "\r\n\r\n";
 static const char upstream_head[] =
@@ -134,6 +135,12 @@ static void *origin_main(void *userdata) {
                 "GET /alternate/rewritten?route=ws HTTP/1.1\r\n") != NULL);
   assert(strstr((const char *)request, "Host: public.example\r\n") != NULL);
   assert(strstr((const char *)request, "X-Director: websocket\r\n") != NULL);
+  assert(strstr((const char *)request, "X-Forwarded-For: 127.0.0.1\r\n") !=
+         NULL);
+  assert(strstr((const char *)request, "X-Forwarded-Proto: http\r\n") != NULL);
+  assert(strstr((const char *)request, "X-Forwarded-Host: localhost\r\n") !=
+         NULL);
+  assert(strstr((const char *)request, "198.51.100.9") == NULL);
   assert(strstr((const char *)request, "Sec-WebSocket-Key: ") != NULL ||
          strstr((const char *)request, "sec-websocket-key: ") != NULL);
   assert(strstr((const char *)request,

@@ -16,6 +16,11 @@ void vectis_smith_lockdc_diagnostic_message(const char *message, char *out,
                                             size_t out_capacity);
 
 struct http_request;
+
+/* Resolve the client identity using the same trusted-peer policy as ordinary
+ * Kore requests. The caller supplies at least 64 bytes for an IP address. */
+int vectis_kore_request_ip(struct http_request *request, char *out,
+                           size_t out_size);
 /* Physical children for mutation authorization: no presentation/tombstone
  * filtering, no symlink following. Non-directory entries are reported as
  * leaves. Caller holds the storage mutation lock. */

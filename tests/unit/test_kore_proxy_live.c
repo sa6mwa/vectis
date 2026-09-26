@@ -101,6 +101,10 @@ static void *origin_main(void *userdata) {
   assert(strstr(request, "X-Trace: rewritten\r\n") != NULL ||
          strstr(request, "x-trace: rewritten\r\n") != NULL);
   assert(strstr(request, "X-Director: yes\r\n") != NULL);
+  assert(strstr(request, "X-Forwarded-For: 127.0.0.1\r\n") != NULL);
+  assert(strstr(request, "X-Forwarded-Proto: http\r\n") != NULL);
+  assert(strstr(request, "X-Forwarded-Host: localhost\r\n") != NULL);
+  assert(strstr(request, "198.51.100.9") == NULL);
   assert(strstr(request, "Connection:") == NULL);
   send_all(fd, first, sizeof(first) - 1u);
   server->first_sent = 1;
@@ -211,6 +215,54 @@ static void *origin_main(void *userdata) {
            strlen("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
                   "Connection: close\r\n\r\nok"));
   assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
+  assert(strstr(request, "HEAD /api/proxy/head-zero HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "Content-Length: 0\r\n") != NULL);
+  send_all(
+      fd, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
+      strlen(
+          "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n"));
+  assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
+  assert(strstr(request, "GET /api/proxy/head-get HTTP/1.1\r\n") != NULL);
+  send_all(
+      fd,
+      "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+      strlen("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: "
+             "close\r\n\r\nhello"));
+  assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+  } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
+  assert(strstr(request, "HEAD /api/proxy/get-head HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "X-Empty:\r\n") != NULL);
+  send_all(
+      fd, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
+      strlen(
+          "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n"));
+  assert(close(fd) == 0);
   return NULL;
 }
 
@@ -301,6 +353,14 @@ static vectis_status rewrite_first(const vectis_proxy_inbound *in,
   }
   if (strcmp(vectis_proxy_inbound_path(in), "/proxy/upload") == 0)
     return vectis_proxy_outbound_set_method(out, VECTIS_HTTP_PUT, error);
+  if (strcmp(vectis_proxy_inbound_path(in), "/proxy/head-get") == 0)
+    return vectis_proxy_outbound_set_method(out, VECTIS_HTTP_GET, error);
+  if (strcmp(vectis_proxy_inbound_path(in), "/proxy/get-head") == 0) {
+    if (vectis_proxy_outbound_set_method(out, VECTIS_HTTP_HEAD, error) !=
+        VECTIS_OK)
+      return error->code;
+    return vectis_proxy_outbound_add_header(out, "X-Empty", "", error);
+  }
   if (strcmp(vectis_proxy_inbound_path(in), "/proxy/a%2Fb") != 0)
     return VECTIS_OK;
   assert(vectis_proxy_inbound_method(in) == VECTIS_HTTP_GET);
@@ -395,7 +455,8 @@ int main(void) {
   vectis_proxy_route_config_init(&proxy);
   proxy.path = "/proxy/:id";
   proxy.path_kind = VECTIS_ROUTE_PATH_PARAMS;
-  proxy.methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST;
+  proxy.methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST |
+                  VECTIS_HTTP_METHODS_HEAD;
   proxy.target = target;
   proxy.alternate_targets = alternates;
   proxy.alternate_target_count = 1u;
@@ -460,10 +521,12 @@ int main(void) {
   fd = connect_app(app_port);
   send_all(fd,
            "GET /proxy/a%2Fb?q=1&q=2 HTTP/1.1\r\nHost: localhost\r\n"
-           "X-Trace: stream-test\r\nConnection: close\r\n\r\n",
+           "X-Trace: stream-test\r\nX-Forwarded-For: 198.51.100.9\r\n"
+           "X-Forwarded-Proto: https\r\nConnection: close\r\n\r\n",
            strlen("GET /proxy/a%2Fb?q=1&q=2 HTTP/1.1\r\n"
                   "Host: localhost\r\nX-Trace: stream-test\r\n"
-                  "Connection: close\r\n\r\n"));
+                  "X-Forwarded-For: 198.51.100.9\r\n"
+                  "X-Forwarded-Proto: https\r\nConnection: close\r\n\r\n"));
   used = 0u;
   response[0] = '\0';
   do {
@@ -601,6 +664,63 @@ int main(void) {
   }
   assert(strstr(response, "HTTP/1.1 200 ") != NULL);
   assert(strstr(response, "ok") != NULL);
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd,
+           "HEAD /proxy/head-zero HTTP/1.1\r\nHost: localhost\r\n"
+           "Content-Length: 0\r\nConnection: close\r\n\r\n",
+           strlen("HEAD /proxy/head-zero HTTP/1.1\r\nHost: localhost\r\n"
+                  "Content-Length: 0\r\nConnection: close\r\n\r\n"));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+  }
+  response[used] = '\0';
+  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  assert(strstr(response, "Content-Length: 5\r\n") != NULL);
+  assert(strstr(response, "\r\n\r\n")[4] == '\0');
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd,
+           "HEAD /proxy/head-get HTTP/1.1\r\nHost: localhost\r\n"
+           "Connection: close\r\n\r\n",
+           strlen("HEAD /proxy/head-get HTTP/1.1\r\nHost: localhost\r\n"
+                  "Connection: close\r\n\r\n"));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+  }
+  response[used] = '\0';
+  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  assert(strstr(response, "Content-Length: 5\r\n") != NULL);
+  assert(strstr(response, "\r\n\r\n")[4] == '\0');
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd,
+           "GET /proxy/get-head HTTP/1.1\r\nHost: localhost\r\n"
+           "Connection: close\r\n\r\n",
+           strlen("GET /proxy/get-head HTTP/1.1\r\nHost: localhost\r\n"
+                  "Connection: close\r\n\r\n"));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+  }
+  response[used] = '\0';
+  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  assert(strstr(response, "Content-Length: 5\r\n") == NULL);
+  assert(strstr(response, "\r\n\r\n0\r\n\r\n") != NULL);
   assert(close(fd) == 0);
   assert(pthread_join(origin.thread, NULL) == 0);
   assert(vectis_stop(app, &error) == VECTIS_OK);
