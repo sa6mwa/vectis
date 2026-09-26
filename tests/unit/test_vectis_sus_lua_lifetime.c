@@ -78,6 +78,31 @@ static cpkt_sus_result transcribe(cpkt_sus_transcriber *shell,
   return CPKT_SUS_OK;
 }
 static cpkt_sus_result
+transcribe_decoder(cpkt_sus_transcriber *shell, cpkt_audio_decoder *decoder,
+                   const cpkt_sus_segmented_config *config) {
+  transcriber_fixture *t = (transcriber_fixture *)shell;
+  float frame;
+  size_t count;
+  (void)config;
+  assert(t->model->children != 0u);
+  if (t->config.progress_sink != NULL)
+    assert(t->config.progress_sink(100, t->config.progress_user) == 0);
+  /* Model the native EOF path: the adapter must still propagate reader errors.
+   */
+  (void)decoder->read_f32_mono_16k(decoder, &frame, 1u, &count);
+  return CPKT_SUS_OK;
+}
+static cpkt_sus_result
+transcribe_decoder_text(cpkt_sus_transcriber *shell,
+                        cpkt_audio_decoder *decoder,
+                        const cpkt_sus_segmented_config *config, char **text) {
+  cpkt_sus_result result = transcribe_decoder(shell, decoder, config);
+  *text = (char *)malloc(8u);
+  assert(*text != NULL);
+  memcpy(*text, "partial", 8u);
+  return result;
+}
+static cpkt_sus_result
 create_transcriber(cpkt_sus *shell, cpkt_sus_transcriber **out,
                    const cpkt_sus_transcriber_config *config) {
   model_fixture *model = (model_fixture *)shell;
@@ -92,6 +117,8 @@ create_transcriber(cpkt_sus *shell, cpkt_sus_transcriber **out,
   t->config = *config; /* Same borrowed configuration contract as SUS. */
   t->shell.destroy = transcriber_destroy;
   t->shell.transcribe_f32_mono_16k = transcribe;
+  t->shell.transcribe_audio_decoder_segmented = transcribe_decoder;
+  t->shell.transcribe_audio_decoder_segmented_text = transcribe_decoder_text;
   ++model->children;
   ++live_transcribers;
   *out = &t->shell;
@@ -119,10 +146,14 @@ static void run(lua_State *lua, const char *code) {
     fprintf(stderr, "%s\n", lua_tostring(lua, -1));
   assert(rc == LUA_OK);
 }
+int luaopen_audio(lua_State *lua);
+
 static lua_State *new_state(void) {
   lua_State *lua = luaL_newstate();
   assert(lua != NULL);
   luaL_openlibs(lua);
+  luaL_requiref(lua, "audio", luaopen_audio, 1);
+  lua_pop(lua, 1);
   luaL_requiref(lua, "sus", luaopen_sus, 1);
   lua_pop(lua, 1);
   lua_pushcfunction(lua, new_model);
@@ -143,6 +174,62 @@ static void emit_log(void) {
 int main(void) {
   lua_State *lua = new_state();
   lua_State *other;
+  run(lua,
+      "local audio=require('audio')\n"
+      "local payload=string.rep('\\0',32000)\n"
+      "local wav='RIFF'..string.pack('<I4',36+#payload)..'WAVEfmt '..\n"
+      "  string.pack('<I4I2I2I4I4I2I2',16,1,1,16000,32000,2,16)..\n"
+      "  'data'..string.pack('<I4',#payload)..payload\n"
+      "local decoder,fail,attempts\n"
+      "attempts=0\n"
+      "local m=new_model()\n"
+      "local t=assert(m:create_transcriber({progress=function()\n"
+      "  attempts=attempts+1\n"
+      "  local ok,err=pcall(decoder.close,decoder)\n"
+      "  assert(not ok and err:find('audio decoder is busy',1,true))\n"
+      "end}))\n"
+      "for _,method in ipairs({'transcribe_audio_decoder_segmented',\n"
+      "                        'transcribe_audio_decoder_segmented_text'}) do\n"
+      "  for phase=1,2 do\n"
+      "  local pos=1\n"
+      "  fail=nil\n"
+      "  "
+      "decoder=assert(audio.decoder.open_reader({encoding='wav',read=function("
+      "n)\n"
+      "    if fail then error(fail,0) end\n"
+      "    local chunk=wav:sub(pos,pos+n-1); pos=pos+#chunk; return chunk\n"
+      "  end,seek=function(offset,origin)\n"
+      "    if origin==audio.SEEK_SET then pos=offset+1\n"
+      "    elseif origin==audio.SEEK_CUR then pos=pos+offset\n"
+      "    else pos=#wav+offset+1 end\n"
+      "    return true\n"
+      "  end}))\n"
+      "  local ok,err=pcall(t[method],t,decoder,{read_frames='invalid'})\n"
+      "  assert(not ok); assert(decoder:info())\n"
+      "  local weak=setmetatable({}, {__mode='v'})\n"
+      "  local function options()\n"
+      "    local callback=function() end; weak[1]=callback\n"
+      "    return {segmented=callback}\n"
+      "  end\n"
+      "  if phase==1 then\n"
+      "  fail={message='transcription reader failed'}\n"
+      "  ok,err=pcall(t[method],t,decoder,options())\n"
+      "  assert(not ok and err==fail)\n"
+      "  collectgarbage('collect'); assert(weak[1]==nil)\n"
+      "  ok,err=pcall(t[method],t,decoder,options())\n"
+      "  assert(not ok and err==fail)\n"
+      "  collectgarbage('collect'); assert(weak[1]==nil)\n"
+      "  else\n"
+      "    local value=assert(t[method](t,decoder,options()))\n"
+      "    if method:find('_text',1,true) then assert(value=='partial')\n"
+      "    else assert(value==true) end\n"
+      "    collectgarbage('collect'); assert(weak[1]==nil)\n"
+      "    assert(decoder:info())\n"
+      "  end\n"
+      "  assert(decoder:close()); decoder=nil\n"
+      "  end\n"
+      "end\n"
+      "assert(attempts==4); assert(t:close()); assert(m:close())\n");
   run(lua, "progress = 0; weak = setmetatable({}, {__mode='v'})\n"
            "local co = coroutine.create(function()\n"
            "  local m = new_model(); weak.model = m\n"

@@ -54,6 +54,17 @@ Decoder methods:
   the audio result code. `frames` is a Lua-owned numeric array.
 - `decoder:close()` releases the decoder.
 
+Reader and seek callback exceptions are rethrown by the enclosing decoder open,
+info, or read operation after native decoding returns and temporary frame storage
+is released. The original Lua error value is preserved. A failed reader remains
+failed until closed; later reads and info calls rethrow that error rather than
+reporting EOF. SUS decoder transcription also propagates reader errors after
+releasing its temporary results. Returning an empty chunk still indicates normal EOF.
+
+Reader callbacks must not call methods on the same decoder while an operation is
+active; these calls raise `audio decoder is busy`. Closing afterward is safe and
+idempotent.
+
 ## Encoder
 
 - `audio.encoder.open_file(opts)` opens a filesystem output path.
@@ -109,6 +120,11 @@ PTT methods:
 - `ptt:release()`
 - `ptt:flush()`
 - `ptt:close()`
+
+Segment and state callbacks must not call methods on the same VOX/PTT handle
+while an operation is active. These calls raise `audio vox is busy` or
+`audio ptt is busy`, including `close()`. Segment reads remain valid inside the
+callback; close the segmenter after the enclosing operation returns.
 
 Segment methods:
 

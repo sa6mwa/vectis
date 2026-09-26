@@ -21,6 +21,8 @@ typedef struct vectis_audio_decoder_lua {
   lua_State *lua;
   int read_ref;
   int seek_ref;
+  int error_ref;
+  int active;
 } vectis_audio_decoder_lua;
 
 typedef struct vectis_audio_encoder_lua {
@@ -50,6 +52,7 @@ typedef struct vectis_audio_segmenter_lua {
   lua_State *lua;
   int segment_ref;
   int state_ref;
+  int active;
 } vectis_audio_segmenter_lua;
 
 typedef struct vectis_audio_segment_lua {
@@ -299,16 +302,25 @@ static size_t vectis_audio_lua_read_cb(void *user, void *buffer,
   size_t chunk_size;
   int top;
   size_t copied;
+  int active;
 
   decoder = (vectis_audio_decoder_lua *)user;
   lua = decoder->lua;
+  if (decoder->error_ref != LUA_NOREF) {
+    return 0u;
+  }
   top = lua_gettop(lua);
+  active = decoder->active;
+  decoder->active = 1;
   lua_rawgeti(lua, LUA_REGISTRYINDEX, decoder->read_ref);
   lua_pushinteger(lua, (lua_Integer)bytes_to_read);
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    decoder->error_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+    decoder->active = active;
     lua_settop(lua, top);
     return 0u;
   }
+  decoder->active = active;
   if (lua_type(lua, -1) != LUA_TSTRING) {
     lua_settop(lua, top);
     return 0u;
@@ -325,20 +337,26 @@ static int vectis_audio_lua_seek_cb(void *user, long offset, int origin) {
   lua_State *lua;
   int top;
   int failed;
+  int active;
 
   decoder = (vectis_audio_decoder_lua *)user;
   lua = decoder->lua;
-  if (decoder->seek_ref == LUA_NOREF) {
+  if (decoder->seek_ref == LUA_NOREF || decoder->error_ref != LUA_NOREF) {
     return -1;
   }
   top = lua_gettop(lua);
+  active = decoder->active;
+  decoder->active = 1;
   lua_rawgeti(lua, LUA_REGISTRYINDEX, decoder->seek_ref);
   lua_pushinteger(lua, (lua_Integer)offset);
   lua_pushinteger(lua, (lua_Integer)origin);
   if (lua_pcall(lua, 2, 1, 0) != LUA_OK) {
+    decoder->error_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+    decoder->active = active;
     lua_settop(lua, top);
     return -1;
   }
+  decoder->active = active;
   failed = lua_toboolean(lua, -1) ? 0 : -1;
   if (lua_type(lua, -1) == LUA_TNUMBER) {
     failed = lua_tointeger(lua, -1) == 0 ? 0 : -1;
@@ -459,6 +477,8 @@ vectis_audio_lua_new_decoder(lua_State *lua, cpkt_audio_decoder *decoder) {
   handle->lua = lua;
   handle->read_ref = LUA_NOREF;
   handle->seek_ref = LUA_NOREF;
+  handle->error_ref = LUA_NOREF;
+  handle->active = 0;
   luaL_getmetatable(lua, VECTIS_AUDIO_DECODER);
   lua_setmetatable(lua, -2);
   vectis_audio_lua_retain_owner(lua, -1);
@@ -471,13 +491,13 @@ static vectis_audio_decoder_lua *vectis_audio_lua_check_decoder(lua_State *lua,
                                                      VECTIS_AUDIO_DECODER);
 }
 
-static int vectis_audio_lua_decoder_close(lua_State *lua) {
-  vectis_audio_decoder_lua *handle;
-
-  handle = vectis_audio_lua_check_decoder(lua, 1);
+static void vectis_audio_lua_decoder_cleanup(lua_State *lua,
+                                             vectis_audio_decoder_lua *handle) {
   if (handle->decoder != NULL) {
+    handle->active = 1;
     handle->decoder->destroy(handle->decoder);
     handle->decoder = NULL;
+    handle->active = 0;
   }
   if (handle->read_ref != LUA_NOREF) {
     luaL_unref(lua, LUA_REGISTRYINDEX, handle->read_ref);
@@ -487,6 +507,35 @@ static int vectis_audio_lua_decoder_close(lua_State *lua) {
     luaL_unref(lua, LUA_REGISTRYINDEX, handle->seek_ref);
     handle->seek_ref = LUA_NOREF;
   }
+  if (handle->error_ref != LUA_NOREF) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, handle->error_ref);
+    handle->error_ref = LUA_NOREF;
+  }
+}
+
+static void
+vectis_audio_lua_decoder_check_ready(lua_State *lua,
+                                     vectis_audio_decoder_lua *handle) {
+  if (handle->active) {
+    luaL_error(lua, "audio decoder is busy");
+  }
+  if (handle->decoder == NULL) {
+    luaL_error(lua, "audio decoder is closed");
+  }
+  if (handle->error_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->error_ref);
+    lua_error(lua);
+  }
+}
+
+static int vectis_audio_lua_decoder_close(lua_State *lua) {
+  vectis_audio_decoder_lua *handle;
+
+  handle = vectis_audio_lua_check_decoder(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio decoder is busy");
+  }
+  vectis_audio_lua_decoder_cleanup(lua, handle);
   vectis_audio_lua_release_owner(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
@@ -498,11 +547,15 @@ static int vectis_audio_lua_decoder_info(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_decoder(lua, 1);
-  if (handle->decoder == NULL) {
-    return luaL_error(lua, "audio decoder is closed");
-  }
+  vectis_audio_lua_decoder_check_ready(lua, handle);
   memset(&info, 0, sizeof(info));
+  handle->active = 1;
   result = handle->decoder->info(handle->decoder, &info);
+  handle->active = 0;
+  if (handle->error_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->error_ref);
+    return lua_error(lua);
+  }
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio decoder info");
   }
@@ -527,9 +580,7 @@ static int vectis_audio_lua_decoder_read(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_decoder(lua, 1);
-  if (handle->decoder == NULL) {
-    return luaL_error(lua, "audio decoder is closed");
-  }
+  vectis_audio_lua_decoder_check_ready(lua, handle);
   requested = luaL_checkinteger(lua, 2);
   if (requested < 0) {
     return luaL_error(lua, "audio decoder frame capacity must be non-negative");
@@ -545,8 +596,15 @@ static int vectis_audio_lua_decoder_read(lua_State *lua) {
     }
   }
   frames_read = 0u;
+  handle->active = 1;
   result = handle->decoder->read_f32_mono_16k(handle->decoder, frames,
                                               (size_t)requested, &frames_read);
+  handle->active = 0;
+  if (handle->error_ref != LUA_NOREF) {
+    free(frames);
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->error_ref);
+    return lua_error(lua);
+  }
   if (result != CPKT_AUDIO_OK && result != CPKT_AUDIO_AT_END) {
     free(frames);
     return vectis_audio_lua_push_error(lua, result, "audio decoder read");
@@ -634,21 +692,23 @@ static int vectis_audio_lua_decoder_open_reader(lua_State *lua) {
   reader.read = vectis_audio_lua_read_cb;
   reader.seek = handle->seek_ref == LUA_NOREF ? NULL : vectis_audio_lua_seek_cb;
   decoder = NULL;
+  handle->active = 1;
   result = cpkt_audio_decoder_open_reader(&decoder, &reader, &config);
+  handle->active = 0;
+  handle->decoder = decoder;
+  if (handle->error_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->error_ref);
+    vectis_audio_lua_decoder_cleanup(lua, handle);
+    vectis_audio_lua_release_owner(lua, -2);
+    return lua_error(lua);
+  }
   if (result != CPKT_AUDIO_OK) {
+    vectis_audio_lua_decoder_cleanup(lua, handle);
+    vectis_audio_lua_release_owner(lua, -1);
     lua_pop(lua, 1);
-    if (handle->read_ref != LUA_NOREF) {
-      luaL_unref(lua, LUA_REGISTRYINDEX, handle->read_ref);
-      handle->read_ref = LUA_NOREF;
-    }
-    if (handle->seek_ref != LUA_NOREF) {
-      luaL_unref(lua, LUA_REGISTRYINDEX, handle->seek_ref);
-      handle->seek_ref = LUA_NOREF;
-    }
     return vectis_audio_lua_push_error(lua, result,
                                        "audio decoder open_reader");
   }
-  handle->decoder = decoder;
   return 1;
 }
 
@@ -1165,10 +1225,31 @@ int vectis_audio_lua_borrow_decoder(lua_State *lua, int index,
   *out = NULL;
   handle = (vectis_audio_decoder_lua *)luaL_testudata(lua, index,
                                                       VECTIS_AUDIO_DECODER);
-  if (handle == NULL || handle->decoder == NULL) {
+  if (handle == NULL || handle->decoder == NULL || handle->active ||
+      handle->error_ref != LUA_NOREF) {
     return 0;
   }
+  handle->active = 1;
   *out = handle->decoder;
+  return 1;
+}
+
+void vectis_audio_lua_release_decoder(lua_State *lua, int index) {
+  vectis_audio_decoder_lua *handle;
+
+  handle = vectis_audio_lua_check_decoder(lua, index);
+  handle->active = 0;
+}
+
+int vectis_audio_lua_push_decoder_error(lua_State *lua, int index) {
+  vectis_audio_decoder_lua *handle;
+
+  handle = (vectis_audio_decoder_lua *)luaL_testudata(lua, index,
+                                                      VECTIS_AUDIO_DECODER);
+  if (handle == NULL || handle->error_ref == LUA_NOREF) {
+    return 0;
+  }
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->error_ref);
   return 1;
 }
 
@@ -1372,8 +1453,13 @@ static int vectis_audio_lua_vox_close(lua_State *lua) {
   vectis_audio_segmenter_lua *handle;
 
   handle = vectis_audio_lua_check_vox(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio vox is busy");
+  }
   if (handle->handle.vox != NULL) {
+    handle->active = 1;
     handle->handle.vox->destroy(handle->handle.vox);
+    handle->active = 0;
     handle->handle.vox = NULL;
   }
   vectis_audio_lua_unref_segmenter(lua, handle);
@@ -1386,8 +1472,13 @@ static int vectis_audio_lua_ptt_close(lua_State *lua) {
   vectis_audio_segmenter_lua *handle;
 
   handle = vectis_audio_lua_check_ptt(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio ptt is busy");
+  }
   if (handle->handle.ptt != NULL) {
+    handle->active = 1;
     handle->handle.ptt->destroy(handle->handle.ptt);
+    handle->active = 0;
     handle->handle.ptt = NULL;
   }
   vectis_audio_lua_unref_segmenter(lua, handle);
@@ -1403,12 +1494,17 @@ static int vectis_audio_lua_vox_push(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_vox(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio vox is busy");
+  }
   if (handle->handle.vox == NULL) {
     return luaL_error(lua, "audio vox is closed");
   }
   frames = vectis_audio_lua_frame_array(lua, 2, &frame_count);
+  handle->active = 1;
   result = handle->handle.vox->push_f32_mono_16k(handle->handle.vox, frames,
                                                  frame_count);
+  handle->active = 0;
   free(frames);
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio vox push");
@@ -1422,10 +1518,15 @@ static int vectis_audio_lua_vox_flush(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_vox(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio vox is busy");
+  }
   if (handle->handle.vox == NULL) {
     return luaL_error(lua, "audio vox is closed");
   }
+  handle->active = 1;
   result = handle->handle.vox->flush(handle->handle.vox);
+  handle->active = 0;
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio vox flush");
   }
@@ -1438,10 +1539,15 @@ static int vectis_audio_lua_ptt_press(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_ptt(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio ptt is busy");
+  }
   if (handle->handle.ptt == NULL) {
     return luaL_error(lua, "audio ptt is closed");
   }
+  handle->active = 1;
   result = handle->handle.ptt->press(handle->handle.ptt);
+  handle->active = 0;
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio ptt press");
   }
@@ -1456,12 +1562,17 @@ static int vectis_audio_lua_ptt_push(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_ptt(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio ptt is busy");
+  }
   if (handle->handle.ptt == NULL) {
     return luaL_error(lua, "audio ptt is closed");
   }
   frames = vectis_audio_lua_frame_array(lua, 2, &frame_count);
+  handle->active = 1;
   result = handle->handle.ptt->push_f32_mono_16k(handle->handle.ptt, frames,
                                                  frame_count);
+  handle->active = 0;
   free(frames);
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio ptt push");
@@ -1475,10 +1586,15 @@ static int vectis_audio_lua_ptt_release(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_ptt(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio ptt is busy");
+  }
   if (handle->handle.ptt == NULL) {
     return luaL_error(lua, "audio ptt is closed");
   }
+  handle->active = 1;
   result = handle->handle.ptt->release(handle->handle.ptt);
+  handle->active = 0;
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio ptt release");
   }
@@ -1491,10 +1607,15 @@ static int vectis_audio_lua_ptt_flush(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_ptt(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio ptt is busy");
+  }
   if (handle->handle.ptt == NULL) {
     return luaL_error(lua, "audio ptt is closed");
   }
+  handle->active = 1;
   result = handle->handle.ptt->flush(handle->handle.ptt);
+  handle->active = 0;
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio ptt flush");
   }

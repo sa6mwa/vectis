@@ -850,15 +850,25 @@ static int vectis_sus_lua_transcriber_transcribe_decoder(lua_State *lua) {
   if (handle->transcriber == NULL) {
     return luaL_error(lua, "sus transcriber is closed");
   }
+  vectis_sus_lua_segmented_config(lua, 3, &config, &sink);
   if (!vectis_audio_lua_borrow_decoder(lua, 2, &decoder)) {
+    if (sink.ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, sink.ref);
+    }
+    if (vectis_audio_lua_push_decoder_error(lua, 2)) {
+      return lua_error(lua);
+    }
     return vectis_sus_lua_push_error(lua, CPKT_SUS_ERR_ARG,
                                      "sus segmented decoder transcription");
   }
-  vectis_sus_lua_segmented_config(lua, 3, &config, &sink);
   result = handle->transcriber->transcribe_audio_decoder_segmented(
       handle->transcriber, decoder, &config);
+  vectis_audio_lua_release_decoder(lua, 2);
   if (sink.ref != LUA_NOREF) {
     luaL_unref(lua, LUA_REGISTRYINDEX, sink.ref);
+  }
+  if (vectis_audio_lua_push_decoder_error(lua, 2)) {
+    return lua_error(lua);
   }
   if (result != CPKT_SUS_OK) {
     return vectis_sus_lua_push_error(lua, result,
@@ -880,16 +890,29 @@ static int vectis_sus_lua_transcriber_transcribe_decoder_text(lua_State *lua) {
   if (handle->transcriber == NULL) {
     return luaL_error(lua, "sus transcriber is closed");
   }
+  vectis_sus_lua_segmented_config(lua, 3, &config, &sink);
   if (!vectis_audio_lua_borrow_decoder(lua, 2, &decoder)) {
+    if (sink.ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, sink.ref);
+    }
+    if (vectis_audio_lua_push_decoder_error(lua, 2)) {
+      return lua_error(lua);
+    }
     return vectis_sus_lua_push_error(
         lua, CPKT_SUS_ERR_ARG, "sus segmented decoder transcription text");
   }
   text = NULL;
-  vectis_sus_lua_segmented_config(lua, 3, &config, &sink);
   result = handle->transcriber->transcribe_audio_decoder_segmented_text(
       handle->transcriber, decoder, &config, &text);
+  vectis_audio_lua_release_decoder(lua, 2);
   if (sink.ref != LUA_NOREF) {
     luaL_unref(lua, LUA_REGISTRYINDEX, sink.ref);
+  }
+  if (vectis_audio_lua_push_decoder_error(lua, 2)) {
+    if (text != NULL) {
+      cpkt_sus_string_free(text);
+    }
+    return lua_error(lua);
   }
   if (result != CPKT_SUS_OK) {
     return vectis_sus_lua_push_error(
