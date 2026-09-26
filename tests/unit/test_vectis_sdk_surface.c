@@ -4299,7 +4299,48 @@ static void assert_static_directory_index_validation(void) {
   app->close(app);
 }
 
+static void assert_literal_prefixed_regex_routes(void) {
+  static const char *const prefixes[] = {"/v1.0", "/a+b", "/a+b/"};
+  static const char *const matches[] = {"/v1.0/reports/42", "/a+b/reports/42",
+                                        "/a+b/reports/42"};
+  static const char *const nonmatches[] = {"/v1X0/reports/42", "/ab/reports/42",
+                                           "/ab/reports/42"};
+  vectis_app_config config;
+  vectis_route_config route;
+  vectis_app *app;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error error;
+  size_t i;
+
+  for (i = 0u; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+    vectis_app_config_init(&config);
+    app = vectis_app_new(&config, &error);
+    assert(app != NULL);
+    request = vectis_internal_request_new(&error);
+    response = vectis_internal_response_new(&error);
+    assert(request != NULL && response != NULL);
+    route = vectis_route_regex(VECTIS_HTTP_GET, "^/reports/[0-9]+$",
+                               sample_route_handler, NULL);
+    assert(app->prefixed_route(app, prefixes[i], &route, &error) == VECTIS_OK);
+    assert(vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, matches[i],
+                                          request, response,
+                                          &error) == VECTIS_OK);
+    assert(vectis_internal_response_status_code(response) == 204);
+    vectis_internal_response_cleanup(response);
+    vectis_internal_request_cleanup(request);
+    assert(vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, nonmatches[i],
+                                          request, response,
+                                          &error) == VECTIS_ERR_STATE);
+    assert(strstr(error.message, "no route") != NULL);
+    vectis_internal_response_free(response);
+    vectis_internal_request_free(request);
+    app->close(app);
+  }
+}
+
 int main(void) {
+  assert_literal_prefixed_regex_routes();
   assert_static_directory_index_validation();
   assert_static_fifo_rejected();
   assert_http_surface();

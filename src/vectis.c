@@ -13823,7 +13823,10 @@ static char *vectis_join_regex_route_prefix(const char *prefix,
   size_t prefix_len;
   size_t path_len;
   size_t need_slash;
+  size_t escaped_len;
+  const char *p;
   char *joined;
+  char *output;
 
   if (path == NULL || path[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID, "route path is required");
@@ -13845,15 +13848,39 @@ static char *vectis_join_regex_route_prefix(const char *prefix,
   prefix_len = strlen(prefix);
   path_len = strlen(path);
   need_slash = prefix[prefix_len - 1u] == '/' ? 0u : 1u;
-  joined = (char *)malloc(1u + prefix_len + need_slash + path_len - 1u + 1u);
+  escaped_len = prefix_len;
+  for (p = prefix; *p != '\0'; ++p) {
+    if (strchr(".+*?^$()[]{}|\\", *p) != NULL) {
+      if (escaped_len == (size_t)-1)
+        goto too_large;
+      ++escaped_len;
+    }
+  }
+  if (escaped_len > (size_t)-1 - path_len ||
+      need_slash > (size_t)-1 - path_len - escaped_len)
+    goto too_large;
+  joined = (char *)malloc(escaped_len + need_slash + path_len);
   if (joined == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate prefixed route path");
     return NULL;
   }
-  (void)snprintf(joined, 1u + prefix_len + need_slash + path_len - 1u + 1u,
-                 "^%s%s%s", prefix, need_slash ? "/" : "", path + 2);
+  output = joined;
+  *output++ = '^';
+  for (p = prefix; *p != '\0'; ++p) {
+    if (strchr(".+*?^$()[]{}|\\", *p) != NULL)
+      *output++ = '\\';
+    *output++ = *p;
+  }
+  if (need_slash)
+    *output++ = '/';
+  memcpy(output, path + 2u, path_len - 1u);
   return joined;
+
+too_large:
+  vectis_set_error(error, VECTIS_ERR_INVALID,
+                   "prefixed regex route exceeds size limit");
+  return NULL;
 }
 
 vectis_status vectis_register_prefixed_route(vectis_app *app,
