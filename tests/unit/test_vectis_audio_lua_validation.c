@@ -83,7 +83,7 @@ int main(void) {
   assert(lua != NULL);
   luaL_openlibs(lua);
   assert(luaopen_audio(lua) == 1);
-  lua_pop(lua, 1);
+  lua_setglobal(lua, "audio");
   lua_pushcfunction(lua, new_callback_encoder);
   lua_setglobal(lua, "new_callback_encoder");
   lua_pushcfunction(lua, invoke_encoder_callback);
@@ -136,6 +136,62 @@ int main(void) {
       "assert(encoder:close()); encoder = nil\n"
       "collectgarbage('collect'); collectgarbage('collect')\n"
       "assert(weak.thread == nil)\n");
+  run_lua(lua,
+          "local frames={}; for i=1,320 do frames[i]=0.1 end\n"
+          "for kind=1,4 do\n"
+          "  local weak=setmetatable({}, {__mode='v'})\n"
+          "  local retained, calls\n"
+          "  calls=0\n"
+          "  local ptt=assert(audio.ptt.open({min_segment_ms=1,\n"
+          "    segment=function(segment)\n"
+          "      calls=calls+1; weak.segment=segment\n"
+          "      if kind~=1 then retained=segment end\n"
+          "      segment=nil; collectgarbage('collect')\n"
+          "      assert(weak.segment~=nil)\n"
+          "      if kind==3 then error('segment failed') end\n"
+          "      return kind~=4\n"
+          "    end}))\n"
+          "  assert(ptt:press()); assert(ptt:push_f32_mono_16k(frames))\n"
+          "  local released,err=ptt:release(); assert(calls==1)\n"
+          "  if kind<3 then assert(released)\n"
+          "  else assert(released==nil and type(err)=='table') end\n"
+          "  if retained then\n"
+          "    local ok,message=pcall(retained.info, retained)\n"
+          "    assert(not ok and message:find('valid only during callback'))\n"
+          "  else\n"
+          "    collectgarbage('collect'); assert(weak.segment==nil)\n"
+          "  end\n"
+          "  assert(ptt:close())\n"
+          "end\n");
+  run_lua(lua,
+          "local encoder; local attempts=0\n"
+          "local function check_busy()\n"
+          "  if not encoder then return end\n"
+          "  attempts=attempts+1\n"
+          "  local ok,message=pcall(encoder.close,encoder)\n"
+          "  assert(not ok and message:find('encoder is busy'))\n"
+          "  ok,message=pcall(encoder.write_f32,encoder,{0.1})\n"
+          "  assert(not ok and message:find('encoder is busy'))\n"
+          "end\n"
+          "encoder=assert(audio.encoder.open_writer({format='wav',\n"
+          "  write=function(chunk) check_busy(); return #chunk end,\n"
+          "  seek=function() check_busy(); return true end}))\n"
+          "assert(encoder:write_f32({0.1,0.2,0.3})==3)\n"
+          "assert(attempts>0); assert(encoder:write_f32({0.4})==1)\n"
+          "local before=attempts\n"
+          "assert(encoder:close()); assert(attempts>before)\n"
+          "assert(encoder:close())\n"
+          "encoder=nil\n"
+          "local once=false\n"
+          "encoder=assert(audio.encoder.open_writer({format='wav',\n"
+          "  write=function(chunk)\n"
+          "    if encoder and not once then once=true; encoder:close() end\n"
+          "    return #chunk\n"
+          "  end, seek=function() return true end}))\n"
+          "local closed,err=encoder:close()\n"
+          "assert(closed==nil and type(err)=='table'); assert(once)\n"
+          "assert(encoder:close())\n");
+  assert(allocations == 0u);
   lua_close(lua);
   return 0;
 }

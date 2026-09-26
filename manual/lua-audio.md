@@ -77,6 +77,9 @@ Encoder methods:
 - `encoder:close()` finalizes and releases the encoder. Some writer failures
   are reported here because formats such as WAV patch headers during close.
 
+Writer callbacks must not call `write_f32()` or `close()` on the same encoder
+while an operation is active; these calls raise `audio encoder is busy`.
+
 ## VOX And PTT
 
 `audio.vox.open(opts)` and `audio.ptt.open(opts)` create bounded segmenters for

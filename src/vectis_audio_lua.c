@@ -29,6 +29,7 @@ typedef struct vectis_audio_encoder_lua {
   int write_ref;
   int seek_ref;
   unsigned long channels;
+  int active;
 } vectis_audio_encoder_lua;
 
 typedef struct vectis_audio_capture_lua {
@@ -663,6 +664,7 @@ vectis_audio_lua_new_encoder(lua_State *lua, cpkt_audio_encoder *encoder,
   handle->write_ref = LUA_NOREF;
   handle->seek_ref = LUA_NOREF;
   handle->channels = channels == 0u ? 1u : channels;
+  handle->active = 0;
   luaL_getmetatable(lua, VECTIS_AUDIO_ENCODER);
   lua_setmetatable(lua, -2);
   vectis_audio_lua_retain_owner(lua, -1);
@@ -680,11 +682,16 @@ static int vectis_audio_lua_encoder_close(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_encoder(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio encoder is busy");
+  }
   result = CPKT_AUDIO_OK;
   if (handle->encoder != NULL) {
+    handle->active = 1;
     result = handle->encoder->close(handle->encoder);
     handle->encoder->destroy(handle->encoder);
     handle->encoder = NULL;
+    handle->active = 0;
   }
   if (handle->write_ref != LUA_NOREF) {
     luaL_unref(lua, LUA_REGISTRYINDEX, handle->write_ref);
@@ -711,6 +718,9 @@ static int vectis_audio_lua_encoder_write_f32(lua_State *lua) {
   cpkt_audio_result result;
 
   handle = vectis_audio_lua_check_encoder(lua, 1);
+  if (handle->active) {
+    return luaL_error(lua, "audio encoder is busy");
+  }
   if (handle->encoder == NULL) {
     return luaL_error(lua, "audio encoder is closed");
   }
@@ -722,8 +732,10 @@ static int vectis_audio_lua_encoder_write_f32(lua_State *lua) {
   }
   frame_count = sample_count / handle->channels;
   frames_written = 0u;
+  handle->active = 1;
   result = handle->encoder->write_f32(handle->encoder, frames, frame_count,
                                       &frames_written);
+  handle->active = 0;
   free(frames);
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio encoder write_f32");
@@ -1255,17 +1267,21 @@ static int vectis_audio_lua_segment_sink(cpkt_audio_vox_segment *segment,
   vectis_audio_segment_lua *segment_handle;
   int top;
   int failed;
+  int result;
 
   segmenter = (vectis_audio_segmenter_lua *)user;
   lua = segmenter->lua;
   top = lua_gettop(lua);
-  lua_rawgeti(lua, LUA_REGISTRYINDEX, segmenter->segment_ref);
   segment_handle = vectis_audio_lua_new_segment(lua, segment);
-  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+  /* Keep the userdata below the call frame while the callback can run GC. */
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, segmenter->segment_ref);
+  lua_pushvalue(lua, top + 1);
+  result = lua_pcall(lua, 1, 1, 0);
+  segment_handle->segment = NULL;
+  if (result != LUA_OK) {
     lua_settop(lua, top);
     return -1;
   }
-  segment_handle->segment = NULL;
   failed = 0;
   if (lua_type(lua, -1) == LUA_TNUMBER) {
     failed = lua_tointeger(lua, -1) == 0 ? 0 : -1;
