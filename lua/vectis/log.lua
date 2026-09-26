@@ -339,11 +339,13 @@ function M.configure(opts)
     return nil, scoped_err
   end
   ok, logger = pcall(logger.with, logger, "sys", sys)
-  root:close()
   if not ok or logger == nil then
+    root:close()
     return log_status_error(logger or "failed to derive Vectis logger",
                             vstatus.ERR_INVALID)
   end
+  -- The derived logger retains the sink. Let the root be collected rather
+  -- than closing it: close would shut an owned file sink for every child.
   if seeded.logger ~= nil then
     seeded.logger:close()
   end

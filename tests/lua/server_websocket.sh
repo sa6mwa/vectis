@@ -68,9 +68,16 @@ wait_for_log() {
   return 1
 }
 
+for logging in true false; do
 port=$("$port_helper")
+backend_log="$tmpdir/backend-$logging.jsonl"
 cat >"$script" <<LUA
 local vectis = require("vectis")
+assert(require("vectis.log").configure({
+  env = false,
+  output = "$backend_log",
+  subs = { vectis = $logging },
+}))
 local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = ${port},
@@ -78,11 +85,15 @@ local server = assert(vectis.app.new({
 }))
 assert(server:websocket({
   path = "/ws",
+  connect = function() error("fixture/connect") end,
   message = function(ws, opcode, payload)
     assert(opcode == vectis.websocket.TEXT)
     assert(ws:send_text("lua:" .. payload) == true)
+    error("fixture/message")
   end,
+  disconnect = function() error("fixture/disconnect") end,
 }) == true)
+collectgarbage("collect")
 assert(server:start() == true)
 io.stdout:write("READY\\n")
 io.stdout:flush()
@@ -113,3 +124,24 @@ if ! wait_for_log '^STOPPED$'; then
 fi
 wait "$server_pid" || true
 server_pid=
+
+python3 - "$backend_log" "$log" "$logging" <<'PY'
+import json
+import pathlib
+import sys
+
+records = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+errors = [record for record in records if record.get("msg") == "vectis.websocket.callback_failed"]
+if sys.argv[3] == "true":
+    assert len(errors) == 3, records
+    assert {record["callback"] for record in errors} == {"connect", "message", "disconnect"}, errors
+    for record in errors:
+        assert record["lvl"] == "error", record
+        assert record["sub"] == "vectis", record
+        assert "fixture/" + record["callback"] in record["error"], record
+else:
+    assert not errors, errors
+raw = pathlib.Path(sys.argv[2]).read_text()
+assert "fixture/" not in raw and "callback_failed" not in raw, raw
+PY
+done

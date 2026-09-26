@@ -66,6 +66,13 @@ pslog calls when an application needs complete control over the final log call.
 native managed services inherit automatically. It is a Vectis convenience
 layer over pslog, not a replacement for direct `pslog` configuration.
 
+Configured file sinks stay open while derived app and service loggers use
+them, including after collection of temporary logger objects. WebSocket
+connect, message, and disconnect callback failures emit
+`vectis.websocket.callback_failed` at error level with `callback` and `error`
+fields through the app logger (`sub=vectis`). Disabling the `vectis` subsystem
+also suppresses these records.
+
 Call it before the first `vectis.app.new()` in a Lua runtime:
 
 ```lua

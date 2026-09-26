@@ -11293,7 +11293,6 @@ static void vectis_lua_app_websocket_connect(vectis_app *app,
   int base;
   const char *message;
 
-  (void)app;
   route = (vectis_lua_app_websocket_route *)userdata;
   if (route == NULL || route->lua == NULL || route->connect_ref == LUA_NOREF) {
     return;
@@ -11305,8 +11304,9 @@ static void vectis_lua_app_websocket_connect(vectis_app *app,
     vectis_lua_push_websocket(lua, websocket);
     if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
       message = lua_tostring(lua, -1);
-      fprintf(stderr, "vectis websocket connect callback failed: %s\n",
-              message != NULL ? message : "unknown error");
+      pslog_errorf(vectis_logger(app), "vectis.websocket.callback_failed",
+                   "callback=%s error=%s", "connect",
+                   message != NULL ? message : "unknown error");
     }
   }
   lua_settop(lua, base);
@@ -11322,7 +11322,6 @@ static void vectis_lua_app_websocket_message(vectis_app *app,
   int base;
   const char *message;
 
-  (void)app;
   route = (vectis_lua_app_websocket_route *)userdata;
   if (route == NULL || route->lua == NULL || route->message_ref == LUA_NOREF) {
     return;
@@ -11336,8 +11335,9 @@ static void vectis_lua_app_websocket_message(vectis_app *app,
     lua_pushlstring(lua, data != NULL ? (const char *)data : "", size);
     if (lua_pcall(lua, 3, 0, 0) != LUA_OK) {
       message = lua_tostring(lua, -1);
-      fprintf(stderr, "vectis websocket message callback failed: %s\n",
-              message != NULL ? message : "unknown error");
+      pslog_errorf(vectis_logger(app), "vectis.websocket.callback_failed",
+                   "callback=%s error=%s", "message",
+                   message != NULL ? message : "unknown error");
     }
   }
   lua_settop(lua, base);
@@ -11351,7 +11351,6 @@ static void vectis_lua_app_websocket_disconnect(vectis_app *app,
   int base;
   const char *message;
 
-  (void)app;
   route = (vectis_lua_app_websocket_route *)userdata;
   if (route == NULL || route->lua == NULL ||
       route->disconnect_ref == LUA_NOREF) {
@@ -11364,8 +11363,9 @@ static void vectis_lua_app_websocket_disconnect(vectis_app *app,
     vectis_lua_push_websocket(lua, websocket);
     if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
       message = lua_tostring(lua, -1);
-      fprintf(stderr, "vectis websocket disconnect callback failed: %s\n",
-              message != NULL ? message : "unknown error");
+      pslog_errorf(vectis_logger(app), "vectis.websocket.callback_failed",
+                   "callback=%s error=%s", "disconnect",
+                   message != NULL ? message : "unknown error");
     }
   }
   lua_settop(lua, base);
