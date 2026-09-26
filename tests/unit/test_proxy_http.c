@@ -74,6 +74,22 @@ static void test_fixed_length(void) {
   vectis_proxy_http_response_cleanup(&response);
 }
 
+static void test_http10_upstream(void) {
+  vectis_proxy_http_response response;
+
+  vectis_proxy_http_response_init(&response, 0);
+  assert(accept(&response, "HTTP/1.0 201 Created\r\n") ==
+         VECTIS_PROXY_HTTP_MORE);
+  accept(&response, "Content-Length: 2\r\n");
+  assert(accept(&response, "\r\n") == VECTIS_PROXY_HTTP_FINAL);
+  assert(response.status == 201 && !response.http2);
+  assert(vectis_proxy_http_response_body(&response, 2u, NULL) ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_http_response_finish(&response, NULL) ==
+         VECTIS_PROXY_HEADER_OK);
+  vectis_proxy_http_response_cleanup(&response);
+}
+
 static void test_http2_sse_and_trailers(void) {
   vectis_proxy_http_response response;
   const char *reason;
@@ -217,6 +233,7 @@ static void test_rejections(void) {
 
 int main(void) {
   test_fixed_length();
+  test_http10_upstream();
   test_http2_sse_and_trailers();
   test_chunked_and_head();
   test_rejections();

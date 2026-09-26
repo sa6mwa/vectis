@@ -14,6 +14,83 @@ static int vectis_proxy_token_char(unsigned char c) {
   return strchr("!#$%&'*+-.^_`|~", c) != NULL;
 }
 
+static int vectis_proxy_chunk_quoted(const char *line, size_t length,
+                                     size_t *offset) {
+  unsigned char c;
+
+  ++*offset;
+  while (*offset < length) {
+    c = (unsigned char)line[(*offset)++];
+    if (c == '"') {
+      return 1;
+    }
+    if (c == '\\') {
+      if (*offset == length) {
+        return 0;
+      }
+      c = (unsigned char)line[(*offset)++];
+      if (c == '\t' || c == ' ' || (c >= 0x21u && c != 0x7fu)) {
+        continue;
+      }
+      return 0;
+    }
+    if (c != '\t' && c != ' ' && c != '!' &&
+        (c < '#' || (c > '[' && c < ']') || c == 0x7fu)) {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+static int vectis_proxy_chunk_extensions(const char *line, size_t length,
+                                         size_t offset) {
+  size_t start;
+
+  while (offset < length) {
+    while (offset < length && (line[offset] == ' ' || line[offset] == '\t')) {
+      offset++;
+    }
+    if (offset == length || line[offset++] != ';') {
+      return 0;
+    }
+    while (offset < length && (line[offset] == ' ' || line[offset] == '\t')) {
+      offset++;
+    }
+    start = offset;
+    while (offset < length &&
+           vectis_proxy_token_char((unsigned char)line[offset])) {
+      offset++;
+    }
+    if (offset == start) {
+      return 0;
+    }
+    while (offset < length && (line[offset] == ' ' || line[offset] == '\t')) {
+      offset++;
+    }
+    if (offset < length && line[offset] == '=') {
+      offset++;
+      while (offset < length && (line[offset] == ' ' || line[offset] == '\t')) {
+        offset++;
+      }
+      if (offset < length && line[offset] == '"') {
+        if (!vectis_proxy_chunk_quoted(line, length, &offset)) {
+          return 0;
+        }
+      } else {
+        start = offset;
+        while (offset < length &&
+               vectis_proxy_token_char((unsigned char)line[offset])) {
+          offset++;
+        }
+        if (offset == start) {
+          return 0;
+        }
+      }
+    }
+  }
+  return 1;
+}
+
 int vectis_proxy_trailer_field_allowed(const char *name, size_t length) {
   static const char *const forbidden[] = {"authorization",
                                           "connection",
@@ -94,14 +171,8 @@ static int vectis_proxy_parse_size(vectis_proxy_body_framer *framer) {
     return 0;
   }
   if (i < framer->line_length) {
-    if (line[i++] != ';' || i == framer->line_length) {
+    if (!vectis_proxy_chunk_extensions(line, framer->line_length, i)) {
       return 0;
-    }
-    for (; i < framer->line_length; ++i) {
-      c = (unsigned char)line[i];
-      if (c < 0x21u || c > 0x7eu) {
-        return 0;
-      }
     }
   }
   framer->remaining = value;

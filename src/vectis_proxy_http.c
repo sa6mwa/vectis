@@ -41,7 +41,8 @@ static int vectis_proxy_http_status_line(const char *line, int *status,
   size_t length;
 
   length = strlen(line);
-  if (length >= 9u && strncasecmp(line, "HTTP/1.1 ", 9u) == 0) {
+  if (length >= 9u && (strncasecmp(line, "HTTP/1.1 ", 9u) == 0 ||
+                       strncasecmp(line, "HTTP/1.0 ", 9u) == 0)) {
     number = line + 9u;
     *http2 = 0;
   } else if (length >= 7u && strncasecmp(line, "HTTP/2 ", 7u) == 0) {

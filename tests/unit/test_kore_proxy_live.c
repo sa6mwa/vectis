@@ -185,9 +185,9 @@ static void *origin_main(void *userdata) {
          strstr(request, "transfer-encoding: chunked\r\n") != NULL);
   assert(strstr(request, "3\r\nabc\r\n0\r\nX-Trace: yes\r\n\r\n") != NULL);
   send_all(fd,
-           "HTTP/1.1 201 Created\r\nContent-Length: 2\r\n"
+           "HTTP/1.0 201 Created\r\nContent-Length: 2\r\n"
            "Connection: close\r\n\r\nok",
-           strlen("HTTP/1.1 201 Created\r\nContent-Length: 2\r\n"
+           strlen("HTTP/1.0 201 Created\r\nContent-Length: 2\r\n"
                   "Connection: close\r\n\r\nok"));
   assert(close(fd) == 0);
   fd = accept(server->listener, NULL, NULL);
@@ -653,10 +653,10 @@ int main(void) {
   send_all(fd,
            "POST /proxy/chunked HTTP/1.1\r\nHost: localhost\r\n"
            "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n"
-           "Connection: close\r\n\r\n3\r\nabc\r\n",
+           "Connection: close\r\n\r\n3;foo=\"a b\"\r\nabc\r\n",
            strlen("POST /proxy/chunked HTTP/1.1\r\nHost: localhost\r\n"
                   "Transfer-Encoding: chunked\r\nTrailer: X-Trace\r\n"
-                  "Connection: close\r\n\r\n3\r\nabc\r\n"));
+                  "Connection: close\r\n\r\n3;foo=\"a b\"\r\nabc\r\n"));
   send_all(fd, "0\r\nX-Trace: yes\r\n\r\n",
            strlen("0\r\nX-Trace: yes\r\n\r\n"));
   used = 0u;

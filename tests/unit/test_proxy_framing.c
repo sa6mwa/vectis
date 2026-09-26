@@ -41,7 +41,8 @@ static int accept_trailer(void *userdata, const char *name, const char *value) {
 
 static void test_chunked_split_every_byte(void) {
   static const char wire[] =
-      "3;foo=bar\r\nabc\r\n2\r\nde\r\n0\r\nX-Trace: done\r\n\r\nGET /next";
+      "3;foo=\"a b\"\r\nabc\r\n2 ; bar = \"x\\\"y\"\r\nde\r\n"
+      "0;end=ok\r\nX-Trace: done\r\n\r\nGET /next";
   vectis_proxy_body_framer framer;
   vectis_proxy_frame_result result;
   observed_body out;
@@ -114,6 +115,12 @@ static void test_reject_malformed(void) {
                                     "z\r\n",
                                     "10000000000000000\r\n",
                                     "1 \r\na\r\n0\r\n\r\n",
+                                    "1;\r\na\r\n0\r\n\r\n",
+                                    "1;foo=\r\na\r\n0\r\n\r\n",
+                                    "1;foo=\"open\r\na\r\n0\r\n\r\n",
+                                    "1;foo=\"bad\001\"\r\na\r\n0\r\n\r\n",
+                                    "1;foo=\"bad\\\001\"\r\na\r\n0\r\n\r\n",
+                                    "1;foo=bar junk\r\na\r\n0\r\n\r\n",
                                     "1\na\r\n0\r\n\r\n",
                                     "1\r\naX0\r\n\r\n",
                                     "0\r\n\rX",
