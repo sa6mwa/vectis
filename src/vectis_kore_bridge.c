@@ -2333,6 +2333,7 @@ static vectis_status vectis_kore_copy_query(struct http_request *req,
   size_t value_len;
   vectis_status status;
 
+  vectis_internal_request_set_raw_query(request, req->query_string);
   if (req->query_string == NULL || req->query_string[0] == '\0') {
     return VECTIS_OK;
   }

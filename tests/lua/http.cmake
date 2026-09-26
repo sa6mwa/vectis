@@ -1861,6 +1861,8 @@ local function assert_static_directory_redirect(path, location)
   assert(result.body == "")
 end
 assert_static_directory_redirect("/site", "/site/")
+assert_static_directory_redirect("/site?lang=sv&mode=preview",
+                                 "/site/?lang=sv&mode=preview")
 local function assert_static_directory_index(path, expected_body)
   local result = vectis.http.request({
     url = "http://127.0.0.1:28484" .. path,
@@ -1877,6 +1879,8 @@ local function assert_static_directory_index(path, expected_body)
 end
 assert_static_directory_index("/site/", "static directory index\n")
 assert_static_directory_redirect("/site/guides", "/site/guides/")
+assert_static_directory_redirect("/site/guides?name=a%2Bb&name=c",
+                                 "/site/guides/?name=a%2Bb&name=c")
 assert_static_directory_index("/site/guides/", "nested guide index\n")
 assert_static_directory_redirect("/site/guides/reference",
                                  "/site/guides/reference/")

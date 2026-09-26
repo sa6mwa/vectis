@@ -560,6 +560,7 @@ struct vectis_request {
   vectis_kv *query;
   size_t query_count;
   size_t query_capacity;
+  const char *raw_query;
   vectis_kv *headers;
   size_t header_count;
   size_t header_capacity;
@@ -14279,12 +14280,14 @@ static int vectis_static_redirect_path_byte_safe(unsigned char value) {
          value == (unsigned char)'~' || value == (unsigned char)'/';
 }
 
-static char *vectis_static_directory_location(const char *path) {
+static char *vectis_static_directory_location(const char *path,
+                                              const char *raw_query) {
   static const char hex[] = "0123456789ABCDEF";
   const unsigned char *input;
   char *location;
   char *output;
   size_t total;
+  size_t query_length;
   unsigned char value;
 
   if (path == NULL || path[0] != '/') {
@@ -14304,6 +14307,12 @@ static char *vectis_static_directory_location(const char *path) {
       total += 3u;
     }
   }
+  query_length = raw_query != NULL ? strlen(raw_query) : 0u;
+  if (query_length > 0u) {
+    if (total >= (size_t)-1 || query_length > (size_t)-1 - total - 1u)
+      return NULL;
+    total += query_length + 1u;
+  }
   location = (char *)malloc(total);
   if (location == NULL) {
     return NULL;
@@ -14320,17 +14329,23 @@ static char *vectis_static_directory_location(const char *path) {
     }
   }
   *output++ = '/';
+  if (query_length > 0u) {
+    *output++ = '?';
+    memcpy(output, raw_query, query_length);
+    output += query_length;
+  }
   *output = '\0';
   return location;
 }
 
-static vectis_status vectis_static_redirect_directory(vectis_response *response,
+static vectis_status vectis_static_redirect_directory(vectis_request *request,
+                                                      vectis_response *response,
                                                       const char *path,
                                                       vectis_error *error) {
   char *location;
   vectis_status status;
 
-  location = vectis_static_directory_location(path);
+  location = vectis_static_directory_location(path, request->raw_query);
   if (location == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate static directory redirect");
@@ -14557,7 +14572,7 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   if (!trailing_slash && strcmp(path, "/") != 0) {
     vectis_static_fd_close(&file_fd);
     free(index_relative);
-    return vectis_static_redirect_directory(response, path, error);
+    return vectis_static_redirect_directory(request, response, path, error);
   }
   status = vectis_static_response_fd(request, response, data->content_type,
                                      index_relative, file_fd, error);
@@ -14992,7 +15007,7 @@ static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
       return vectis_static_embedded_not_found(data, request, response, error);
     }
     if (strcmp(data->path_prefix, "/") != 0 && !trailing_slash) {
-      return vectis_static_redirect_directory(response, path, error);
+      return vectis_static_redirect_directory(request, response, path, error);
     }
     return vectis_static_embedded_response(data, request, response, &entry,
                                            error);
@@ -15062,7 +15077,7 @@ static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
   }
   if (!trailing_slash) {
     free(index_path);
-    return vectis_static_redirect_directory(response, path, error);
+    return vectis_static_redirect_directory(request, response, path, error);
   }
   status =
       vectis_static_embedded_response(data, request, response, &entry, error);
@@ -36547,6 +36562,12 @@ void vectis_internal_request_set_kore(vectis_request *request,
     return;
   }
   request->kore_request = kore_request;
+}
+
+void vectis_internal_request_set_raw_query(vectis_request *request,
+                                           const char *raw_query) {
+  if (request != NULL)
+    request->raw_query = raw_query;
 }
 
 vectis_status vectis_internal_request_add_path_param(vectis_request *request,

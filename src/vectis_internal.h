@@ -282,6 +282,9 @@ void vectis_internal_request_set_streaming_upload(
     vectis_request *request, const vectis_body_policy *policy);
 void vectis_internal_request_set_kore(vectis_request *request,
                                       struct http_request *kore_request);
+/* Borrowed from Kore for the lifetime of the request. */
+void vectis_internal_request_set_raw_query(vectis_request *request,
+                                           const char *raw_query);
 vectis_status vectis_internal_request_add_path_param(vectis_request *request,
                                                      const char *name,
                                                      const char *value,
