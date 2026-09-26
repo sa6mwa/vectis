@@ -296,13 +296,12 @@ static void vectis_kore_ws_schedule(vectis_kore_ws_state *state) {
         (state->phase == VECTIS_KORE_WS_RELAY &&
          state->up_offset < state->up_length))
       upstream |= VECTIS_PROXY_EVENT_WRITE;
-    if ((state->phase == VECTIS_KORE_WS_READ_HEAD &&
-         state->response_length == 0u) ||
+    if (state->phase == VECTIS_KORE_WS_READ_HEAD ||
         (state->phase == VECTIS_KORE_WS_REJECTION &&
          !state->rejection_finished && state->response_length == 0u &&
          state->down_length == 0u && TAILQ_EMPTY(&connection->send_queue)) ||
-        (state->phase == VECTIS_KORE_WS_RELAY && state->down_length == 0u &&
-         TAILQ_EMPTY(&connection->send_queue)))
+        (state->phase == VECTIS_KORE_WS_RELAY && state->response_length == 0u &&
+         state->down_length == 0u && TAILQ_EMPTY(&connection->send_queue)))
       upstream |= VECTIS_PROXY_EVENT_READ;
     if (state->upstream_again)
       upstream |= VECTIS_PROXY_EVENT_READ | VECTIS_PROXY_EVENT_WRITE;
@@ -445,16 +444,9 @@ static int vectis_kore_ws_response(vectis_kore_ws_state *state) {
     return 0;
   }
   vectis_proxy_headers_cleanup(&headers);
-  if (state->response_length - head_length > state->buffer_capacity) {
-    free(wire);
-    state->error_status = 502;
-    state->phase = VECTIS_KORE_WS_ERROR;
-    return 0;
-  }
-  state->down_length = state->response_length - head_length;
-  if (state->down_length != 0u)
-    memcpy(state->to_downstream, state->response_head + head_length,
-           state->down_length);
+  surplus = state->response_length - head_length;
+  memmove(state->response_head, state->response_head + head_length, surplus);
+  state->response_length = surplus;
   vectis_kore_ws_queue(state, wire, wire_length);
   free(wire);
   state->request->status = 101;
@@ -698,8 +690,20 @@ static void vectis_kore_ws_pump(vectis_kore_ws_state *state) {
       if (state->up_length == 0u && !state->closing &&
           vectis_kore_ws_read_down(state))
         progress = 1;
-      if (state->down_length == 0u && TAILQ_EMPTY(&connection->send_queue) &&
-          !state->closing) {
+      if (state->response_length != 0u && state->down_length == 0u &&
+          TAILQ_EMPTY(&connection->send_queue)) {
+        amount = state->response_length < state->buffer_capacity
+                     ? state->response_length
+                     : state->buffer_capacity;
+        memcpy(state->to_downstream, state->response_head, amount);
+        state->response_length -= amount;
+        memmove(state->response_head, state->response_head + amount,
+                state->response_length);
+        state->down_length = amount;
+        progress = 1;
+      }
+      if (state->response_length == 0u && state->down_length == 0u &&
+          TAILQ_EMPTY(&connection->send_queue) && !state->closing) {
         amount = 0u;
         code = curl_easy_recv(state->easy, state->to_downstream,
                               state->buffer_capacity, &amount);

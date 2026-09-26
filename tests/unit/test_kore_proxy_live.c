@@ -269,11 +269,14 @@ static void *origin_main(void *userdata) {
     request[used] = '\0';
   } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
   assert(strstr(request, "GET /api/proxy/head-get HTTP/1.1\r\n") != NULL);
-  send_all(
-      fd,
-      "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
-      strlen("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: "
-             "close\r\n\r\nhello"));
+  send_all(fd,
+           "HTTP/1.1 200 OK\r\nContent-Length: 262144\r\n"
+           "Connection: close\r\n\r\n",
+           strlen("HTTP/1.1 200 OK\r\nContent-Length: 262144\r\n"
+                  "Connection: close\r\n\r\n"));
+  memset(big_chunk, 'A', sizeof(big_chunk));
+  for (used = 0u; used < 262144u; used += sizeof(big_chunk))
+    send_all(fd, big_chunk, sizeof(big_chunk));
   assert(close(fd) == 0);
   fd = accept(server->listener, NULL, NULL);
   assert(fd >= 0);
@@ -769,7 +772,7 @@ int main(void) {
   }
   response[used] = '\0';
   assert(strstr(response, "HTTP/1.1 200 ") != NULL);
-  assert(strstr(response, "Content-Length: 5\r\n") != NULL);
+  assert(strstr(response, "Content-Length: 262144\r\n") != NULL);
   assert(strstr(response, "\r\n\r\n")[4] == '\0');
   assert(close(fd) == 0);
   fd = connect_app(app_port);

@@ -24,6 +24,7 @@ static const unsigned char later_server_frame[] = {0x81u, 0x03u, 'b', 'y', 'e'};
 static const unsigned char early_bulk_header[] = {0x82u, 0xfeu, 0x80u, 0x00u,
                                                   0x12u, 0x34u, 0x56u, 0x78u};
 #define BIG_PAYLOAD_SIZE (1024u * 1024u)
+#define COALESCED_FRAME_BODY 12000u
 static const unsigned char big_client_header[] = {0x02u, 0xffu, 0u,    0u,   0u,
                                                   0u,    0u,    0x10u, 0u,   0u,
                                                   0x12u, 0x34u, 0x56u, 0x78u};
@@ -108,6 +109,8 @@ static void *origin_main(void *userdata) {
   struct pollfd pending;
   unsigned char
       response[sizeof(upstream_head) - 1u + sizeof(early_server_frame)];
+  unsigned char
+      large_response[sizeof(upstream_head) - 1u + 4u + COALESCED_FRAME_BODY];
   size_t used;
   size_t offset;
   size_t i;
@@ -158,7 +161,11 @@ static void *origin_main(void *userdata) {
   memcpy(response, upstream_head, sizeof(upstream_head) - 1u);
   memcpy(response + sizeof(upstream_head) - 1u, early_server_frame,
          sizeof(early_server_frame));
-  send_all(fd, response, sizeof(response));
+  send_all(fd, response, sizeof("HTTP/1.1 101 Switching Protocols\r\n") - 1u);
+  usleep(200000u);
+  send_all(fd, response + sizeof("HTTP/1.1 101 Switching Protocols\r\n") - 1u,
+           sizeof(response) -
+               (sizeof("HTTP/1.1 101 Switching Protocols\r\n") - 1u));
   read_exact(fd, frame, sizeof(frame));
   assert(memcmp(frame, early_client_frame, sizeof(frame)) == 0);
   read_exact(fd, big_header, sizeof(early_bulk_header));
@@ -197,6 +204,32 @@ static void *origin_main(void *userdata) {
   send_all(fd, server_fragment, sizeof(server_fragment));
   send_all(fd, server_pong, sizeof(server_pong));
   send_all(fd, server_continuation, sizeof(server_continuation));
+  read_exact(fd, control, sizeof(client_close));
+  assert(memcmp(control, client_close, sizeof(client_close)) == 0);
+  send_all(fd, server_close, sizeof(server_close));
+  assert(close(fd) == 0);
+  fd = accept(origin->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0u;
+  for (;;) {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+    if (strstr((const char *)request, "\r\n\r\n") != NULL)
+      break;
+    assert(used < sizeof(request) - 1u);
+  }
+  assert(strstr((const char *)request,
+                "GET /alternate/rewritten?route=ws HTTP/1.1\r\n") != NULL);
+  memcpy(large_response, upstream_head, sizeof(upstream_head) - 1u);
+  large_response[sizeof(upstream_head) - 1u] = 0x82u;
+  large_response[sizeof(upstream_head)] = 0x7eu;
+  large_response[sizeof(upstream_head) + 1u] = 0x2eu;
+  large_response[sizeof(upstream_head) + 2u] = 0xe0u;
+  memset(large_response + sizeof(upstream_head) + 3u, 'B',
+         COALESCED_FRAME_BODY);
+  send_all(fd, large_response, sizeof(large_response));
   read_exact(fd, control, sizeof(client_close));
   assert(memcmp(control, client_close, sizeof(client_close)) == 0);
   send_all(fd, server_close, sizeof(server_close));
@@ -304,6 +337,7 @@ int main(void) {
   vectis_app *app;
   unsigned char response[2048];
   unsigned char big_chunk[4096];
+  unsigned char coalesced_frame[4u + COALESCED_FRAME_BODY];
   unsigned char big_head[sizeof(big_server_header)];
   const char *boundary;
   const unsigned char *frame;
@@ -422,6 +456,31 @@ int main(void) {
   read_exact(fd, response, sizeof(server_continuation));
   assert(memcmp(response, server_continuation, sizeof(server_continuation)) ==
          0);
+  send_all(fd, client_close, sizeof(client_close));
+  read_exact(fd, response, sizeof(server_close));
+  assert(memcmp(response, server_close, sizeof(server_close)) == 0);
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd, client_head, sizeof(client_head) - 1u);
+  used = 0u;
+  do {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    response[used] = '\0';
+    boundary = strstr((const char *)response, "\r\n\r\n");
+  } while (boundary == NULL && used < sizeof(response) - 1u);
+  assert(boundary != NULL);
+  assert(strstr((const char *)response, "101 Switching Protocols") != NULL);
+  offset = (size_t)(boundary + 4u - (const char *)response);
+  assert(used - offset <= sizeof(coalesced_frame));
+  memcpy(coalesced_frame, response + offset, used - offset);
+  read_exact(fd, coalesced_frame + used - offset,
+             sizeof(coalesced_frame) - (used - offset));
+  assert(coalesced_frame[0] == 0x82u && coalesced_frame[1] == 0x7eu &&
+         coalesced_frame[2] == 0x2eu && coalesced_frame[3] == 0xe0u);
+  for (i = 4u; i < sizeof(coalesced_frame); ++i)
+    assert(coalesced_frame[i] == 'B');
   send_all(fd, client_close, sizeof(client_close));
   read_exact(fd, response, sizeof(server_close));
   assert(memcmp(response, server_close, sizeof(server_close)) == 0);

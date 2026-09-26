@@ -582,24 +582,24 @@ static int vectis_kore_proxy_pump(vectis_kore_proxy_state *state) {
     if (body != NULL) {
       if (state->downstream_head) {
         vectis_proxy_http_upstream_consume(&state->upstream, body_length);
+      } else {
+        if (vectis_proxy_http_wire_chunk_in_place(
+                &state->wire, body, body_length,
+                VECTIS_PROXY_HTTP_BODY_HEADROOM,
+                VECTIS_PROXY_HTTP_BODY_TAILROOM, &wire, &written,
+                &error) != VECTIS_OK) {
+          state->telemetry.disconnect_side = "worker";
+          state->telemetry.error_category = "internal";
+          kore_connection_disconnect(connection);
+          return 0;
+        }
+        net_send_queue(connection, wire, written);
+        state->send_retry_read = 0;
+        state->telemetry.downstream_bytes += (uint64_t)body_length;
+        vectis_proxy_http_upstream_consume(&state->upstream, body_length);
         vectis_kore_proxy_schedule(state);
         return 1;
       }
-      if (vectis_proxy_http_wire_chunk_in_place(
-              &state->wire, body, body_length, VECTIS_PROXY_HTTP_BODY_HEADROOM,
-              VECTIS_PROXY_HTTP_BODY_TAILROOM, &wire, &written,
-              &error) != VECTIS_OK) {
-        state->telemetry.disconnect_side = "worker";
-        state->telemetry.error_category = "internal";
-        kore_connection_disconnect(connection);
-        return 0;
-      }
-      net_send_queue(connection, wire, written);
-      state->send_retry_read = 0;
-      state->telemetry.downstream_bytes += (uint64_t)body_length;
-      vectis_proxy_http_upstream_consume(&state->upstream, body_length);
-      vectis_kore_proxy_schedule(state);
-      return 1;
     }
     if (state->transfer != NULL && state->upstream.paused) {
       if (vectis_proxy_http_upstream_resume(&state->upstream, &error) !=
