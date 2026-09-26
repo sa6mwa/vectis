@@ -30,6 +30,8 @@
 static const char vectis_webdav_hex[] = "0123456789abcdef";
 
 static int vectis_webdav_remove_tree(const char *path);
+static int vectis_webdav_disk_usage(const char *path, uint64_t *total,
+                                    uint64_t *resources);
 
 static int vectis_webdav_site_valid(const char *site_id) {
   size_t i;
@@ -541,6 +543,30 @@ static int vectis_webdav_add_resources(uint64_t *resources,
     return 0;
   }
   *resources += additional_resources;
+  return 1;
+}
+
+/* Account for the tombstone subtree removed after a replacement is installed.
+ * The mutation lock must be held; this does not change the stored tombstones.
+ */
+static int
+vectis_webdav_subtract_tombstone_usage(const vectis_webdav_config *config,
+                                       const char *path, uint64_t *usage,
+                                       uint64_t *resources) {
+  char disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  uint64_t removed_usage;
+  uint64_t removed_resources;
+
+  if (vectis_webdav_direct_root(config))
+    return 1;
+  removed_usage = 0u;
+  removed_resources = 0u;
+  if (!vectis_webdav_disk_path(config, "tombstones", path, disk) ||
+      !vectis_webdav_disk_usage(disk, &removed_usage, &removed_resources) ||
+      *usage < removed_usage || *resources < removed_resources)
+    return 0;
+  *usage -= removed_usage;
+  *resources -= removed_resources;
   return 1;
 }
 
@@ -1568,7 +1594,9 @@ vectis_webdav_store_locked(const vectis_webdav_config *config,
   }
   if (!vectis_webdav_disk_path(config, "content", normalized, disk) ||
       !vectis_webdav_disk_path(config, "content", "/", content_root) ||
-      !vectis_webdav_usage(config, &usage, &resources)) {
+      !vectis_webdav_usage(config, &usage, &resources) ||
+      !vectis_webdav_subtract_tombstone_usage(config, normalized, &usage,
+                                              &resources)) {
     return VECTIS_WEBDAV_IO;
   }
   if (vectis_webdav_file_directory(disk)) {
@@ -2163,7 +2191,9 @@ vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
     return status;
   }
   if (!vectis_webdav_disk_path(config, "content", normalized, disk) ||
-      !vectis_webdav_usage(config, &usage, &resources)) {
+      !vectis_webdav_usage(config, &usage, &resources) ||
+      !vectis_webdav_subtract_tombstone_usage(config, normalized, &usage,
+                                              &resources)) {
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_IO;
   }

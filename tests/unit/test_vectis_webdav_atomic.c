@@ -194,6 +194,38 @@ static void test_authorization_preflight(const char *root) {
   }
 }
 
+static void test_failed_tombstone_replacement(const char *root) {
+  vectis_webdav_config config;
+  vectis_webdav_entry entry;
+  int lock_fd;
+
+  vectis_webdav_config_init(&config);
+  config.cache_dir = root;
+  config.site_id = "tombstone-replacement";
+  config.max_resources = 1u;
+  assert(vectis_webdav_put(&config, "/a", (const unsigned char *)"old", 3u) ==
+         VECTIS_WEBDAV_OK);
+  assert(vectis_webdav_delete(&config, "/a") == VECTIS_WEBDAV_OK);
+  lock_fd = vectis_webdav_lock(&config);
+  assert(lock_fd >= 0);
+  close_calls = 0;
+  replacement_fd = -1;
+  fail_close = 0;
+  fail_sync = 1;
+  armed = 1;
+  assert(vectis_webdav_store_locked(&config, "/a", (const unsigned char *)"new",
+                                    3u) == VECTIS_WEBDAV_IO);
+  armed = 0;
+  fail_sync = 0;
+  assert(close_calls == 1 && replacement_fd >= 0);
+  assert(close(replacement_fd) == 0);
+  assert(vectis_webdav_lookup(&config, "/a", &entry) == VECTIS_WEBDAV_OK);
+  assert(entry.kind == VECTIS_WEBDAV_ENTRY_TOMBSTONE);
+  vectis_webdav_unlock(lock_fd);
+  assert(vectis_webdav_put(&config, "/a", (const unsigned char *)"new", 3u) ==
+         VECTIS_WEBDAV_OK);
+}
+
 int main(void) {
   char root[4096];
   char cwd[2048];
@@ -259,6 +291,7 @@ int main(void) {
   }
   assert(close(parent_fd) == 0);
   test_authorization_preflight(root);
+  test_failed_tombstone_replacement(root);
   assert(vectis_webdav_remove_tree(root));
   return 0;
 }

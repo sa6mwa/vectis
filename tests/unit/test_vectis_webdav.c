@@ -1233,6 +1233,40 @@ int main(void) {
          "repeated delete replaces tombstone at quota");
   expect(vectis_webdav_delete(&limited_config, "/b") == VECTIS_WEBDAV_LIMIT,
          "new tombstone still obeys quota");
+  limited_config.max_total_bytes = 1u;
+  limited_config.max_file_bytes = 1u;
+  expect(vectis_webdav_put(&limited_config, "/a", (const unsigned char *)"new",
+                           3u) == VECTIS_WEBDAV_INVALID,
+         "replacement rejects oversized file");
+  expect(vectis_webdav_lookup(&limited_config, "/a", &entry) ==
+                 VECTIS_WEBDAV_OK &&
+             entry.kind == VECTIS_WEBDAV_ENTRY_TOMBSTONE,
+         "failed replacement retains tombstone");
+  limited_config.max_total_bytes = config.max_total_bytes;
+  limited_config.max_file_bytes = config.max_file_bytes;
+  expect(vectis_webdav_put(&limited_config, "/a", (const unsigned char *)"new",
+                           3u) == VECTIS_WEBDAV_OK,
+         "put replaces tombstone at resource quota");
+  body = NULL;
+  body_size = 0u;
+  expect(vectis_webdav_read(&limited_config, "/a", &body, &body_size, &entry) ==
+                 VECTIS_WEBDAV_OK &&
+             body_size == 3u && memcmp(body, "new", 3u) == 0,
+         "read replacement at quota");
+  free(body);
+  expect(vectis_webdav_put(&limited_config, "/b", (const unsigned char *)"b",
+                           1u) == VECTIS_WEBDAV_LIMIT,
+         "new content still obeys resource quota");
+  expect(vectis_webdav_delete(&limited_config, "/a") == VECTIS_WEBDAV_OK,
+         "delete replacement at quota");
+  expect(vectis_webdav_mkcol(&limited_config, "/a") == VECTIS_WEBDAV_OK,
+         "mkcol replaces tombstone at resource quota");
+  expect(vectis_webdav_lookup(&limited_config, "/a", &entry) ==
+                 VECTIS_WEBDAV_OK &&
+             entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION,
+         "replacement collection is visible");
+  expect(vectis_webdav_mkcol(&limited_config, "/b") == VECTIS_WEBDAV_LIMIT,
+         "new collection still obeys resource quota");
   limited_config.site_id = "delete-subtree-quota";
   limited_config.max_resources = 3u;
   expect(vectis_webdav_mkcol(&limited_config, "/dir") == VECTIS_WEBDAV_OK,
