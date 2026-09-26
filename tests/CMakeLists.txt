@@ -216,6 +216,15 @@ if(TARGET vectis_bin)
     ENVIRONMENT "VECTIS_EXPECTED_VERSION=${PROJECT_VERSION}"
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_zlib
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/zlib.cmake")
+  set_tests_properties(vectis_lua_zlib PROPERTIES
+    LABELS "lua;smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_preload_artifact_contract
            COMMAND bash
                    "${CMAKE_SOURCE_DIR}/scripts/verify_vectis_lua_preloads.sh"

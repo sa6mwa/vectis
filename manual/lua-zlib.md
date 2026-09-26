@@ -23,6 +23,14 @@ The string APIs are explicitly buffered. They materialize the full input and
 output as Lua strings. The file APIs are file-backed and process data through
 bounded chunks; they do not materialize the full payload in Lua.
 
+Gzip decoding processes every concatenated member, including empty members.
+The output limit applies to their combined decoded size. Invalid or truncated
+later members fail the entire transform.
+
+File input and output must identify distinct files. The helpers reject the same
+file through identical paths, hard links, or symbolic links before truncating
+output, and preserve the input even when `remove_output_on_failure` is true.
+
 ## Options
 
 - `level`: compression level for `deflate`, `compress`, and `gzip`; default

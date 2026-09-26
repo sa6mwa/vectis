@@ -1,0 +1,23 @@
+set(directory "${WORK_DIR}/zlib-regression")
+file(MAKE_DIRECTORY "${directory}")
+set(input "${directory}/input")
+set(hardlink "${directory}/hardlink")
+set(symlink "${directory}/symlink")
+file(REMOVE "${hardlink}" "${symlink}")
+file(WRITE "${input}" "alias input must survive")
+file(CREATE_LINK "${input}" "${hardlink}" RESULT link_result)
+if(NOT link_result STREQUAL "0")
+  message(FATAL_ERROR "hardlink fixture failed: ${link_result}")
+endif()
+file(CREATE_LINK "${input}" "${symlink}" SYMBOLIC RESULT link_result)
+if(NOT link_result STREQUAL "0")
+  message(FATAL_ERROR "symlink fixture failed: ${link_result}")
+endif()
+execute_process(COMMAND "${VECTIS_BIN}" "${SOURCE_DIR}/tests/lua/zlib.lua"
+                        "${input}" "${hardlink}" "${symlink}" "${directory}/output"
+                RESULT_VARIABLE result
+                OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "zlib regression failed: ${stdout}${stderr}")
+endif()
+file(REMOVE_RECURSE "${directory}")
