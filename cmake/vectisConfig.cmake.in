@@ -2,6 +2,8 @@
 
 include(CMakeFindDependencyMacro)
 
+# Dependencies can overwrite PACKAGE_PREFIX_DIR with CMake before 3.30.
+set(_vectis_package_prefix "${PACKAGE_PREFIX_DIR}")
 find_dependency(Threads REQUIRED)
 find_dependency(OpenSSL CONFIG REQUIRED)
 find_dependency(ZLIB CONFIG REQUIRED)
@@ -20,6 +22,8 @@ find_package(cai CONFIG REQUIRED)
 find_package(libmdf CONFIG REQUIRED)
 find_package(softline CONFIG REQUIRED)
 find_package(lockdc CONFIG REQUIRED)
+set(PACKAGE_PREFIX_DIR "${_vectis_package_prefix}")
+unset(_vectis_package_prefix)
 
 if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
   set_property(TARGET cai::cai_static PROPERTY
