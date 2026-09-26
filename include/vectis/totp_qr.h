@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define VECTIS_TOTP_CODE_LENGTH 6u
 #define VECTIS_TOTP_SECRET_MAX 256u
 #define VECTIS_TOTP_KEY_MAX 128u
@@ -52,5 +56,9 @@ unsigned int vectis_qr_size(const vectis_qr *qr);
 vectis_totp_qr_status vectis_qr_render_ansi(const vectis_qr *qr, char **out,
                                             size_t *out_len);
 void vectis_totp_qr_free(void *value);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

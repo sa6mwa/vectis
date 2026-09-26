@@ -26,6 +26,12 @@ int main() {
   vectis_auth_issue_config_init(&auth_issue_config);
   vectis_webdav_auth_provider_config_init(&webdav_auth_provider_config);
   std::memset(&totp, 0, sizeof(totp));
+  if (vectis_totp_init(&totp, "JBSWY3DPEHPK3PXP") != VECTIS_TOTP_QR_OK) {
+    return 5;
+  }
+  if (std::strcmp(vectis_totp_qr_status_string(VECTIS_TOTP_QR_OK), "ok") != 0) {
+    return 6;
+  }
 
   app = vectis_app_new(&app_config, &error);
   if (app == 0) {
@@ -42,7 +48,8 @@ int main() {
   if (vectis_http_client_new(&http_config, &client, &error) != VECTIS_OK) {
     return 3;
   }
-  if (client == 0 || client->get == 0 || client->del == 0 || client->close == 0) {
+  if (client == 0 || client->get == 0 || client->del == 0 ||
+      client->close == 0) {
     if (client != 0) {
       client->close(client);
     }
