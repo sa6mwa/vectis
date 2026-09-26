@@ -21,6 +21,31 @@ end)
 assert(missing_body_ok == false)
 assert(tostring(missing_body_err):find("body", 1, true))
 
+for _, name in ipairs({"body_path", "upload_path"}) do
+  for _, include_body in ipairs({false, true}) do
+    local opts = {url = "mqtt://127.0.0.1:1/vectis", [name] = "/missing/file"}
+    if include_body then opts.body = "hello" end
+    local ok, err = pcall(mqtt.publish, opts)
+    assert(not ok and tostring(err):find("does not support", 1, true))
+  end
+end
+local invalid_ok, invalid_err = pcall(mqtt.publish, {
+  url = "mqtt://127.0.0.1:1/vectis", body = false,
+})
+assert(not invalid_ok and tostring(invalid_err):find("string body", 1, true))
+local curl = require("curl")
+local perform = curl.perform
+curl.perform = function(opts)
+  assert(opts.method == "POST" and opts.upload == false)
+  assert(opts.protocols == "mqtt" and opts.body == "hello")
+  return {ok = true}
+end
+local opts = {url = "mqtt://127.0.0.1:1/vectis", message = "hello",
+              method = "GET", upload = true}
+assert(mqtt.publish(opts).ok)
+assert(opts.method == "GET" and opts.upload and opts.body == nil)
+curl.perform = perform
+
 local refused = mqtt.publish({
   url = "mqtt://127.0.0.1:1/vectis",
   message = "hello mqtt\n",
@@ -48,4 +73,12 @@ execute_process(COMMAND "${VECTIS_BIN}" "${script}"
                 ERROR_VARIABLE mqtt_stderr)
 if(NOT mqtt_result EQUAL 0)
   message(FATAL_ERROR "vectis MQTT Lua smoke failed: ${mqtt_stdout}${mqtt_stderr}")
+endif()
+
+execute_process(COMMAND "${PYTHON}" -B "${SOURCE_DIR}/tests/mqtt_publish.py"
+                        "${VECTIS_BIN}" "${WORK_DIR}"
+                RESULT_VARIABLE wire_result
+                OUTPUT_VARIABLE wire_stdout ERROR_VARIABLE wire_stderr)
+if(NOT wire_result EQUAL 0)
+  message(FATAL_ERROR "MQTT wire regression failed: ${wire_stdout}${wire_stderr}")
 endif()

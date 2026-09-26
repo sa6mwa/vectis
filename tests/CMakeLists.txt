@@ -369,10 +369,13 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_http PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME vectis_lua_mqtt
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DPYTHON=${Python3_EXECUTABLE}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/mqtt.cmake")
   set_tests_properties(vectis_lua_mqtt PROPERTIES
     LABELS "lua;smoke;local"

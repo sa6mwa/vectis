@@ -86,13 +86,17 @@ function M.publish(first, second)
   if opts.body == nil and opts.message ~= nil then
     opts.body = opts.message
   end
-  if opts.body == nil and opts.body_path == nil and opts.upload_path == nil then
-    error("vectis.mqtt.publish requires body, payload, message, body_path, or upload_path", 2)
+  if opts.body_path ~= nil or opts.upload_path ~= nil then
+    error("vectis.mqtt.publish does not support body_path or upload_path; use an in-memory body, payload, or message", 2)
+  end
+  if type(opts.body) ~= "string" then
+    error("vectis.mqtt.publish requires a string body, payload, or message", 2)
   end
   if opts.protocols == nil then
     opts.protocols = "mqtt"
   end
-  opts.upload = true
+  opts.method = "POST"
+  opts.upload = false
   return M.normalize(curl.perform(opts))
 end
 
