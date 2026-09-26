@@ -17453,13 +17453,6 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   has_streaming_response = vectis_lua_curl_prepare_schema(
       lua, 0, &response_schema_index, &response_record_index, &response_schema,
       &response_record);
-  if (!has_multipart && upload_path == NULL && !has_streaming_upload &&
-      !vectis_lua_curl_has_table_field(lua, 1, "smtp") &&
-      !vectis_lua_table_bool(lua, 1, "upload", 0) &&
-      !vectis_lua_curl_prepare_nonpost_body(lua, 1, method, &body)) {
-    vectis_lua_curl_buffer_free(&body);
-    return luaL_error(lua, "curl upload body allocation failed");
-  }
   if (upload_path == NULL) {
     (void)vectis_lua_curl_apply_upload(
         lua, NULL, 1, NULL, vectis_lua_curl_has_table_field(lua, 1, "smtp"),
@@ -17646,6 +17639,29 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   }
   if (has_streaming_upload) {
     is_upload = 1;
+  }
+  /* Delay the buffered non-POST copy until setup has succeeded, so caught
+   * option and file errors cannot strand a native body allocation. */
+  if (!has_multipart && upload_path == NULL && !has_streaming_upload &&
+      !vectis_lua_curl_has_table_field(lua, 1, "smtp") &&
+      !vectis_lua_table_bool(lua, 1, "upload", 0) &&
+      !vectis_lua_curl_prepare_nonpost_body(lua, 1, method, &body)) {
+    curl_slist_free_all(headers);
+    curl_slist_free_all(recipients);
+    curl_mime_free(mime);
+    curl_easy_cleanup(curl);
+    if (download_file != NULL)
+      (void)fclose(download_file);
+    if (file_upload.file != NULL)
+      (void)fclose(file_upload.file);
+    if (has_streaming_response)
+      lonejson_curl_parse_cleanup(&json_response);
+    if (has_streaming_upload)
+      lonejson_curl_upload_cleanup(&json_upload);
+    vectis_lua_curl_buffer_free(&body);
+    vectis_lua_curl_buffer_free(&response);
+    vectis_lua_curl_buffer_free(&response_headers);
+    return luaL_error(lua, "curl upload body allocation failed");
   }
   vectis_lua_curl_apply_method(
       lua, curl, 1, method, is_smtp, has_streaming_upload,

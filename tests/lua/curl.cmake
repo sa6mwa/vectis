@@ -78,6 +78,24 @@ for _, headers in ipairs({
   assert(tostring(err):find("curl header", 1, true))
 end
 
+-- Catch setup errors after requesting a large buffered upload. Memory gates
+-- must observe no stranded native copy when Lua catches these errors.
+local setup_body = ("x"):rep(1024 * 1024)
+for _, method in ipairs({"PUT", "PATCH"}) do
+  for attempt = 1, 3 do
+    local ok, err = pcall(curl.perform, {
+      url = body_url, method = method, body = setup_body, protocols = "typo",
+    })
+    assert(not ok and tostring(err):find("invalid curl protocols", 1, true))
+    ok, err = pcall(curl.perform, {
+      url = body_url, method = method, body = setup_body,
+      download_path = arg[1] .. "/missing/output",
+    })
+    assert(not ok and tostring(err):find("failed to open download_path", 1, true))
+  end
+end
+collectgarbage("collect")
+
 local decoded = curl.json({
   url = json_url,
   protocols = "file",
