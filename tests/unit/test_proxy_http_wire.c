@@ -1,4 +1,5 @@
 #include "vectis_proxy_http_wire.h"
+#include "vectis_proxy_response.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -10,6 +11,43 @@ static void line(vectis_proxy_http_response *response, const char *value) {
   assert(vectis_proxy_http_response_header(response, value, strlen(value),
                                            &event,
                                            NULL) == VECTIS_PROXY_HEADER_OK);
+}
+
+static vectis_status rewrite_no_content(vectis_proxy_response *response,
+                                        void *userdata, vectis_error *error) {
+  return vectis_proxy_response_set_status(response, *(const int *)userdata,
+                                          error);
+}
+
+static void test_head_rewritten_to_no_content(int final_status) {
+  vectis_proxy_http_response response;
+  vectis_proxy_headers headers;
+  vectis_proxy_http_wire_plan plan;
+  vectis_error error;
+  int status;
+
+  vectis_proxy_http_response_init(&response, 1);
+  line(&response, "HTTP/1.1 200 OK\r\n");
+  line(&response, "Content-Length: 123\r\n");
+  line(&response, "\r\n");
+  vectis_proxy_headers_init(&headers);
+  assert(vectis_proxy_headers_sanitize_response(&response.headers, &headers) ==
+         VECTIS_PROXY_HEADER_OK);
+  assert(vectis_proxy_response_apply(&response, &headers, rewrite_no_content,
+                                     &final_status, &status,
+                                     &error) == VECTIS_OK);
+  assert(status == final_status);
+  response.status = status;
+  assert(vectis_proxy_http_wire_plan_build(&response, &headers, 1, &plan,
+                                           &error) == VECTIS_OK);
+  assert(!plan.chunked && !plan.body_allowed);
+  assert(strstr(plan.head, final_status == 204 ? "HTTP/1.1 204 "
+                                               : "HTTP/1.1 205 ") == plan.head);
+  assert(strstr(plan.head, "Content-Length:") == NULL);
+  assert(strstr(plan.head, "Transfer-Encoding:") == NULL);
+  vectis_proxy_http_wire_plan_cleanup(&plan);
+  vectis_proxy_headers_cleanup(&headers);
+  vectis_proxy_http_response_cleanup(&response);
 }
 
 static void test_http2_chunked_with_trailers(void) {
@@ -165,6 +203,8 @@ static void test_in_place_chunk(void) {
 }
 
 int main(void) {
+  test_head_rewritten_to_no_content(204);
+  test_head_rewritten_to_no_content(205);
   test_http2_chunked_with_trailers();
   test_fixed_and_bodyless();
   test_in_place_chunk();

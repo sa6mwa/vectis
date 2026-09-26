@@ -189,7 +189,8 @@ vectis_status vectis_proxy_http_wire_plan_build(
     if (!vectis_proxy_http_wire_append(plan->head, capacity, &used,
                                        "Transfer-Encoding: chunked\r\n", 28u))
       goto invalid;
-  } else if (response->has_content_length &&
+  } else if (response->has_content_length && response->status != 204 &&
+             response->status != 205 &&
              (body_allowed || response->head_request ||
               response->status == 304)) {
     count =
