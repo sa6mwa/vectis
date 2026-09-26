@@ -94,8 +94,10 @@ static void *origin_main(void *userdata) {
     used += (size_t)got;
     request[used] = '\0';
   } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
-  assert(strstr(request, "GET /alternate/changed/a%2Fb?x=1&x=2 HTTP/1.1\r\n") !=
-         NULL);
+  assert(
+      strstr(request,
+             "GET /alternate/changed/a%2Fb?x=1&x=2&hash=C%23 HTTP/1.1\r\n") !=
+      NULL);
   assert(strstr(request, "Host: public.example\r\n") != NULL ||
          strstr(request, "host: public.example\r\n") != NULL);
   assert(strstr(request, "X-Trace: rewritten\r\n") != NULL ||
@@ -396,7 +398,8 @@ static vectis_status rewrite_first(const vectis_proxy_inbound *in,
   assert(vectis_proxy_outbound_select_target(out, 1u, error) == VECTIS_OK);
   assert(vectis_proxy_outbound_set_path(out, "/changed/a%2Fb", error) ==
          VECTIS_OK);
-  assert(vectis_proxy_outbound_set_query(out, "x=1&x=2", error) == VECTIS_OK);
+  assert(vectis_proxy_outbound_set_query(out, "x=1&x=2&hash=C%23", error) ==
+         VECTIS_OK);
   assert(vectis_proxy_outbound_set_host(out, "public.example", error) ==
          VECTIS_OK);
   assert(vectis_proxy_outbound_set_header(out, "X-Trace", "rewritten", error) ==

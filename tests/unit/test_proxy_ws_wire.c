@@ -60,6 +60,11 @@ static void test_response(void) {
       "\201\004pong";
   static const unsigned char bad_status[] =
       "HTTP/2 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n";
+  static const unsigned char http10_rejection[] =
+      "HTTP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"site\"\r\n"
+      "Content-Length: 2\r\n\r\nno";
+  static const unsigned char http10_upgrade[] =
+      "HTTP/1.0 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n";
   static const unsigned char bad_control[] =
       "HTTP/1.1 101 Switching Protocols\r\nX-A: yes\000no\r\n\r\n";
   vectis_proxy_headers fields;
@@ -93,6 +98,22 @@ static void test_response(void) {
   result = vectis_proxy_ws_wire_response_head(
       bad_status, sizeof(bad_status) - 1u, &head_length, &status, &fields,
       &reason);
+  assert(result == VECTIS_PROXY_WS_HEAD_INVALID && reason != NULL);
+  assert(fields.count == 0u);
+
+  vectis_proxy_headers_init(&fields);
+  result = vectis_proxy_ws_wire_response_head(
+      http10_rejection, sizeof(http10_rejection) - 1u, &head_length, &status,
+      &fields, &reason);
+  assert(result == VECTIS_PROXY_WS_HEAD_COMPLETE);
+  assert(status == 401u && fields.count == 2u);
+  assert(head_length < sizeof(http10_rejection) - 1u);
+  vectis_proxy_headers_cleanup(&fields);
+
+  vectis_proxy_headers_init(&fields);
+  result = vectis_proxy_ws_wire_response_head(
+      http10_upgrade, sizeof(http10_upgrade) - 1u, &head_length, &status,
+      &fields, &reason);
   assert(result == VECTIS_PROXY_WS_HEAD_INVALID && reason != NULL);
   assert(fields.count == 0u);
 

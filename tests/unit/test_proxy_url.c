@@ -39,6 +39,8 @@ int main(void) {
   check("https://upstream.test/base", "/", "", "/base/", "upstream.test");
   check("https://upstream.test/", "/raw%3Avalue", "q=a?b", "/raw%3Avalue?q=a?b",
         "upstream.test");
+  check("https://upstream.test", "/", "q=C%23&url=https%3A%2F%2Fx%2F%23part",
+        "/?q=C%23&url=https%3A%2F%2Fx%2F%23part", "upstream.test");
   reject("https://upstream.test", "/a%2e%2e/..", NULL);
   reject("https://upstream.test", "/a%252e", NULL);
   reject("https://upstream.test", "/good", "x=%0d%0aInjected:1");

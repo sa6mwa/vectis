@@ -79,10 +79,12 @@ static void *origin_main(void *userdata) {
     read_request(fd);
     if (sequence == 0) {
       send_all(fd,
-               "HTTP/1.1 403 Forbidden\r\nContent-Length: 1048576\r\n"
-               "Connection: close\r\nX-Reason: denied\r\n\r\nA",
-               strlen("HTTP/1.1 403 Forbidden\r\nContent-Length: 1048576\r\n"
-                      "Connection: close\r\nX-Reason: denied\r\n\r\nA"));
+               "HTTP/1.0 403 Forbidden\r\nContent-Length: 1048576\r\n"
+               "Connection: close\r\nX-Reason: denied\r\n"
+               "WWW-Authenticate: Basic realm=\"site\"\r\n\r\nA",
+               strlen("HTTP/1.0 403 Forbidden\r\nContent-Length: 1048576\r\n"
+                      "Connection: close\r\nX-Reason: denied\r\n"
+                      "WWW-Authenticate: Basic realm=\"site\"\r\n\r\nA"));
       assert(read(origin->resume_pipe[0], &resume, 1u) == 1);
       memset(chunk, 'A', sizeof(chunk));
       for (sent = 1u; sent < LARGE_BODY; sent += sizeof(chunk)) {
@@ -224,6 +226,7 @@ static void test_fixed(unsigned short port, int resume_pipe) {
   assert(strstr(head, "X-Modified: yes\r\n") != NULL);
   assert(strstr(head, "Content-Length: 1048576\r\n") != NULL);
   assert(strstr(head, "X-Reason: denied\r\n") != NULL);
+  assert(strstr(head, "WWW-Authenticate: Basic realm=\"site\"\r\n") != NULL);
   received = used - (size_t)(boundary + 4u - head);
   if (received == 0u) {
     got = recv(fd, body, 1u, 0);

@@ -23,6 +23,9 @@ static int vectis_proxy_query_valid(const char *query) {
   }
   for (cursor = (const unsigned char *)query; *cursor != '\0'; ++cursor) {
     value = *cursor;
+    if (value == '#') {
+      return 0;
+    }
     if (value == '%') {
       if (!vectis_proxy_query_hex(cursor[1]) || cursor[1] == '\0' ||
           !vectis_proxy_query_hex(cursor[2]) || cursor[2] == '\0') {
@@ -33,7 +36,7 @@ static int vectis_proxy_query_valid(const char *query) {
       value = (unsigned char)((hi << 4) | lo);
       cursor += 2u;
     }
-    if (value < 0x20u || value == 0x7fu || value == '\\' || value == '#') {
+    if (value < 0x20u || value == 0x7fu || value == '\\') {
       return 0;
     }
   }

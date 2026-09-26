@@ -149,8 +149,10 @@ vectis_proxy_ws_wire_request(const char *request_target, const char *authority,
 static int vectis_proxy_ws_wire_status(const char *line, unsigned *status) {
   const char *number;
   const char *cursor;
+  int http10;
 
-  if (strncmp(line, "HTTP/1.1 ", 9u) != 0)
+  http10 = strncmp(line, "HTTP/1.0 ", 9u) == 0;
+  if (!http10 && strncmp(line, "HTTP/1.1 ", 9u) != 0)
     return 0;
   number = line + 9u;
   if (number[0] < '1' || number[0] > '5' || number[1] < '0' ||
@@ -163,7 +165,7 @@ static int vectis_proxy_ws_wire_status(const char *line, unsigned *status) {
   }
   *status = (unsigned)(number[0] - '0') * 100u +
             (unsigned)(number[1] - '0') * 10u + (unsigned)(number[2] - '0');
-  return 1;
+  return !http10 || *status != 101u;
 }
 
 vectis_proxy_ws_head_result vectis_proxy_ws_wire_response_head(
