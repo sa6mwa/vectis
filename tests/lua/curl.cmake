@@ -96,6 +96,25 @@ for _, method in ipairs({"PUT", "PATCH"}) do
 end
 collectgarbage("collect")
 
+local worker = require("vectis.curl_worker")
+for attempt = 1, 3 do
+  for _, headers in ipairs({
+    {"X-Test: valid", false},
+    {"X-Test: valid", ["X-Invalid"] = false},
+    {["X-Valid"] = "valid", ["X-Invalid"] = false},
+  }) do
+    local ok, err = pcall(worker.http_request, {url = body_url, headers = headers})
+    assert(not ok and tostring(err):find("header values must be strings", 1, true))
+  end
+end
+local event = assert(worker.http_request({
+  url = "http://localhost/", headers = {"X-Test: valid", ["X-Dict"] = "valid"},
+}))
+assert(event.kind == worker.HTTP_KIND and event.expects_reply)
+assert(event.payload:find("X-Test: valid", 1, true))
+assert(event.payload:find("X-Dict: valid", 1, true))
+collectgarbage("collect")
+
 local decoded = curl.json({
   url = json_url,
   protocols = "file",

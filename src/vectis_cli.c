@@ -20024,6 +20024,10 @@ static int vectis_lua_curl_worker_headers_from_table(
   count = lua_rawlen(lua, -1);
   for (i = 1u; i <= count; ++i) {
     lua_rawgeti(lua, -1, (lua_Integer)i);
+    if (!lua_isstring(lua, -1)) {
+      vectis_lua_curl_worker_headers_cleanup(headers);
+      return luaL_error(lua, "curl worker header values must be strings");
+    }
     value = luaL_checkstring(lua, -1);
     if (!vectis_lua_curl_worker_headers_append(headers, value)) {
       lua_pop(lua, 2);
@@ -20036,6 +20040,10 @@ static int vectis_lua_curl_worker_headers_from_table(
   while (lua_next(lua, -2) != 0) {
     if (lua_type(lua, -2) == LUA_TSTRING) {
       key = lua_tostring(lua, -2);
+      if (!lua_isstring(lua, -1)) {
+        vectis_lua_curl_worker_headers_cleanup(headers);
+        return luaL_error(lua, "curl worker header values must be strings");
+      }
       value = luaL_checkstring(lua, -1);
       line = vectis_lua_curl_worker_header_line(key, value);
       if (line == NULL ||
