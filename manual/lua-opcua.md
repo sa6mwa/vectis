@@ -345,6 +345,17 @@ The callback reference is retained by the client until
 structured OPC UA callback errors returned by the next `client:iterate(...)`
 call.
 
+Client callbacks must not call `close()`, `disconnect()`, `connect()` or
+`iterate()` on the same client while an operation is active. These calls raise
+`opcua client is busy`; explicitly calling the `__gc` metamethod is guarded too.
+Request the lifecycle change in the callback, then perform it after the enclosing
+operation returns. Closing after completion remains idempotent. Async callback
+chaining remains supported during normal operation.
+
+Native close can dispatch pending callbacks before it returns. During teardown,
+all methods using that client's native handle raise `opcua client is busy closing`.
+Callback buffers and owning Lua states remain alive until teardown finishes.
+
 Event-monitor callbacks follow the same retention and error rules.
 `client:monitor_events()` receives compact event data:
 

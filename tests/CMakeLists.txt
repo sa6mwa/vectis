@@ -135,6 +135,12 @@ if(TARGET vectis_bin)
     LABELS "lua;smoke;local;integration"
     TIMEOUT 30)
 
+  add_test(NAME vectis_opcua_lua_reentry
+           COMMAND vectis_opcua_lua_e2e
+                   "${CMAKE_SOURCE_DIR}/tests/lua/opcua_reentry.lua")
+  set_tests_properties(vectis_opcua_lua_reentry PROPERTIES
+    LABELS "lua;local;integration" TIMEOUT 15)
+
   add_test(NAME vectis_cli_version COMMAND vectis_bin --version)
   set_tests_properties(vectis_cli_version PROPERTIES
     LABELS "smoke;local"

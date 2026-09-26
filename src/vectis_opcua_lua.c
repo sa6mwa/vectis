@@ -86,6 +86,8 @@ typedef struct vectis_opcua_lua_client {
   cpkt_opcua_client *client;
   lua_State *owner;
   int callback_error_ref;
+  unsigned int callback_depth;
+  int closing;
   vectis_opcua_lua_monitor_callback *monitors;
   vectis_opcua_lua_async_callback *async_callbacks;
 } vectis_opcua_lua_client;
@@ -2588,6 +2590,21 @@ static int vectis_opcua_lua_client_take_callback_error(
   return 2;
 }
 
+/* Never destroy a client or reenter its event loop from its Lua callback.
+ * Keep the guard until pcall returns, including when the callback raises. */
+static void vectis_opcua_lua_client_call(lua_State *lua,
+                                         vectis_opcua_lua_client *client) {
+  int result;
+
+  ++client->callback_depth;
+  result = lua_pcall(lua, 1, 0, 0);
+  --client->callback_depth;
+  if (result != LUA_OK) {
+    vectis_opcua_lua_client_set_callback_error(client, lua_tostring(lua, -1));
+    lua_pop(lua, 1);
+  }
+}
+
 static void vectis_opcua_lua_push_async_result_base(
     lua_State *lua, cpkt_opcua_request_id request_id, cpkt_opcua_result result,
     cpkt_opcua_status status) {
@@ -2653,11 +2670,7 @@ static void vectis_opcua_lua_async_value_cb(cpkt_opcua_request_id request_id,
     lua_pushinteger(lua, (lua_Integer)callback->required_string_size);
     lua_setfield(lua, -2, "required_string_size");
   }
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
   vectis_opcua_lua_async_callback_free(callback);
 }
@@ -2680,11 +2693,7 @@ static void vectis_opcua_lua_async_status_cb(cpkt_opcua_request_id request_id,
   vectis_opcua_lua_client_detach_async_callback(callback->client, callback);
   lua_rawgeti(lua, LUA_REGISTRYINDEX, callback->callback_ref);
   vectis_opcua_lua_push_async_result_base(lua, request_id, result, status);
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
   vectis_opcua_lua_async_callback_free(callback);
 }
@@ -2733,11 +2742,7 @@ static void vectis_opcua_lua_async_browse_cb(cpkt_opcua_request_id request_id,
   }
   lua_pushinteger(lua, (lua_Integer)callback->browse_entry_count);
   lua_setfield(lua, -2, "entry_count");
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
   vectis_opcua_lua_async_callback_free(callback);
 }
@@ -2779,11 +2784,7 @@ static void vectis_opcua_lua_async_call_cb(cpkt_opcua_request_id request_id,
     }
     lua_setfield(lua, -2, "required_string_sizes");
   }
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
   vectis_opcua_lua_async_callback_free(callback);
 }
@@ -2815,11 +2816,7 @@ static void vectis_opcua_lua_async_node_cb(cpkt_opcua_request_id request_id,
     lua_pushinteger(lua, (lua_Integer)callback->required_node_id_size);
     lua_setfield(lua, -2, "required_node_id_size");
   }
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
   vectis_opcua_lua_async_callback_free(callback);
 }
@@ -2852,11 +2849,7 @@ vectis_opcua_lua_data_change_cb(cpkt_opcua_subscription_id subscription_id,
   lua_setfield(lua, -2, "opcua_status");
   vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
                                     cpkt_opcua_status_name(status));
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
 }
 
@@ -2905,11 +2898,7 @@ vectis_opcua_lua_event_cb(cpkt_opcua_subscription_id subscription_id,
   lua_setfield(lua, -2, "opcua_status");
   vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
                                     cpkt_opcua_status_name(status));
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
 }
 
@@ -2955,11 +2944,7 @@ vectis_opcua_lua_event_fields_cb(cpkt_opcua_subscription_id subscription_id,
   lua_setfield(lua, -2, "opcua_status");
   vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
                                     cpkt_opcua_status_name(status));
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    vectis_opcua_lua_client_set_callback_error(callback->client,
-                                               lua_tostring(lua, -1));
-    lua_pop(lua, 1);
-  }
+  vectis_opcua_lua_client_call(lua, callback->client);
   lua_settop(lua, top);
 }
 
@@ -2969,22 +2954,37 @@ static vectis_opcua_lua_client *vectis_opcua_lua_check_client(lua_State *lua,
                                                     VECTIS_OPCUA_CLIENT);
 }
 
+static void vectis_opcua_lua_client_check_idle(lua_State *lua, int index) {
+  vectis_opcua_lua_client *client;
+
+  client = vectis_opcua_lua_check_client(lua, index);
+  if (client->closing || client->callback_depth != 0u) {
+    (void)luaL_error(lua, "opcua client is busy; wait for the active operation "
+                          "to return before changing its lifecycle");
+  }
+}
+
 static cpkt_opcua_client *vectis_opcua_lua_client_handle(lua_State *lua,
                                                          int index) {
-  cpkt_opcua_client *client;
+  vectis_opcua_lua_client *client;
 
-  client = vectis_opcua_lua_check_client(lua, index)->client;
-  if (client == NULL) {
+  client = vectis_opcua_lua_check_client(lua, index);
+  if (client->closing) {
+    (void)luaL_error(lua, "opcua client is busy closing");
+  }
+  if (client->client == NULL) {
     (void)luaL_error(lua, "opcua client is closed");
   }
-  return client;
+  return client->client;
 }
 
 static int vectis_opcua_lua_client_close(lua_State *lua) {
   vectis_opcua_lua_client *client;
 
   client = vectis_opcua_lua_check_client(lua, 1);
+  vectis_opcua_lua_client_check_idle(lua, 1);
   if (client->client != NULL) {
+    client->closing = 1;
     cpkt_opcua_client_free(client->client);
     client->client = NULL;
   }
@@ -2998,6 +2998,7 @@ static int vectis_opcua_lua_client_close(lua_State *lua) {
   }
   vectis_opcua_lua_release_owners(lua, 1);
   client->owner = NULL;
+  client->closing = 0;
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -3011,6 +3012,8 @@ static int vectis_opcua_lua_client_new(lua_State *lua) {
   client->client = NULL;
   client->owner = lua;
   client->callback_error_ref = LUA_NOREF;
+  client->callback_depth = 0u;
+  client->closing = 0;
   client->monitors = NULL;
   client->async_callbacks = NULL;
   luaL_getmetatable(lua, VECTIS_OPCUA_CLIENT);
@@ -3032,6 +3035,7 @@ static int vectis_opcua_lua_client_new(lua_State *lua) {
 static int vectis_opcua_lua_client_connect(lua_State *lua) {
   cpkt_opcua_client *client;
 
+  vectis_opcua_lua_client_check_idle(lua, 1);
   client = vectis_opcua_lua_client_handle(lua, 1);
   return vectis_opcua_lua_connect_client(lua, client, 2, 3);
 }
@@ -3139,6 +3143,7 @@ static int vectis_opcua_lua_client_disconnect(lua_State *lua) {
   cpkt_opcua_status status;
   cpkt_opcua_result result;
 
+  vectis_opcua_lua_client_check_idle(lua, 1);
   client = vectis_opcua_lua_client_handle(lua, 1);
   status = 0u;
   result = cpkt_opcua_client_disconnect(client, &status);
@@ -3159,6 +3164,7 @@ static int vectis_opcua_lua_client_iterate(lua_State *lua) {
   int callback_result_count;
 
   client_ud = vectis_opcua_lua_check_client(lua, 1);
+  vectis_opcua_lua_client_check_idle(lua, 1);
   client = vectis_opcua_lua_client_handle(lua, 1);
   timeout_ms = lua_isnoneornil(lua, 2)
                    ? 0u

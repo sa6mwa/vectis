@@ -10,6 +10,12 @@ static void *tracked_malloc(size_t size) {
     ++allocations;
   return p;
 }
+static void *tracked_calloc(size_t count, size_t size) {
+  void *p = calloc(count, size);
+  if (p != NULL)
+    ++allocations;
+  return p;
+}
 static void tracked_free(void *p) {
   if (p != NULL) {
     assert(allocations != 0u);
@@ -20,9 +26,11 @@ static void tracked_free(void *p) {
 
 /* Isolate array helper ownership across Lua nonlocal error unwinding. */
 #define malloc tracked_malloc
+#define calloc tracked_calloc
 #define free tracked_free
 #include "../../src/vectis_opcua_lua.c"
 #undef malloc
+#undef calloc
 #undef free
 
 static int arrays(lua_State *lua) {
@@ -45,11 +53,61 @@ static int arrays(lua_State *lua) {
   return 1;
 }
 
+/* Exercise every client callback path with the real Lua receiver shell. */
+static int invoke_callback(lua_State *lua) {
+  vectis_opcua_lua_client *client = vectis_opcua_lua_check_client(lua, 1);
+  int kind = (int)luaL_checkinteger(lua, 3);
+  luaL_checktype(lua, 2, LUA_TFUNCTION);
+  if (kind <= 5) {
+    vectis_opcua_lua_async_callback *callback =
+        vectis_opcua_lua_async_callback_new(lua, client, 2);
+    vectis_opcua_lua_client_keep_async_callback(client, callback);
+    switch (kind) {
+    case 1:
+      vectis_opcua_lua_async_value_cb(1u, CPKT_OPCUA_ERR_UPSTREAM, NULL, 0u,
+                                      callback);
+      break;
+    case 2:
+      vectis_opcua_lua_async_status_cb(1u, CPKT_OPCUA_OK, 0u, callback);
+      break;
+    case 3:
+      vectis_opcua_lua_async_browse_cb(1u, CPKT_OPCUA_OK, 0u, callback);
+      break;
+    case 4:
+      vectis_opcua_lua_async_call_cb(1u, CPKT_OPCUA_OK, NULL, 0u, 0u, callback);
+      break;
+    case 5:
+      vectis_opcua_lua_async_node_cb(1u, CPKT_OPCUA_ERR_UPSTREAM, NULL, 0u,
+                                     callback);
+      break;
+    }
+  } else {
+    vectis_opcua_lua_monitor_callback *callback =
+        vectis_opcua_lua_monitor_callback_new(lua, client, 2, 1u);
+    cpkt_opcua_value value;
+    cpkt_opcua_event event;
+    cpkt_opcua_value_integer(&value, 7L);
+    memset(&event, 0, sizeof(event));
+    vectis_opcua_lua_client_keep_monitor_callback(client, callback);
+    if (kind == 6)
+      vectis_opcua_lua_data_change_cb(1u, 1u, &value, 0u, callback);
+    else if (kind == 7)
+      vectis_opcua_lua_event_cb(1u, 1u, &event, 0u, callback);
+    else
+      vectis_opcua_lua_event_fields_cb(1u, 1u, NULL, 0u, 0u, callback);
+  }
+  return 0;
+}
+
 int main(void) {
   lua_State *lua = luaL_newstate();
   int i;
   assert(lua != NULL);
   luaL_openlibs(lua);
+  assert(luaopen_opcua(lua) == 1);
+  lua_setglobal(lua, "opcua");
+  lua_pushcfunction(lua, invoke_callback);
+  lua_setglobal(lua, "invoke_callback");
   lua_pushcfunction(lua, arrays);
   lua_setglobal(lua, "arrays");
   for (i = 0; i < 30; ++i) {
@@ -73,6 +131,29 @@ int main(void) {
                             "assert(not coroutine.resume(co)); co=nil; "
                             "collectgarbage('collect')\n") == LUA_OK);
   assert(allocations == 0u);
+  {
+    int rc = luaL_dostring(
+        lua,
+        "for kind=1,8 do\n"
+        "  local client=assert(opcua.client()); local calls=0\n"
+        "  invoke_callback(client,function()\n"
+        "    calls=calls+1; collectgarbage('collect')\n"
+        "    for _,name in "
+        "ipairs({'close','disconnect','connect','iterate','__gc'}) do\n"
+        "      local fn=name=='__gc' and getmetatable(client).__gc or "
+        "client[name]\n"
+        "      local ok,err=pcall(fn,client)\n"
+        "      assert(not ok and tostring(err):find('opcua client is "
+        "busy',1,true))\n"
+        "    end\n"
+        "  end,kind)\n"
+        "  assert(calls==1); assert(client:close()); assert(client:close())\n"
+        "end\n");
+    if (rc != LUA_OK)
+      fprintf(stderr, "%s\n", lua_tostring(lua, -1));
+    assert(rc == LUA_OK);
+    assert(allocations == 0u);
+  }
   lua_close(lua);
   assert(allocations == 0u);
   return 0;
