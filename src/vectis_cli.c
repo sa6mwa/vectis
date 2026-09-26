@@ -7239,6 +7239,7 @@ static int vectis_lua_app_seed_logging(lua_State *lua, int app_index,
   int subs_index;
   int rc;
   const char *message;
+  pslog_lua_logger_view logger_view;
 
   if (server == NULL || config == NULL || app_name == NULL) {
     vectis_cli_error_set(error, VECTIS_ERR_INVALID,
@@ -7297,10 +7298,26 @@ static int vectis_lua_app_seed_logging(lua_State *lua, int app_index,
     lua_settop(lua, base);
     return 0;
   }
-  rc = pslog_lua_ref_logger(lua, logger_index, NULL, 0u, &server->log_seed);
+  memset(&logger_view, 0, sizeof(logger_view));
+  logger_view.size = sizeof(logger_view);
+  logger_view.abi_version = PSLOG_LUA_INTEROP_ABI_VERSION;
+  rc = pslog_lua_check_logger(lua, logger_index, &logger_view);
   if (rc != 0) {
     vectis_cli_error_set(error, VECTIS_ERR_INVALID,
                          "Vectis log seed is not a live pslog logger");
+    lua_settop(lua, base);
+    return 0;
+  }
+  if ((logger_view.flags & PSLOG_LUA_LOGGER_NATIVE_SINK) == 0u) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Vectis log seed requires a native pslog sink");
+    lua_settop(lua, base);
+    return 0;
+  }
+  rc = pslog_lua_ref_logger(lua, logger_index, NULL, 0u, &server->log_seed);
+  if (rc != 0) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "failed to retain Vectis log seed");
     lua_settop(lua, base);
     return 0;
   }

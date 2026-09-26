@@ -119,3 +119,8 @@ function as `output`: function sinks are Lua-state-bound and cannot safely
 receive records from Vectis native lifecycle threads. Use a pslog file or
 standard-output sink for propagated logging; direct `pslog` and `log.new()`
 remain available for Lua-only function sinks.
+
+The native app bridge also checks libpslog's `PSLOG_LUA_LOGGER_NATIVE_SINK`
+capability before retaining a seed. Lua-bound or unknown custom sinks are
+rejected with `ERR_INVALID`, including after logger derivation. This validates
+the effective sink rather than relying only on the options used to create it.

@@ -16,7 +16,8 @@ backend shutdown and completion of outstanding log callbacks.
 
 This report records gaps in the current SDK interfaces. It is not a claim
 that Vectis already implements this contract everywhere.
-The dependency pins inspected here are c.pkt.systems 0.10.0 and libpslog 0.10.0.
+The original audit inspected c.pkt.systems 0.10.0 and libpslog 0.10.0.
+Vectis now consumes libpslog 0.12.0; c.pkt.systems remains at 0.10.0.
 
 ## c.pkt.systems OPC UA: constructor-time hook is missing
 
@@ -106,18 +107,19 @@ share registration. Verify severity conversion explicitly instead of casting
 ggml's enum to the facade enum; normalize continuations without unbounded
 line accumulation and account for concurrent producers.
 
-## libpslog Lua interop: native-sink capability is not exposed
+## libpslog Lua interop: resolved in 0.12.0
 
-The SDK's `pslog_lua_check_logger()` / `pslog_lua_ref_logger()` validate and
-retain a Lua logger, but do not reveal whether its sink invokes Lua. The
-borrowed-view `flags` field is currently reserved. Native logging threads
-cannot safely invoke a Lua function sink, even if the pslog logger serializes
-its own writes.
+libpslog 0.12.0 exposes `PSLOG_LUA_LOGGER_NATIVE_SINK` through the borrowed
+view flags and `pslog_has_native_output()` for C callers. The capability follows
+derived loggers and describes the effective output. Retained references use
+the main Lua state, so collection of an acquiring coroutine does not leave a
+dangling interop state pointer.
 
-Expose a documented sink capability through the public interop API, propagated
-through derived loggers. A native-thread adapter must reject Lua-bound sinks
-without inspecting private userdata layouts. Retaining the logger must also
-keep the sink's resources valid until native logging has stopped.
+Vectis's native app bridge now checks this positive capability before retaining
+its seed, rejecting Lua-bound or unknown sinks without emitting. Direct Lua
+function logging remains available on its owning Lua thread. This resolves the
+libpslog API gap; it does not install OPC UA/audio constructor hooks or make
+SUS's backend-global callback replacement safe.
 
 ## Local Vectis fixes completed
 
@@ -127,7 +129,12 @@ keep the sink's resources valid until native logging has stopped.
 - The seed's owned sink stays open while derived app/service loggers use it.
   Previously, closing the root after derivation shut down the shared file sink.
 - The live logging test passes in Debug and ASan and fails against the old
-  binary. The full Debug suite passes all 176 tests; formatting also passes.
+  binary. With libpslog 0.12.0, the full Debug suite passes all 177 tests;
+  formatting also passes.
+- The native-sink handoff test covers function rejection, derived logger
+  classification, parent/coroutine collection, and continued Lua-only logging.
+  Debug and ASan pass; Valgrind reports no leaks or errors. Native installed
+  static/shared consumers and the metrics startup performance gate also pass.
 
 ## Remaining Vectis work
 
@@ -135,7 +142,7 @@ keep the sink's resources valid until native logging has stopped.
   logging is available; service lifecycle logging alone does not cover the
   backend itself.
 - Replace SUS's arbitrary log callback with a safe native pslog bridge once
-  sink capability and global callback lifetime are enforceable.
+  global callback lifetime is enforceable; sink capability is now available.
 - Add a logger to XML parsing configuration and use libxml2 context/reader
   error handlers. The current reader uses `XML_PARSE_NONET | XML_PARSE_COMPACT`
   and installs no error handler, so default parser diagnostics are a gap.
