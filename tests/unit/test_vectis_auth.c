@@ -656,6 +656,40 @@ static void test_auth_storage_failures(vectis_app *app) {
   vectis_auth_issued_credential_cleanup(&credential);
 }
 
+static void test_username_bounds(const vectis_auth_store_config *store) {
+  vectis_auth_user_config user;
+  vectis_auth_password_check_config check;
+  vectis_auth_password_check_result result;
+  vectis_error error;
+  char username[VECTIS_AUTH_PRINCIPAL_MAX + 2u];
+
+  vectis_error_clear(&error);
+  memset(username, 'u', sizeof(username));
+  username[VECTIS_AUTH_PRINCIPAL_MAX] = '\0';
+  vectis_auth_user_config_init(&user);
+  user.username = username;
+  user.password = "boundary-password";
+  expect_ok(vectis_auth_user_add_or_update(store, &user, NULL, &error), &error,
+            "enrolls maximum-length readable username");
+  vectis_auth_password_check_config_init(&check);
+  check.store = *store;
+  check.username = username;
+  check.password = user.password;
+  expect_ok(vectis_auth_user_password_check(&check, &result, &error), &error,
+            "checks maximum-length username password");
+  expect(result.authenticated,
+         "maximum-length enrolled username authenticates");
+  username[VECTIS_AUTH_PRINCIPAL_MAX] = 'u';
+  username[VECTIS_AUTH_PRINCIPAL_MAX + 1u] = '\0';
+  expect(vectis_auth_user_add_or_update(store, &user, NULL, &error) ==
+             VECTIS_ERR_INVALID,
+         "rejects username beyond persisted reader capacity");
+  username[VECTIS_AUTH_PRINCIPAL_MAX] = '\0';
+  expect_ok(vectis_auth_user_password_check(&check, &result, &error), &error,
+            "checks stored username after rejected enrollment");
+  expect(result.authenticated, "rejected enrollment preserves existing user");
+}
+
 int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
   char endpoint[4096];
@@ -815,7 +849,8 @@ int main(void) {
 
   vectis_auth_store_config_init(&store);
   store.app = app;
-  store.state_key = "auth/v1/store";
+  /* Exercise the implicit durable key with a separate transient record. */
+  store.state_key = NULL;
   store.transient_state_key = "auth/v1/transient";
   vectis_auth_store_config_init(&empty_store);
   empty_store.app = app;
@@ -830,6 +865,7 @@ int main(void) {
          "uninitialized credentials store has no enrolled email recipient");
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
+  test_username_bounds(&store);
   user_exists = 1;
   status = vectis_auth_user_exists(&store, "dav-user@example.com", &user_exists,
                                    &error);

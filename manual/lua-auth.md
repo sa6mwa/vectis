@@ -46,7 +46,8 @@ assert(vectis.auth.store_init({app = app, state_key = "auth/v1/store"}))
 
 ## Users and credentials
 
-`user_add(opts)` creates or updates a user. It accepts `username`, `password`,
+`user_add(opts)` creates or updates a user. Usernames are limited to 254 bytes.
+It accepts `username`, `password`,
 optional `email`, `totp`, `totp_secret`, `totp_label`, and `totp_issuer` (or
 `issuer`). The result can include a generated password, a TOTP secret and URI,
 and an ANSI TOTP QR rendering.

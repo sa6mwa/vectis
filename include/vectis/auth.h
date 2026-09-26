@@ -274,7 +274,8 @@ struct vectis_auth_routes_config {
 };
 
 typedef struct vectis_auth_user_config {
-  /* Stable local username/principal. */
+  /* Stable local username/principal, at most VECTIS_AUTH_PRINCIPAL_MAX bytes.
+   */
   const char *username;
   /* Optional password. Empty or NULL generates one and returns it in out. */
   const char *password;

@@ -2209,8 +2209,9 @@ vectis_auth_effective_state_store(const vectis_auth_store_config *config) {
 static int
 vectis_auth_has_separate_state_store(const vectis_auth_store_config *config) {
   return config != NULL && config->transient_state_key != NULL &&
-         config->transient_state_key[0] != '\0' && config->state_key != NULL &&
-         strcmp(config->transient_state_key, config->state_key) != 0;
+         config->transient_state_key[0] != '\0' &&
+         strcmp(config->transient_state_key, vectis_auth_store_key(config)) !=
+             0;
 }
 
 static vectis_status vectis_auth_writer_copy_store_arrays(
@@ -6346,6 +6347,11 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
   if (user_config == NULL || user_config->username == NULL ||
       user_config->username[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth username is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strlen(user_config->username) > VECTIS_AUTH_PRINCIPAL_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth username exceeds the principal byte limit");
     return VECTIS_ERR_INVALID;
   }
   if (out != NULL) {
