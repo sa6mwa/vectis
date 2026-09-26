@@ -22784,6 +22784,15 @@ static int vectis_lua_openssl_base64_decode(lua_State *lua) {
                       (unsigned)VECTIS_LUA_OPENSSL_MAX_BYTES);
   }
   out_size = (data_size / 4u) * 3u;
+  padding = 0;
+  if (data[data_size - 1u] == '=') {
+    padding++;
+  }
+  if (data[data_size - 2u] == '=') {
+    padding++;
+  }
+  vectis_lua_openssl_check_bytes(lua, out_size - (size_t)padding,
+                                 "openssl base64 output");
   out = (unsigned char *)malloc(out_size);
   if (out == NULL) {
     return luaL_error(lua, "openssl base64 decode allocation failed");
@@ -22793,19 +22802,11 @@ static int vectis_lua_openssl_base64_decode(lua_State *lua) {
     free(out);
     return luaL_error(lua, "openssl base64 input is invalid");
   }
-  padding = 0;
-  if (data[data_size - 1u] == '=') {
-    padding++;
-  }
-  if (data[data_size - 2u] == '=') {
-    padding++;
-  }
   if ((size_t)decoded < (size_t)padding) {
     free(out);
     return luaL_error(lua, "openssl base64 input is invalid");
   }
   out_size = (size_t)decoded - (size_t)padding;
-  vectis_lua_openssl_check_bytes(lua, out_size, "openssl base64 output");
   lua_pushlstring(lua, (const char *)out, out_size);
   free(out);
   return 1;
@@ -23062,16 +23063,13 @@ static int vectis_lua_openssl_verify(lua_State *lua) {
     signature_size = signature_hex_size / 2u;
     vectis_lua_openssl_check_bytes(lua, signature_size,
                                    "openssl verify signature");
-    decoded_signature = (unsigned char *)malloc(signature_size);
-    if (decoded_signature == NULL) {
-      return luaL_error(lua, "openssl verify signature allocation failed");
-    }
+    /* Keep the decoded bytes rooted on the stack while helpers may throw. */
+    decoded_signature = (unsigned char *)lua_newuserdata(lua, signature_size);
     for (i = 0u; i < signature_size; ++i) {
       hi = vectis_lua_openssl_hex_digit((unsigned char)signature_hex[i * 2u]);
       lo = vectis_lua_openssl_hex_digit(
           (unsigned char)signature_hex[i * 2u + 1u]);
       if (hi < 0 || lo < 0) {
-        free(decoded_signature);
         return luaL_error(lua,
                           "openssl verify signature_hex contains non-hex data");
       }
@@ -23084,7 +23082,6 @@ static int vectis_lua_openssl_verify(lua_State *lua) {
   digest = vectis_lua_openssl_digest(lua, algorithm);
   key = vectis_lua_openssl_public_key(lua, 1);
   if (key == NULL) {
-    free(decoded_signature);
     return 1;
   }
   ctx = EVP_MD_CTX_new();
@@ -23092,13 +23089,11 @@ static int vectis_lua_openssl_verify(lua_State *lua) {
       EVP_DigestVerifyUpdate(ctx, data, data_size) != 1) {
     EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(key);
-    free(decoded_signature);
     return luaL_error(lua, "openssl verify failed");
   }
   result = EVP_DigestVerifyFinal(ctx, signature, signature_size);
   EVP_MD_CTX_free(ctx);
   EVP_PKEY_free(key);
-  free(decoded_signature);
   if (result < 0) {
     return luaL_error(lua, "openssl verify failed");
   }

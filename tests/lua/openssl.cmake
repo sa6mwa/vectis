@@ -56,6 +56,28 @@ assert(openssl.hex_decode("6162630078797a") == "abc\0xyz")
 assert(openssl.base64_encode("hello") == "aGVsbG8=")
 assert(openssl.base64_decode("aGVsbG8=") == "hello")
 
+local byte_limit = 1024 * 1024
+local boundary = ("x"):rep(byte_limit)
+assert(openssl.base64_decode(openssl.base64_encode(boundary)) == boundary)
+local signature_hex = ("00"):rep(byte_limit)
+for attempt = 1, 3 do
+  local ok, err = pcall(openssl.base64_decode, ("A"):rep(1398104))
+  assert(not ok and tostring(err):find("base64 output must be at most", 1, true))
+  for _, algorithm in ipairs({"sha256", "unsupported-digest"}) do
+    ok, err = pcall(openssl.verify, {
+      data = "data", signature_hex = signature_hex,
+      public_key_pem = "not a key", algorithm = algorithm,
+    })
+    assert(not ok)
+    if algorithm == "sha256" then
+      assert(tostring(err):find("failed to parse openssl public key", 1, true))
+    else
+      assert(tostring(err):find("unsupported openssl digest", 1, true))
+    end
+  end
+end
+collectgarbage("collect")
+
 local bad_digest_ok, bad_digest_err = pcall(function()
   openssl.digest_hex("no-such-digest", "abc")
 end)
