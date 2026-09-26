@@ -275,6 +275,7 @@ static void *vectis_smith_cli_render_thread(void *userdata) {
   render = (vectis_smith_cli_render *)userdata;
   renderer = NULL;
   mdf_options_init(&options);
+  options.output_fd = STDOUT_FILENO;
   options.margin_left = 2;
   memset(&source, 0, sizeof(source));
   memset(&sink, 0, sizeof(sink));
@@ -294,7 +295,8 @@ static void *vectis_smith_cli_render_thread(void *userdata) {
     }
     (void)pthread_mutex_unlock(&render->mutex);
     if (mdf_create(MDF_FORMAT_ANSI, &options, &renderer) != MDF_OK ||
-        renderer->render(renderer, &source, &sink) != MDF_OK) {
+        renderer->set_sink(renderer, &sink) != MDF_OK ||
+        renderer->render(renderer, &source) != MDF_OK) {
       if (renderer != NULL)
         renderer->destroy(renderer);
       (void)pthread_mutex_lock(&render->mutex);

@@ -331,6 +331,51 @@ static void test_render_multiple_responses(void) {
   vectis_smith_cli_render_cleanup(&render);
 }
 
+static void test_render_destination(int terminal) {
+  vectis_smith_cli_render render;
+  int fds[2];
+  int saved_stdout;
+  char output[1024];
+  ssize_t length;
+  const char *markdown = "# Destination\n\n**styled** UTF-8: café\n";
+
+  memset(&render, 0, sizeof(render));
+  render.notify_fd = -1;
+  assert(pthread_mutex_init(&render.mutex, NULL) == 0);
+  assert(pthread_cond_init(&render.changed, NULL) == 0);
+  if (terminal) {
+    assert(openpty(&fds[0], &fds[1], NULL, NULL, NULL) == 0);
+  } else {
+    assert(pipe(fds) == 0);
+  }
+  assert(fflush(stdout) == 0);
+  saved_stdout = dup(STDOUT_FILENO);
+  assert(saved_stdout >= 0);
+  assert(dup2(fds[1], STDOUT_FILENO) == STDOUT_FILENO);
+  alarm(10u);
+  assert(vectis_smith_cli_render_append(&render, markdown, strlen(markdown)) ==
+         0);
+  vectis_smith_cli_render_finish(&render);
+  assert(!vectis_smith_cli_render_failed(&render));
+  assert(fflush(stdout) == 0);
+  assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+  assert(close(saved_stdout) == 0);
+  length = read(fds[0], output, sizeof(output) - 1u);
+  alarm(0u);
+  assert(length > 0);
+  output[length] = '\0';
+  assert(strstr(output, "Destination") != NULL);
+  assert(strstr(output, "café") != NULL);
+  if (terminal) {
+    assert(strstr(output, "\033[") != NULL);
+  } else {
+    assert(strchr(output, '\033') == NULL);
+  }
+  assert(close(fds[0]) == 0);
+  assert(close(fds[1]) == 0);
+  vectis_smith_cli_render_cleanup(&render);
+}
+
 static void test_plain_delta_reaches_renderer_before_boundary(void) {
   vectis_smith_cli_render render;
   char output[128];
@@ -854,6 +899,8 @@ static void test_exec_terminal_status(void) {
 }
 
 int main(void) {
+  test_render_destination(0);
+  test_render_destination(1);
   test_exec_terminal_status();
   test_pending_turn_stays_busy();
   test_interactive_response_boundaries();

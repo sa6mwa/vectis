@@ -21,6 +21,12 @@ Direct access remains available through:
 - `terminal.editor(opts)` creates a `softline` editor with a default
   `line_max_len` of `4096` when none is supplied.
 
+The Markdown helpers forward libmdf's `ansi_mode` and `output_fd` options.
+String and callback destinations default to escape-free UTF-8 output. Pass
+`ansi_mode = "on"` for terminal styling, or
+`output_fd = terminal.libs.libmdf.file_descriptor(io.stdout)` when the output
+will be written to stdout and should follow its terminal status.
+
 Unsupported render formats return `nil, err` with Vectis status/source
 metadata. Programmer misuse, such as passing a non-string Markdown value or
 missing stream callbacks, raises a Lua error.

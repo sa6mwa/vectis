@@ -93,7 +93,10 @@ static int render_stream(void) {
     return 1;
   }
 
-  status = renderer->render(renderer, &source, &sink);
+  status = renderer->set_sink(renderer, &sink);
+  if (status == MDF_OK) {
+    status = renderer->render(renderer, &source);
+  }
   if (status != MDF_OK) {
     fprintf(stderr, "render failed: %s: %s\n", mdf_status_string(status),
             renderer->error(renderer));

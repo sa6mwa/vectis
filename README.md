@@ -67,7 +67,7 @@ archive cache. The current expected dependency set is:
 - `cai` 0.6.0 for OpenAI API, agent runtime, Smith preset, tool, MCP, and Lua
   binding sources.
 - `liblql` 0.3.0 for the LQL dependency exposed by `liblockdc` 0.18.0.
-- `libmdf` 0.8.0 for Markdown-to-ANSI/HTML rendering, terminal paging, and Lua
+- `libmdf` 0.13.0 for Markdown-to-ANSI/HTML rendering, terminal paging, and Lua
   binding sources.
 - `softline` 0.6.0 for line editing, terminal prompt UX, and Lua binding
   sources.
