@@ -41,6 +41,8 @@ struct vectis_proxy_http_upstream {
   void *userdata;
   int paused;
   int failed;
+  int head_upload;
+  int head_upload_aborted;
 };
 
 vectis_status vectis_proxy_http_upstream_init(

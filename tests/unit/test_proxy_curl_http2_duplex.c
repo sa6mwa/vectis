@@ -17,6 +17,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+#include "vectis_proxy_http_upstream.h"
+#endif
+
 static const char request_target[] = "/rewritten/%2F?x=1&x=2&raw=%2F";
 
 struct h2_server {
@@ -141,6 +145,7 @@ static ssize_t send_data(nghttp2_session *session, const uint8_t *data,
   return NGHTTP2_ERR_CALLBACK_FAILURE;
 }
 
+#ifndef VECTIS_HTTP2_FRAMED_HEAD
 static ssize_t produce_response(nghttp2_session *session, int32_t stream_id,
                                 uint8_t *data, size_t len, uint32_t *flags,
                                 nghttp2_data_source *source, void *arg) {
@@ -177,6 +182,7 @@ static ssize_t produce_response(nghttp2_session *session, int32_t stream_id,
   *flags |= NGHTTP2_DATA_FLAG_EOF;
   return 4;
 }
+#endif
 
 static int on_data(nghttp2_session *session, uint8_t flags, int32_t stream_id,
                    const uint8_t *data, size_t len, void *arg) {
@@ -215,7 +221,10 @@ static int on_header(nghttp2_session *session, const nghttp2_frame *frame,
   connection = (struct h2_connection *)arg;
   server = connection->server;
   if (namelen == 7 && memcmp(name, ":method", 7) == 0) {
-#ifdef VECTIS_HTTP2_FRAMED_GET
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+    server->saw_requested_method =
+        valuelen == 4 && memcmp(value, "HEAD", 4) == 0;
+#elif defined(VECTIS_HTTP2_FRAMED_GET)
     server->saw_requested_method =
         valuelen == 3 && memcmp(value, "GET", 3) == 0;
 #else
@@ -241,10 +250,20 @@ static int on_frame(nghttp2_session *session, const nghttp2_frame *frame,
                     void *arg) {
   static uint8_t status_name[] = ":status";
   static uint8_t status_value[] = "200";
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+  static uint8_t length_name[] = "content-length";
+  static uint8_t length_value[] = "123";
+  static nghttp2_nv headers[] = {
+      {status_name, status_value, 7, 3, NGHTTP2_NV_FLAG_NONE},
+      {length_name, length_value, 14, 3, NGHTTP2_NV_FLAG_NONE}};
+#else
   static nghttp2_nv headers[] = {
       {status_name, status_value, 7, 3, NGHTTP2_NV_FLAG_NONE}};
+#endif
   struct h2_connection *connection;
+#ifndef VECTIS_HTTP2_FRAMED_HEAD
   nghttp2_data_provider provider;
+#endif
 
   connection = (struct h2_connection *)arg;
   if (frame->hd.type == NGHTTP2_HEADERS &&
@@ -252,21 +271,29 @@ static int on_frame(nghttp2_session *session, const nghttp2_frame *frame,
     assert(connection->stream_id == 0);
     connection->stream_id = frame->hd.stream_id;
     connection->server->saw_request = 1;
+#ifndef VECTIS_HTTP2_FRAMED_HEAD
     memset(&provider, 0, sizeof(provider));
     provider.read_callback = produce_response;
     assert(nghttp2_submit_response(session, connection->stream_id, headers,
                                    sizeof(headers) / sizeof(headers[0]),
                                    &provider) == 0);
+#endif
   }
   if (frame->hd.type == NGHTTP2_DATA &&
       (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
     assert(frame->hd.stream_id == connection->stream_id);
     connection->upload_complete = 1;
     __sync_lock_test_and_set(&connection->server->upload_complete, 1);
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+    assert(nghttp2_submit_response(session, connection->stream_id, headers,
+                                   sizeof(headers) / sizeof(headers[0]),
+                                   NULL) == 0);
+#else
     if (connection->response_deferred) {
       assert(nghttp2_session_resume_data(session, connection->stream_id) == 0);
       connection->response_deferred = 0;
     }
+#endif
   }
   return 0;
 }
@@ -369,6 +396,12 @@ static size_t read_upload(char *data, size_t size, size_t count, void *arg) {
   assert(size * count >= 4);
   if (state->upload_size == 8)
     return 0;
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+  assert(size * count >= 8);
+  memcpy(data, "pingrest", 8);
+  state->upload_size = 8;
+  return 8;
+#else
   if (state->upload_size == 0) {
     memcpy(data, "ping", 4);
     state->upload_size = 4;
@@ -382,8 +415,10 @@ static size_t read_upload(char *data, size_t size, size_t count, void *arg) {
   memcpy(data, "rest", 4);
   state->upload_size = 8;
   return 4;
+#endif
 }
 
+#ifndef VECTIS_HTTP2_FRAMED_HEAD
 static size_t write_response(char *data, size_t size, size_t count, void *arg) {
   struct client_state *state;
   size_t amount;
@@ -395,6 +430,17 @@ static size_t write_response(char *data, size_t size, size_t count, void *arg) {
   state->response_size += amount;
   return amount;
 }
+#else
+static void head_ready(vectis_proxy_http_upstream *upstream,
+                       vectis_proxy_http_event event, void *userdata) {
+  struct client_state *state;
+
+  (void)upstream;
+  state = (struct client_state *)userdata;
+  if (event == VECTIS_PROXY_HTTP_FINAL)
+    state->response_size++;
+}
+#endif
 
 int main(void) {
   struct h2_server server;
@@ -410,11 +456,18 @@ int main(void) {
   BUF_MEM *pem_data;
   char url[128];
   long version;
+#ifndef VECTIS_HTTP2_FRAMED_HEAD
   long code;
+#endif
   int running;
   int numfds;
   int messages;
   int attempt;
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+  vectis_proxy_http_upstream upstream;
+  vectis_proxy_http_upload upload;
+  vectis_error error;
+#endif
 
   key = make_key();
   cert = make_cert(key);
@@ -449,7 +502,16 @@ int main(void) {
   assert(curl_easy_setopt(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS) ==
          CURLE_OK);
-#ifdef VECTIS_HTTP2_FRAMED_GET
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+  memset(&upload, 0, sizeof(upload));
+  upload.read = read_upload;
+  upload.userdata = &state;
+  upload.known_length = 1;
+  upload.content_length = 8u;
+  assert(vectis_proxy_http_upstream_init(
+             &upstream, easy, url, request_target, "HEAD", headers, 8192u,
+             5000L, 10000L, &upload, head_ready, &state, &error) == VECTIS_OK);
+#elif defined(VECTIS_HTTP2_FRAMED_GET)
   assert(curl_easy_setopt(easy, CURLOPT_UPLOAD, 1L) == CURLE_OK);
 #ifdef VECTIS_HTTP2_UNKNOWN_LENGTH
   assert(curl_easy_setopt(easy, CURLOPT_INFILESIZE_LARGE, (curl_off_t)-1) ==
@@ -469,15 +531,33 @@ int main(void) {
          CURLE_OK);
 #endif
 #endif
+#ifndef VECTIS_HTTP2_FRAMED_HEAD
   assert(curl_easy_setopt(easy, CURLOPT_READFUNCTION, read_upload) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_READDATA, &state) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_response) ==
          CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_WRITEDATA, &state) == CURLE_OK);
   assert(curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers) == CURLE_OK);
+#endif
   assert(curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L) == CURLE_OK);
   assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
   assert(curl_multi_perform(multi, &running) == CURLM_OK);
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+  for (attempt = 0; attempt < 200 && running; attempt++) {
+    assert(curl_multi_poll(multi, NULL, 0, 50, &numfds) == CURLM_OK);
+    assert(curl_multi_perform(multi, &running) == CURLM_OK);
+  }
+  assert(running == 0);
+  message = curl_multi_info_read(multi, &messages);
+  assert(message != NULL && message->msg == CURLMSG_DONE);
+  assert(message->data.result == CURLE_WRITE_ERROR);
+  assert(state.upload_size == 8u && state.response_size == 1u);
+  assert(upstream.response.status == 200);
+  assert(upstream.response.content_length == 123u);
+  assert(!upstream.response.body_allowed && upstream.body_storage == NULL);
+  assert(vectis_proxy_http_upstream_finish(&upstream, message->data.result,
+                                           NULL) == VECTIS_PROXY_HEADER_OK);
+#else
   for (attempt = 0; attempt < 200 && running &&
                     (!state.upload_paused || state.response_size < 4);
        attempt++) {
@@ -514,7 +594,13 @@ int main(void) {
   assert(memcmp(state.response, "pongdone", 8) == 0);
   assert(curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code) == CURLE_OK);
   assert(code == 200);
+#endif
+  assert(curl_easy_getinfo(easy, CURLINFO_HTTP_VERSION, &version) == CURLE_OK);
+  assert(version == CURL_HTTP_VERSION_2_0);
   assert(curl_multi_remove_handle(multi, easy) == CURLM_OK);
+#ifdef VECTIS_HTTP2_FRAMED_HEAD
+  vectis_proxy_http_upstream_cleanup(&upstream);
+#endif
   curl_easy_cleanup(easy);
   assert(curl_multi_cleanup(multi) == CURLM_OK);
   curl_global_cleanup();

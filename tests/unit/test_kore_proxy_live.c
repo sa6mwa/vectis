@@ -232,6 +232,25 @@ static void *origin_main(void *userdata) {
     assert(got > 0);
     used += (size_t)got;
     request[used] = '\0';
+  } while (strstr(request, "3\r\nabc\r\n0\r\n\r\n") == NULL &&
+           used < sizeof(request) - 1u);
+  assert(strstr(request, "HEAD /api/proxy/head-upload HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "Transfer-Encoding: chunked\r\n") != NULL ||
+         strstr(request, "transfer-encoding: chunked\r\n") != NULL);
+  send_all(fd,
+           "HTTP/1.1 200 OK\r\nContent-Length: 123\r\n"
+           "Connection: close\r\n\r\n",
+           strlen("HTTP/1.1 200 OK\r\nContent-Length: 123\r\n"
+                  "Connection: close\r\n\r\n"));
+  assert(close(fd) == 0);
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  used = 0u;
+  do {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
   } while (strstr(request, "\r\n\r\n") == NULL && used < sizeof(request) - 1u);
   assert(strstr(request, "HEAD /api/proxy/head-zero HTTP/1.1\r\n") != NULL);
   assert(strstr(request, "Content-Length: 0\r\n") != NULL);
@@ -693,6 +712,27 @@ int main(void) {
   }
   assert(strstr(response, "HTTP/1.1 200 ") != NULL);
   assert(strstr(response, "ok") != NULL);
+  assert(close(fd) == 0);
+  fd = connect_app(app_port);
+  send_all(fd,
+           "HEAD /proxy/head-upload HTTP/1.1\r\nHost: localhost\r\n"
+           "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+           "3\r\nabc\r\n0\r\n\r\n",
+           strlen("HEAD /proxy/head-upload HTTP/1.1\r\nHost: localhost\r\n"
+                  "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+                  "3\r\nabc\r\n0\r\n\r\n"));
+  used = 0u;
+  while (used < sizeof(response) - 1u) {
+    got = recv(fd, response + used, sizeof(response) - used - 1u, 0);
+    assert(got >= 0);
+    if (got == 0)
+      break;
+    used += (size_t)got;
+  }
+  response[used] = '\0';
+  assert(strstr(response, "HTTP/1.1 200 ") != NULL);
+  assert(strstr(response, "Content-Length: 123\r\n") != NULL);
+  assert(strstr(response, "\r\n\r\n")[4] == '\0');
   assert(close(fd) == 0);
   fd = connect_app(app_port);
   send_all(fd,

@@ -283,6 +283,94 @@ static void test_head(void) {
   assert(close(server.listener) == 0);
 }
 
+static void *serve_head_upload(void *userdata) {
+  static const char response[] = "HTTP/1.1 200 OK\r\nContent-Length: 123\r\n"
+                                 "Connection: keep-alive\r\n\r\n";
+  struct stream_server *server;
+  struct timeval timeout;
+  char request[1024];
+  char *body;
+  size_t used;
+  size_t body_length;
+  ssize_t got;
+  int fd;
+
+  server = (struct stream_server *)userdata;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  timeout.tv_sec = 3;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  used = 0u;
+  body = NULL;
+  while (body == NULL && used < sizeof(request) - 1u) {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    request[used] = '\0';
+    body = strstr(request, "\r\n\r\n");
+  }
+  assert(body != NULL);
+  assert(strstr(request, "HEAD /head-upload HTTP/1.1\r\n") != NULL);
+  assert(strstr(request, "Content-Length: 8\r\n") != NULL);
+  body += 4;
+  body_length = used - (size_t)(body - request);
+  while (body_length < 8u && used < sizeof(request) - 1u) {
+    got = recv(fd, request + used, sizeof(request) - used - 1u, 0);
+    assert(got > 0);
+    used += (size_t)got;
+    body_length += (size_t)got;
+  }
+  assert(body_length == 8u && memcmp(body, "abcdefgh", 8u) == 0);
+  send_all(fd, response, sizeof(response) - 1u);
+  /* A correct HEAD transfer completes without waiting for representation
+   * bytes or the origin closing its keep-alive connection. */
+  usleep(200000u);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
+static void test_head_upload(void) {
+  struct stream_server server;
+  struct stream_observation observation;
+  struct upload_source source;
+  vectis_proxy_http_upload upload;
+  vectis_proxy_http_upstream upstream;
+  vectis_error error;
+  char url[128];
+  CURL *easy;
+  CURLcode result;
+
+  start_server(&server, serve_head_upload);
+  memset(&observation, 0, sizeof(observation));
+  memset(&source, 0, sizeof(source));
+  memset(&upload, 0, sizeof(upload));
+  upload.read = upload_read;
+  upload.userdata = &source;
+  upload.content_length = 8u;
+  upload.known_length = 1;
+  assert(snprintf(url, sizeof(url), "http://127.0.0.1:%u/base",
+                  (unsigned)server.port) > 0);
+  easy = curl_easy_init();
+  assert(easy != NULL);
+  assert(vectis_proxy_http_upstream_init(
+             &upstream, easy, url, "/head-upload", "HEAD", NULL, 8192u, 5000L,
+             1000L, &upload, ready, &observation, &error) == VECTIS_OK);
+  result = curl_easy_perform(easy);
+  assert(result == CURLE_WRITE_ERROR);
+  assert(source.offset == 8u);
+  assert(observation.final == 1u && observation.body == 0u);
+  assert(upstream.response.status == 200 && !upstream.response.body_allowed);
+  assert(upstream.response.content_length == 123u);
+  assert(vectis_proxy_http_upstream_finish(&upstream, result, NULL) ==
+         VECTIS_PROXY_HEADER_OK);
+  vectis_proxy_http_upstream_cleanup(&upstream);
+  curl_easy_cleanup(easy);
+  assert(pthread_join(server.thread, NULL) == 0);
+  assert(close(server.listener) == 0);
+}
+
 static void ready(vectis_proxy_http_upstream *upstream,
                   vectis_proxy_http_event event, void *userdata) {
   struct stream_observation *observation;
@@ -402,5 +490,6 @@ int main(void) {
   assert(pthread_join(server.thread, NULL) == 0);
   assert(close(server.listener) == 0);
   test_head();
+  test_head_upload();
   return 0;
 }

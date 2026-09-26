@@ -391,6 +391,10 @@ if(VECTIS_WITH_KORE_RUNTIME)
     target_compile_definitions(
       vectis_unit_proxy_curl_http2_duplex_get_unknown PRIVATE
       VECTIS_HTTP2_FRAMED_GET=1 VECTIS_HTTP2_UNKNOWN_LENGTH=1)
+    vectis_add_unit_test(vectis_unit_proxy_curl_http2_head_upload
+      test_proxy_curl_http2_duplex.c)
+    target_compile_definitions(vectis_unit_proxy_curl_http2_head_upload PRIVATE
+      VECTIS_HTTP2_FRAMED_HEAD=1)
     vectis_add_unit_test(vectis_unit_kore_proxy_curl_loop
       test_kore_proxy_curl_loop.c)
     vectis_add_unit_test(vectis_unit_kore_proxy_curl_pool

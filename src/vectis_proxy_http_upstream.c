@@ -37,6 +37,12 @@ static size_t vectis_proxy_http_upstream_header(char *data, size_t size,
   }
   if (upstream->failed)
     return 0u;
+  if (event == VECTIS_PROXY_HTTP_FINAL && upstream->head_upload) {
+    /* Curl's upload mode waits for representation bytes after a HEAD reply.
+     * End this transfer at its final headers; no response body may follow. */
+    upstream->head_upload_aborted = 1;
+    return 0u;
+  }
   return length;
 }
 
@@ -119,6 +125,7 @@ vectis_status vectis_proxy_http_upstream_init(
   upstream->ready = ready;
   upstream->userdata = userdata;
   vectis_proxy_http_response_init(&upstream->response, head);
+  upstream->head_upload = head && upload != NULL;
   vectis_proxy_headers_init(&upstream->outbound_headers);
   code = curl_easy_setopt(easy, CURLOPT_URL, url);
   if (code == CURLE_OK)
@@ -142,6 +149,8 @@ vectis_status vectis_proxy_http_upstream_init(
                             upload->known_length
                                 ? (curl_off_t)upload->content_length
                                 : (curl_off_t)-1);
+  if (code == CURLE_OK && upstream->head_upload)
+    code = curl_easy_setopt(easy, CURLOPT_FORBID_REUSE, 1L);
   if (code == CURLE_OK)
     code = curl_easy_setopt(easy, CURLOPT_HTTPHEADER, request_headers);
   if (code == CURLE_OK)
@@ -228,7 +237,9 @@ vectis_proxy_http_upstream_finish(vectis_proxy_http_upstream *upstream,
   vectis_proxy_http_event event;
   vectis_proxy_header_status status;
 
-  if (upstream == NULL || upstream->failed || result != CURLE_OK) {
+  if (upstream == NULL || upstream->failed ||
+      (result != CURLE_OK &&
+       !(result == CURLE_WRITE_ERROR && upstream->head_upload_aborted))) {
     if (reason != NULL)
       *reason = "upstream transfer or framing failed";
     return VECTIS_PROXY_HEADER_INVALID;
