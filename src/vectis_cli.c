@@ -13501,13 +13501,21 @@ static int vectis_lua_lonejson_check_schema(lua_State *lua, int index,
   return 0;
 }
 
-static int vectis_lua_lonejson_assign_table(lua_State *lua, int schema_index,
-                                            int record_index, int value_index) {
+static int vectis_lua_lonejson_try_assign_table(lua_State *lua,
+                                                int schema_index,
+                                                int record_index,
+                                                int value_index) {
   lua_getfield(lua, schema_index, "assign");
   lua_pushvalue(lua, schema_index);
   lua_pushvalue(lua, record_index);
   lua_pushvalue(lua, value_index);
-  if (lua_pcall(lua, 3, 1, 0) != 0) {
+  return lua_pcall(lua, 3, 1, 0);
+}
+
+static int vectis_lua_lonejson_assign_table(lua_State *lua, int schema_index,
+                                            int record_index, int value_index) {
+  if (vectis_lua_lonejson_try_assign_table(lua, schema_index, record_index,
+                                           value_index) != 0) {
     return luaL_error(lua, "lonejson schema:assign failed: %s",
                       lua_tostring(lua, -1));
   }
@@ -13923,7 +13931,7 @@ vectis_lua_dsv_push_spill_result(lua_State *lua,
     lua_pushlstring(lua, (const char *)result->memory.data,
                     result->memory.size);
     lua_setfield(lua, -2, "data");
-    lua_pushvalue(lua, -1);
+    lua_getfield(lua, -1, "data");
     lua_setfield(lua, -2, "memory");
   }
 }
@@ -15931,8 +15939,15 @@ static int vectis_lua_dsv_to_string(lua_State *lua) {
                 : "lonejson DSV row record allocation failed");
       }
       generated_record = 1;
-      (void)vectis_lua_lonejson_assign_table(lua, schema_index, record_index,
-                                             row_index);
+      if (vectis_lua_lonejson_try_assign_table(lua, schema_index, record_index,
+                                               row_index) != 0) {
+        (void)lonejson_lua_clear_record(lua, record_index, NULL);
+        lc_sink_close(sink);
+        free((void *)owned_columns);
+        return luaL_error(lua, "lonejson schema:assign failed: %s",
+                          lua_tostring(lua, -1));
+      }
+      lua_pop(lua, 1);
       vectis_lua_lonejson_record_view_init(&record);
       memset(&json_error, 0, sizeof(json_error));
       json_status = lonejson_lua_check_record(lua, record_index, &schema,

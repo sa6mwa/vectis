@@ -72,6 +72,17 @@ spilled_file:close()
 os.remove(spilled.path)
 assert(spilled_json:find('"id":"iota"', 1, true))
 
+local in_memory = assert(dsv.parse_spill({
+  data = "id,count,active\niota,43,true\n",
+  memory_limit_bytes = 4096,
+}))
+assert(not in_memory.spooled_to_disk and in_memory.path == nil)
+assert(type(in_memory.data) == "string" and in_memory.memory == in_memory.data)
+assert(in_memory.size == #in_memory.data)
+local memory_rows = lonejson.decode_value(in_memory.data)
+assert(memory_rows[1].id == "iota" and memory_rows[1].count == "43")
+assert(type(lonejson.encode_value(in_memory)) == "string")
+
 local serialized = assert(dsv.to_string({
   schema = schema,
   rows = {
@@ -184,6 +195,21 @@ local dynamic_rows = assert(dsv.parse({
 assert(#dynamic_rows == 1)
 assert(dynamic_rows[1].id == "alpha")
 assert(dynamic_rows[1].count == 2)
+
+local good_row = {id = ("x"):rep(10000), count = 2}
+for attempt = 1, 3 do
+  for _, invalid_row in ipairs({{id = "bad\0value", count = 3}, false,
+                                {id = "bad", count = "not an integer"}}) do
+    local ok, err = pcall(dsv.to_string, {
+      schema = dynamic_schema, columns = {"id", "count"},
+      rows = {good_row, invalid_row},
+    })
+    assert(not ok and tostring(err):find("schema:assign failed", 1, true))
+    collectgarbage("collect")
+  end
+end
+assert(dsv.to_string({schema = dynamic_schema, rows = {{id = "after", count = 4}}}) ==
+       "id,count\nafter,4\n")
 
 local dynamic_seen = {}
 assert(dsv.each({

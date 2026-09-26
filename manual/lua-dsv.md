@@ -10,7 +10,7 @@ behavior.
 - `vectis.dsv.parse_json(opts)` parses DSV into a generated JSON array string.
 - `vectis.dsv.each(opts)` invokes a Lua callback for each parsed row.
 - `vectis.dsv.parse_spill(opts)` parses DSV into a JSON array using the C SDK
-  spill policy and returns either `data` or `path`.
+  spill policy and returns either `data` (also exposed as `memory`) or `path`.
 - `vectis.dsv.to_string(opts)` serializes Lua tables or LoneJSON records to DSV.
 - `vectis.app:dsv(opts)` registers a streaming DSV upload route; see
   [Lua app](lua-app.md).
@@ -24,7 +24,8 @@ Expected parse, serialization, spill, and row-callback stop failures return
 `status`, `status_string`, `source`, and `source_code`. Callback stops use
 `source = "vectis"`; generated JSON decode failures use
 `source = "lonejson"`. Programmer misuse, such as omitting the `each()`
-callback, raises a Lua error.
+callback, raises a Lua error. Invalid `to_string()` row assignments raise the
+schema assignment error after releasing accumulated serialization output.
 
 ## Options
 
