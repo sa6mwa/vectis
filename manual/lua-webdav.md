@@ -85,7 +85,9 @@ to mutable and read-only embedded mounts.
 
 COPY and MOVE honor source `If-Match` and `If-None-Match` headers under the
 storage mutation lock. Failed conditions return HTTP 412 without changing
-either resource. Filesystem writers outside Vectis must coordinate separately.
+either resource. Destination URI paths are decoded before mount and resource
+checks. Encoded separators, NULs, malformed escapes, and traversal remain
+invalid. Filesystem writers outside Vectis must coordinate separately.
 
 Filesystem-backed GET and HEAD evaluate `If-Match` before `If-None-Match`
 against the served file's ETag. Failed `If-Match` returns 412; matching

@@ -28,7 +28,7 @@ vectis_status vectis_proxy_select_route(vectis_app *app,
   }
 
   decoded = NULL;
-  status = vectis_internal_kore_decode_request_path(raw_path, &decoded, error);
+  status = vectis_internal_decode_request_path(raw_path, &decoded, error);
   if (status == VECTIS_ERR_INVALID) {
     goto raw_fallback;
   }

@@ -221,9 +221,15 @@ static void test_destination_authority(const vectis_webdav_config *storage) {
                                        "//other-host/dav/target",
                                        "https://user@local/dav/target",
                                        "https://local?x/dav/target",
+                                       "/dav/%2Ftarget",
+                                       "/dav/%00target",
+                                       "/dav/%GGtarget",
+                                       "/dav/%2E%2E/target",
                                        "https://LOCAL:443/dav/target",
                                        "https://local/dav/target",
-                                       "/dav/target"};
+                                       "/dav/target",
+                                       "/d%61v/%74arget",
+                                       "https://local/dav/%74arget"};
   vectis_app_config config;
   vectis_webdav_mount_config mount;
   vectis_app *app;
@@ -274,16 +280,16 @@ static void test_destination_authority(const vectis_webdav_config *storage) {
                                             response, &error) == VECTIS_OK,
              "dispatch authority transfer");
       expect(vectis_internal_response_status_code(response) ==
-                 (i < 6u ? 400 : 204),
+                 (i < 10u ? 400 : 204),
              "reject unsupported destination and accept local authority");
       body = NULL;
       size = 0u;
       expect(vectis_webdav_read(storage, "/target", &body, &size, &entry) ==
                      VECTIS_WEBDAV_OK &&
-                 size == 3u && memcmp(body, i < 6u ? "old" : "new", 3u) == 0,
+                 size == 3u && memcmp(body, i < 10u ? "old" : "new", 3u) == 0,
              "destination reflects only accepted operations");
       free(body);
-      if (i < 6u)
+      if (i < 10u)
         expect(vectis_webdav_lookup(storage, "/source", &entry) ==
                    VECTIS_WEBDAV_OK,
                "rejected MOVE preserves source");

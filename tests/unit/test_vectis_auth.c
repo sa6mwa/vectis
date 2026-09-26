@@ -1992,6 +1992,17 @@ int main(void) {
                strcmp(webdav_response.location,
                       "/auth/login?return=/dav/docs") == 0,
            "browser redirect survives cleanup and retains mount prefix");
+    status = vectis_internal_request_set_path(webdav_vectis_request,
+                                              "/reports/a#b?c% d", &error);
+    expect_ok(status, &error, "sets decoded browser return path");
+    status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
+                                         &webdav_auth_config, &error);
+    expect_ok(status, &error, "redirects escaped browser return path");
+    expect(webdav_response.location != NULL &&
+               strcmp(webdav_response.location,
+                      "/auth/login?return=/reports/a%2523b%253Fc%2525%2520d") ==
+                   0,
+           "return query retains URI path escaping after query decoding");
     vectis_internal_request_free(webdav_vectis_request);
     webdav_vectis_request = NULL;
     webdav_request.request = NULL;

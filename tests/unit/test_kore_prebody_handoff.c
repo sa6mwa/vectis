@@ -288,8 +288,8 @@ static int probe_prebody(struct http_request *req, const void *data,
     allow = NULL;
     route_method =
         req->method == HTTP_METHOD_POST ? VECTIS_HTTP_POST : VECTIS_HTTP_GET;
-    status = vectis_internal_kore_decode_request_path(req->path, &decoded,
-                                                      &probe_error);
+    status =
+        vectis_internal_decode_request_path(req->path, &decoded, &probe_error);
     if (status == VECTIS_OK) {
       path_status =
           vectis_internal_validate_request_path(decoded, &probe_error);

@@ -180,9 +180,8 @@ vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
 vectis_status
 vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
                               vectis_error *error);
-vectis_status vectis_internal_kore_decode_request_path(const char *path,
-                                                       char **out,
-                                                       vectis_error *error);
+vectis_status vectis_internal_decode_request_path(const char *path, char **out,
+                                                  vectis_error *error);
 vectis_status vectis_internal_validate_request_path(const char *path,
                                                     vectis_error *error);
 vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error);

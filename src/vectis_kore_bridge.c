@@ -2183,81 +2183,6 @@ static char *vectis_kore_memdup_cstr(const char *data, size_t len) {
   return copy;
 }
 
-static int vectis_kore_hex_value(unsigned char value) {
-  if (value >= (unsigned char)'0' && value <= (unsigned char)'9') {
-    return (int)(value - (unsigned char)'0');
-  }
-  if (value >= (unsigned char)'a' && value <= (unsigned char)'f') {
-    return (int)(value - (unsigned char)'a') + 10;
-  }
-  if (value >= (unsigned char)'A' && value <= (unsigned char)'F') {
-    return (int)(value - (unsigned char)'A') + 10;
-  }
-  return -1;
-}
-
-vectis_status vectis_internal_kore_decode_request_path(const char *path,
-                                                       char **out,
-                                                       vectis_error *error) {
-  const unsigned char *input;
-  unsigned char *output;
-  char *decoded;
-  size_t length;
-  int high;
-  int low;
-  unsigned char value;
-
-  if (out != NULL) {
-    *out = NULL;
-  }
-  if (path == NULL || out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request path is required");
-    return VECTIS_ERR_INVALID;
-  }
-  length = strlen(path);
-  decoded = (char *)malloc(length + 1u);
-  if (decoded == NULL) {
-    vectis_set_error(error, VECTIS_ERR_NOMEM,
-                     "failed to allocate decoded request path");
-    return VECTIS_ERR_NOMEM;
-  }
-  input = (const unsigned char *)path;
-  output = (unsigned char *)decoded;
-  while (*input != '\0') {
-    if (*input != (unsigned char)'%') {
-      *output++ = *input++;
-      continue;
-    }
-    if (input[1] == '\0' || input[2] == '\0') {
-      free(decoded);
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "request path has an invalid percent escape");
-      return VECTIS_ERR_INVALID;
-    }
-    high = vectis_kore_hex_value(input[1]);
-    low = vectis_kore_hex_value(input[2]);
-    if (high < 0 || low < 0) {
-      free(decoded);
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "request path has an invalid percent escape");
-      return VECTIS_ERR_INVALID;
-    }
-    value = (unsigned char)((high << 4) | low);
-    if (value == '\0' || value == (unsigned char)'/' ||
-        value == (unsigned char)'\\' || value < 0x20u || value == 0x7fu) {
-      free(decoded);
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "request path has an unsafe percent escape");
-      return VECTIS_ERR_INVALID;
-    }
-    *output++ = value;
-    input += 3u;
-  }
-  *output = '\0';
-  *out = decoded;
-  return VECTIS_OK;
-}
-
 static vectis_status vectis_kore_copy_headers(struct http_request *req,
                                               vectis_request *request,
                                               vectis_error *error) {
@@ -2676,7 +2601,7 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
     vectis_kore_reject_body_chunk(req, state, 503, "vectis app is starting\n");
     return KORE_RESULT_OK;
   }
-  status = vectis_internal_kore_decode_request_path(req->path, &path, &error);
+  status = vectis_internal_decode_request_path(req->path, &path, &error);
   if (status != VECTIS_OK) {
     vectis_kore_reject_body_chunk(
         req, state, status == VECTIS_ERR_INVALID ? 400 : 500, error.message);
@@ -3371,7 +3296,7 @@ int vectis_kore_route(struct http_request *req) {
     vectis_kore_body_state_cleanup(body_state);
     return KORE_RESULT_OK;
   }
-  status = vectis_internal_kore_decode_request_path(req->path, &path, &error);
+  status = vectis_internal_decode_request_path(req->path, &path, &error);
   if (status != VECTIS_OK) {
     vectis_internal_metrics_note_http_status(
         app, status == VECTIS_ERR_INVALID ? 400 : 500);

@@ -8100,10 +8100,12 @@ static int vectis_auth_native_provider_login_redirect(
       }
       response->redirect_location[used++] = (char)*cursor;
     } else {
-      if (used + 3u >= sizeof(response->redirect_location)) {
+      if (used + 5u >= sizeof(response->redirect_location)) {
         return 0;
       }
       response->redirect_location[used++] = '%';
+      response->redirect_location[used++] = '2';
+      response->redirect_location[used++] = '5';
       response->redirect_location[used++] = hex[*cursor >> 4u];
       response->redirect_location[used++] = hex[*cursor & 0x0fu];
     }

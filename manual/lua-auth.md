@@ -128,6 +128,8 @@ future factor, or workflow progress.
 An unauthenticated browser navigation to a protected HTML route redirects to
 `<path_prefix>/login?return=<requested-path>`. On success Vectis returns to the
 validated protected path; a direct visit without `return` goes to `/`.
+Path characters retain their URI escaping inside the `return` query value,
+so a literal `#` in a filename does not become a browser fragment.
 
 Browser workflows require TLS. Their opaque HttpOnly, Secure, SameSite=Strict
 cookie, signing key, completed-factor state, and expiry data are all

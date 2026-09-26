@@ -16644,6 +16644,80 @@ vectis_webdav_propfind(const vectis_webdav_route_data *data,
   return response_status;
 }
 
+static int vectis_request_path_hex_value(unsigned char value) {
+  if (value >= (unsigned char)'0' && value <= (unsigned char)'9') {
+    return (int)(value - (unsigned char)'0');
+  }
+  if (value >= (unsigned char)'a' && value <= (unsigned char)'f') {
+    return (int)(value - (unsigned char)'a') + 10;
+  }
+  if (value >= (unsigned char)'A' && value <= (unsigned char)'F') {
+    return (int)(value - (unsigned char)'A') + 10;
+  }
+  return -1;
+}
+
+vectis_status vectis_internal_decode_request_path(const char *path, char **out,
+                                                  vectis_error *error) {
+  const unsigned char *input;
+  unsigned char *output;
+  char *decoded;
+  size_t length;
+  int high;
+  int low;
+  unsigned char value;
+
+  if (out != NULL) {
+    *out = NULL;
+  }
+  if (path == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  length = strlen(path);
+  decoded = (char *)malloc(length + 1u);
+  if (decoded == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate decoded request path");
+    return VECTIS_ERR_NOMEM;
+  }
+  input = (const unsigned char *)path;
+  output = (unsigned char *)decoded;
+  while (*input != '\0') {
+    if (*input != (unsigned char)'%') {
+      *output++ = *input++;
+      continue;
+    }
+    if (input[1] == '\0' || input[2] == '\0') {
+      free(decoded);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "request path has an invalid percent escape");
+      return VECTIS_ERR_INVALID;
+    }
+    high = vectis_request_path_hex_value(input[1]);
+    low = vectis_request_path_hex_value(input[2]);
+    if (high < 0 || low < 0) {
+      free(decoded);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "request path has an invalid percent escape");
+      return VECTIS_ERR_INVALID;
+    }
+    value = (unsigned char)((high << 4) | low);
+    if (value == '\0' || value == (unsigned char)'/' ||
+        value == (unsigned char)'\\' || value < 0x20u || value == 0x7fu) {
+      free(decoded);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "request path has an unsafe percent escape");
+      return VECTIS_ERR_INVALID;
+    }
+    *output++ = value;
+    input += 3u;
+  }
+  *output = '\0';
+  *out = decoded;
+  return VECTIS_OK;
+}
+
 static int
 vectis_webdav_destination_path(const vectis_webdav_route_data *data,
                                vectis_request *request, const char *destination,
@@ -16658,6 +16732,8 @@ vectis_webdav_destination_path(const vectis_webdav_route_data *data,
   size_t default_length;
   char request_path[VECTIS_WEBDAV_PATH_MAX + 1u];
   size_t length;
+  char *decoded;
+  int result;
 
   if (destination == NULL) {
     return 0;
@@ -16711,7 +16787,13 @@ vectis_webdav_destination_path(const vectis_webdav_route_data *data,
   }
   memcpy(request_path, path, length);
   request_path[length] = '\0';
-  return vectis_webdav_request_resource_path(data, request_path, out);
+  if (vectis_internal_decode_request_path(request_path, &decoded, NULL) !=
+      VECTIS_OK) {
+    return 0;
+  }
+  result = vectis_webdav_request_resource_path(data, decoded, out);
+  free(decoded);
+  return result;
 }
 
 typedef struct vectis_webdav_embedded_exact_state {
