@@ -90,8 +90,18 @@ local vectis = require("vectis")
 local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = ${port},
+  access_log = false,
   tls = { mode = "disabled" },
 }))
+local registered, register_error = server:mcp({
+  enable_sessions = true,
+  tools = {{
+    name = "echo",
+    schema_json = '{"type":"object","properties":{}}',
+    callback = function() return "{}" end,
+  }},
+})
+assert(registered == nil and register_error.status == vectis.ERR_INVALID)
 assert(server:json({
   path = "/",
   body = "signal\\n",
@@ -125,7 +135,7 @@ LUA
     cat "$log" >&2 || true
     exit 1
   fi
-  wait "$server_pid" || true
+  wait "$server_pid"
   server_pid=
 }
 

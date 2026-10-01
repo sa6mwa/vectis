@@ -7159,6 +7159,11 @@ static void vectis_lua_app_log_seed_init(vectis_lua_app *server) {
   server->log_seed.size = sizeof(server->log_seed);
   server->log_seed.abi_version = PSLOG_LUA_INTEROP_ABI_VERSION;
   server->log_seed.registry_ref = LUA_NOREF;
+  server->log_app_name = NULL;
+  server->logger = NULL;
+  server->lockdc_logger = NULL;
+  server->cai_logger = NULL;
+  server->http_logger = NULL;
   server->log_sub_vectis = 1;
   server->log_sub_lockdc = 1;
   server->log_sub_cai = 1;

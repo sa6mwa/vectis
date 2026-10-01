@@ -230,6 +230,14 @@ if(TARGET vectis_bin)
            COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/tests/lua/logger_native_sink.lua")
   set_tests_properties(vectis_lua_logger_native_sink PROPERTIES
     LABELS "unit;lua;local" TIMEOUT 15)
+  foreach(log_policy access lockdc cai http all)
+    add_test(NAME vectis_lua_app_log_cleanup_${log_policy}
+             COMMAND vectis_bin
+                     "${CMAKE_SOURCE_DIR}/tests/lua/app_log_cleanup.lua"
+                     "${log_policy}")
+    set_tests_properties(vectis_lua_app_log_cleanup_${log_policy} PROPERTIES
+      LABELS "unit;lua;local" TIMEOUT 15)
+  endforeach()
   add_test(NAME vectis_lua_zlib
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
