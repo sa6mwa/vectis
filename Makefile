@@ -51,7 +51,7 @@ PROXY_FAST_TEST_REGEX := ^($(subst $(space),|,$(strip $(PROXY_FAST_TESTS))))$$
 	deps-debug deps-release deps-cross \
 	build build-debug build-debug-lua build-release build-asan build-valgrind build-coverage build-fuzz \
 	bench-metrics-storage bench-proxy bench-proxy-h2 bench-proxy-soak perf-gate \
-	test test-debug test-proxy-fast test-proxy-asan-fast test-proxy-lua-fast test-proxy-lua-asan-fast test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-failures-fast test-proxy-fast test-proxy-asan-fast test-proxy-lua-fast test-proxy-lua-asan-fast test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy verify-release-matrix release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
@@ -63,6 +63,7 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run all debug CTest tests with the pinned Bootlin runtime.' \
+		'make test-failures-fast Build only the CLI and run fast Lua/MCP failure and JSON boundary checks.' \
 		'make test-proxy-fast    Build and run focused proxy tests in Debug.' \
 		'make test-proxy-asan-fast Build and run the same focused proxy tests under ASan/UBSan.' \
 		'make test-proxy-lua-fast Build and run Lua proxy hook integration in Debug.' \
@@ -368,7 +369,16 @@ prerelease:
 	$(TIMED) prerelease bash ./scripts/release_pipeline.sh
 
 test-debug: build-debug
-	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)
+	$(TIMED) test-debug-failures $(CTEST) --preset $(DEBUG_PRESET) -j 1 -L failure-fast --no-tests=error
+	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET) -LE failure-fast
+
+test-failures-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)
+	@if [ ! -f build/$(DEBUG_PRESET)/build.ninja ] || \
+		[ CMakePresets.json -nt build/$(DEBUG_PRESET)/build.ninja ]; then \
+		$(TIMED) failures-fast-configure $(CMAKE) --preset $(DEBUG_PRESET); \
+	fi
+	$(TIMED) failures-fast-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
+	$(TIMED) failures-fast-test $(CTEST) --preset $(DEBUG_PRESET) -j 1 -L failure-fast --no-tests=error
 
 test-proxy-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)
 	@if [ ! -f build/$(DEBUG_PRESET)/build.ninja ] || \

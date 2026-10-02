@@ -236,8 +236,31 @@ if(TARGET vectis_bin)
                      "${CMAKE_SOURCE_DIR}/tests/lua/app_log_cleanup.lua"
                      "${log_policy}")
     set_tests_properties(vectis_lua_app_log_cleanup_${log_policy} PROPERTIES
-      LABELS "unit;lua;local" TIMEOUT 15)
+      LABELS "unit;lua;local;failure-fast" TIMEOUT 15)
   endforeach()
+  if(VECTIS_WITH_KORE_RUNTIME)
+    foreach(log_mask RANGE 0 15)
+      add_test(NAME vectis_lua_app_failure_modes_${log_mask}
+        COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/tests/lua/app_failure_modes.lua"
+          "${log_mask}")
+      set_tests_properties(vectis_lua_app_failure_modes_${log_mask} PROPERTIES
+        LABELS "unit;lua;local;failure-fast" TIMEOUT 5)
+    endforeach()
+    if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+      find_package(Python3 REQUIRED COMPONENTS Interpreter)
+      add_test(NAME vectis_lua_mcp_failure_modes
+        COMMAND "${Python3_EXECUTABLE}" -B
+          "${CMAKE_SOURCE_DIR}/tests/lua/failure_modes.py"
+          --binary "$<TARGET_FILE:vectis_bin>"
+          --work-dir "${CMAKE_CURRENT_BINARY_DIR}/failure-modes")
+      set_tests_properties(vectis_lua_mcp_failure_modes PROPERTIES
+        LABELS "integration;lua;local;failure-fast" TIMEOUT 20 RUN_SERIAL TRUE)
+    endif()
+  endif()
+  add_test(NAME vectis_lua_json_encoder_boundaries
+    COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/tests/lua/json_encoder_boundaries.lua")
+  set_tests_properties(vectis_lua_json_encoder_boundaries PROPERTIES
+    LABELS "unit;lua;local;failure-fast;dependency" TIMEOUT 5)
   add_test(NAME vectis_lua_zlib
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

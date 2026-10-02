@@ -2538,7 +2538,10 @@ static void vectis_kore_reject_body_chunk(struct http_request *req,
   app = vectis_kore_current.app;
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
   vectis_internal_metrics_note_body_reject(app, status);
-  http_response(req, status, message, message != NULL ? strlen(message) : 0u);
+  /* Rejection can leave unread body bytes; this connection cannot safely
+   * parse another request after the current request is deleted. */
+  http_response_close(req, status, message,
+                      message != NULL ? strlen(message) : 0u);
   req->flags |= HTTP_REQUEST_DELETE;
 }
 
