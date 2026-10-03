@@ -1097,6 +1097,54 @@ static int vectis_smith_cli_command_enter(sl_t *editor, sl_key_t key,
   return SL_OK;
 }
 
+static int vectis_smith_cli_promote(sl_t *editor, sl_key_t key, void *userdata,
+                                    sl_key_action_t *action) {
+  vectis_smith_cli_ui *ui = userdata;
+  cai_agent_run_state state;
+  const char *buffer;
+  char *queued;
+  size_t count;
+  int failed;
+  int busy;
+  int rc;
+
+  (void)key;
+  *action = SL_KEY_ACTION_PASS;
+  vectis_smith_cli_agent_snapshot(ui->agent, &state, &failed, &busy, NULL, 0u);
+  if (!busy) {
+    return SL_OK;
+  }
+  /* Softline 0.9 retains busy Alt-Enter entries for host-controlled delivery.
+   * Smith's binding delivers steering immediately through its control bridge.
+   */
+  buffer = sl_buffer(editor);
+  if (buffer != NULL && buffer[0] != '\0') {
+    *action = SL_KEY_ACTION_SUBMIT;
+    return SL_OK;
+  }
+  count = sl_prompt_queue_count(editor);
+  if (count == 0u) {
+    return SL_OK;
+  }
+  rc = sl_prompt_queue_peek(editor, count - 1u, &queued);
+  if (rc != SL_OK) {
+    return rc;
+  }
+  rc = sl_set_buffer(editor, queued);
+  sl_free_string(editor, queued);
+  if (rc != SL_OK) {
+    return rc;
+  }
+  rc = sl_prompt_queue_take(editor, count - 1u, &queued);
+  if (rc != SL_OK) {
+    (void)sl_set_buffer(editor, "");
+    return rc;
+  }
+  sl_free_string(editor, queued);
+  *action = SL_KEY_ACTION_SUBMIT;
+  return SL_OK;
+}
+
 static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
                                         vectis_smith_cli_render *render) {
   sl_config_t config;
@@ -1167,6 +1215,8 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
   if (sl_set_prompt_queue_profile(
           editor, SL_PROMPT_QUEUE_PROFILE_QUEUED_TURNS) != SL_OK ||
       sl_bind_key(editor, SL_KEY_ENTER, vectis_smith_cli_command_enter, NULL) !=
+          SL_OK ||
+      sl_bind_key(editor, SL_KEY_ALT_ENTER, vectis_smith_cli_promote, &ui) !=
           SL_OK ||
       sl_watch_add(editor, wake_fds[0], SL_WATCH_READ | SL_WATCH_HANGUP,
                    vectis_smith_cli_ui_watch, &ui, &watch) != SL_OK ||

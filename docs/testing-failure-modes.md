@@ -12,11 +12,10 @@ using a selector, then sends requests over loopback. Its readiness, request, and
 shutdown deadlines only bound unexpected hangs; they are not timed workloads.
 Generated fixtures and packed executables stay under the build directory.
 
-On the native debug build, the 23 tests took 2.06 seconds excluding the build:
-22 passed and only the known encoder contract failed. The construction and
-cleanup matrix counts 1,456 checks; the HTTP matrix adds 96 checks and two
-uncaught-error exit checks. These are measured local timings, not a portable
-runtime guarantee.
+On the upgraded native debug build, all 23 tests passed in 2.30 seconds excluding
+the build. The construction and cleanup matrix counts 1,456 checks; the HTTP
+matrix adds 96 checks and two uncaught-error exit checks. These are measured
+local timings, not a portable runtime guarantee.
 
 ## Coverage
 
@@ -41,21 +40,12 @@ runtime guarantee.
   boundaries and full pipeline records at 1, 10, 50, 100, 200, 400, and 600 rows.
   Successful encoding must round-trip every field.
 
-## Known dependency blocker
+## Encoder regression
 
 The encoder boundary test intentionally asserts the required successful behavior.
-It has no expected-failure flag or suppression. Lonejson 0.44.0 currently fails
-22 of its 38 checks; this makes the fast and standard gates fail until the
-dependency is corrected. The failure output identifies each affected alias,
-boundary, and fixture size. The upstream report is a separate self-contained
+It has no expected-failure flag or suppression. Lonejson 0.44.0 failed 22 of
+its 38 checks. Upgrading to lonejson 0.45.0 fixes all of them and restores the
+ordinary gates without changing the test. Future failures identify the affected
+alias, boundary, and fixture size. Keep this regression in the fast and standard
+gates. The original upstream report is retained as a separate self-contained
 Markdown deliverable under `stash/`.
-
-For diagnosis of Vectis alone, after building the CLI:
-
-```sh
-ctest --preset debug -j 1 -L failure-fast -E '^vectis_lua_json_encoder_boundaries$'
-```
-
-This diagnostic exclusion is not a passing production gate. Do not remove the
-encoder test after the upstream fix; its passing result should restore the
-ordinary gates automatically.

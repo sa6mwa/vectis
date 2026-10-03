@@ -78,7 +78,9 @@ places it on the bounded control bridge and immediately marks the UI busy again.
 Alt-Enter sends a nonempty draft as steering, or promotes the newest queued
 entry when the draft is empty. The worker applies steering only while CAI is
 active and otherwise accepts that promoted text as the next normal turn. Queue
-mutation, previews, Alt-E editing, and key handling remain inside Softline.
+mutation, previews, and Alt-E editing remain inside Softline. Smith binds
+Alt-Enter through Softline's public key and queue APIs to preserve immediate
+steering with Softline 0.9's host-controlled delivery contract.
 
 The implemented topology keeps CAI ownership, Markdown rendering, and
 Softline ownership separate. The UI never invokes `pump` or state inspection;

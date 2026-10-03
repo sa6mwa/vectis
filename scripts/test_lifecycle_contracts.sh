@@ -2033,21 +2033,21 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_enabled=1$'; then
   printf '%s\n' "$linux_deps_output" >&2
   exit 1
 fi
-if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.2$'; then
-  echo "Linux dependency preset did not pin libpid0 0.4.2" >&2
+if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.5\.0$'; then
+  echo "Linux dependency preset did not pin libpid0 0.5.0" >&2
   printf '%s\n' "$linux_deps_output" >&2
   exit 1
 fi
 for expected in \
-  '^system_sha256=fb64caa3cad66e01669705412cd88cb4267025ca0a083fa936fe25786011391d$' \
+  '^system_sha256=fbd3e3f357c22dc26b94cc7e5e200651b59ecb39357ce7bb8c4cb3d939a2b557$' \
   '^liblockdc_sha256=1e949887d613824716645dd5e9a85a1b89ad2d8d66431838c0a28c999b0e23da$' \
-  '^lonejson_sha256=5255a32cef6dd89cd4f068c2a4f1bd6a8f8e79d5cffe6d6922cb2506d320c520$' \
+  '^lonejson_sha256=aef11c4511bb6aa8ed4e0646204e14b7934affd6e5cec5b8e8bff36e80217826$' \
   '^pslog_sha256=21239262bc06eecb504e45e0902f374ccd86751dcb32087dd84af4d2553ea0e2$' \
   '^cai_sha256=f7f78d9f847f1265267bbc33a6d6cb2058602d82967357ab561f36ebb1d0daf8$' \
   '^lql_sha256=fafb04f9af5d9610f77380ac1f848d1edd3d60dcf7ce6a098f6a04e30dd2b47a$' \
   '^lql_lua_sha256=c4610615f4315081c519afe47d519e72c1242cce449620cf90f8f8828eccdfe1$' \
   '^mdf_sha256=6be317bb232702cab5fb2f7f6041fa6b6cc0cb6d3676cb1230f80a3778c1c4b4$' \
-  '^softline_sha256=b1e4f2fb8ad4d8072acf1d72be31ec23066d8ccbf66a6fe10e15b7243ac8ac2f$'
+  '^softline_sha256=09612ec2cc3fc1ecdcefaf4afff4e5e80555d9618c13a7e6db3405d0ead835f5$'
 do
   if ! printf '%s\n' "$linux_deps_output" | grep -Eq "$expected"; then
     echo "Linux dependency preset did not expose expected upgraded dependency pin: $expected" >&2

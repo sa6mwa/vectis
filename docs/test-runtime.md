@@ -272,3 +272,44 @@ the ELF interpreter and loader-path guards described above. Evidence is in
 `build/cpkt-010-package-verify.log` and `build/cpkt-010-lifecycle.log`.
 This was native x86_64 GNU verification, not a full cross-target release matrix,
 service e2e, sanitizer or Valgrind rerun. No release was published.
+
+### Dependency refresh on 2026-10-03
+
+The pinned release set now uses c.pkt.systems 0.11.0, lonejson 0.45.0,
+softline 0.9.0, and libpid0 0.5.0. Libpslog 0.12.0, CAI 0.6.0,
+liblockdc 0.18.0, liblql 0.3.0, and libmdf 0.13.0 were already at their latest
+published releases. All 62 SDK and Linux libpid0 asset pins across the seven
+targets match the official release asset SHA-256 digests. Lua source pins for
+the upgraded bindings match their published checksum manifests.
+
+Kore is pinned to `1ff3c0f6f7973dc7fc8bf38369790ef2d8079b3b`. Patch 0037
+preserves its HTTP header-length underflow protection while retaining Vectis's
+pipelined request handling. The clean patch-application/build verifier and
+the pipelining and prebody handoff tests passed. Smith's Alt-Enter binding
+uses Softline's public key and queue APIs to preserve immediate steering under
+the new host-controlled queue delivery contract. Its new synchronous binding
+checks and existing PTY integration tests passed without adding test delays.
+
+The native debug fast gate passed 23/23 in 2.30 seconds, including all 38
+lonejson encoder checks. The remaining standard debug suite initially passed
+177/178; its Smith queue failure identified the integration change above.
+After that correction, all eight selected CLI/Smith tests passed. Every test
+in the 201-test debug suite therefore passed across the standard run and
+focused reruns. Formatting and shell syntax checks passed.
+
+Direct-install and packaged static/shared SDK checks passed, including the
+C, C++, and pkg-config consumers and 36 installed examples per mode. The
+new stripped x86_64 musl static CLI passed the supplied production probe's
+69/69 checks in script, packed, and direct modes, all with clean shutdown.
+Separate encoder shape and unsupported-session cleanup probes also passed.
+The delivered `/home/mike/vectis` SHA-256 is
+`0d07934b6a2c27d22b6af7ebad5e521c820a9fac9a1d1476627d1002f58e8625`.
+
+The lifecycle contract script stops at an existing policy conflict: it forbids
+repository automation files, but the branch tracks
+`.github/workflows/darwin-kqueue.yml`. That policy assertion and workflow were
+left unchanged; the dependency pins were verified independently. The shared
+GNU/Linux glibc minimum remains 2.43 and public facade ABI majors are unchanged.
+Cross-target runtime, full service e2e, sanitizer, and Valgrind suites were not
+rerun. Evidence is retained under `build/dependency-upgrade/`. No release was
+published.

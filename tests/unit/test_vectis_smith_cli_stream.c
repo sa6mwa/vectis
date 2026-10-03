@@ -469,6 +469,52 @@ static void test_cli_diagnostic_endpoint_redaction(void) {
   assert(strcmp(message, "pouch binary control record magic mismatch") == 0);
 }
 
+static void test_busy_promote_binding(void) {
+  vectis_smith_cli_agent agent;
+  vectis_smith_cli_ui ui;
+  sl_key_action_t action;
+  sl_t *editor;
+  char *queued;
+
+  memset(&agent, 0, sizeof(agent));
+  memset(&ui, 0, sizeof(ui));
+  assert(pthread_mutex_init(&agent.mutex, NULL) == 0);
+  ui.agent = &agent;
+  editor = sl_create();
+  assert(editor != NULL);
+  assert(sl_set_prompt_queue(editor, 1, 4, 2) == SL_OK);
+  assert(sl_prompt_queue_append(editor, "oldest") == SL_OK);
+  assert(sl_prompt_queue_append(editor, "newest") == SL_OK);
+  /* Idle promotion remains owned by Softline. */
+  assert(vectis_smith_cli_promote(editor, SL_KEY_ALT_ENTER, &ui, &action) ==
+         SL_OK);
+  assert(action == SL_KEY_ACTION_PASS);
+  assert(sl_prompt_queue_count(editor) == 2u);
+  agent.state = CAI_AGENT_SAMPLING;
+  assert(sl_set_buffer(editor, "draft") == SL_OK);
+  assert(vectis_smith_cli_promote(editor, SL_KEY_ALT_ENTER, &ui, &action) ==
+         SL_OK);
+  assert(action == SL_KEY_ACTION_SUBMIT);
+  assert(strcmp(sl_buffer(editor), "draft") == 0);
+  assert(sl_prompt_queue_count(editor) == 2u);
+  assert(sl_set_buffer(editor, "") == SL_OK);
+  assert(vectis_smith_cli_promote(editor, SL_KEY_ALT_ENTER, &ui, &action) ==
+         SL_OK);
+  assert(action == SL_KEY_ACTION_SUBMIT);
+  assert(strcmp(sl_buffer(editor), "newest") == 0);
+  assert(sl_prompt_queue_count(editor) == 1u);
+  assert(sl_prompt_queue_take(editor, 0u, &queued) == SL_OK);
+  assert(strcmp(queued, "oldest") == 0);
+  sl_free_string(editor, queued);
+  assert(sl_set_buffer(editor, "") == SL_OK);
+  assert(vectis_smith_cli_promote(editor, SL_KEY_ALT_ENTER, &ui, &action) ==
+         SL_OK);
+  assert(action == SL_KEY_ACTION_PASS);
+  assert(sl_buffer(editor)[0] == '\0');
+  sl_destroy(editor);
+  assert(pthread_mutex_destroy(&agent.mutex) == 0);
+}
+
 static void test_cli_verbosity_arguments(void) {
   assert(vectis_smith_cli_verbosity_argument("-v") == 1);
   assert(vectis_smith_cli_verbosity_argument("-vv") == 2);
@@ -910,6 +956,7 @@ int main(void) {
   test_plain_delta_reaches_renderer_before_boundary();
   test_agent_control_bridge_is_fifo();
   test_softline_queued_turns_profile();
+  test_busy_promote_binding();
   test_cli_diagnostic_endpoint_redaction();
   test_cli_verbosity_arguments();
   test_interactive_queue_and_promote();

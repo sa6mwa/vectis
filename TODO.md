@@ -20,7 +20,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Provision pinned Lua 5.5.0 from lua.org into every target dependency root for the Vectis binary runtime.
 - [x] Build Lua as a static `liblua.a` plus headers for host, Linux cross, musl, and optional Darwin target roots.
 - [x] Add dependency manifest validation in CMake for the pinned Lua version and checksum.
-- [x] Provision pinned libxml2 2.15.3 from GNOME into every target dependency root.
+- [x] Provision pinned libxml2 2.15.4 from c.pkt.systems into every target dependency root.
 - [x] Build libxml2 as both static and shared libraries plus headers without relying on distro XML packages.
 - [x] Support host debug and Linux release matrix roots.
 - [x] Add explicit dependency manifest validation in CMake, including expected dependency versions.

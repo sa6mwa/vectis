@@ -34,3 +34,4 @@
 0034-kore-release-tls-domain-key-references.patch
 0035-kore-guard-response-write-time-against-future-start.patch
 0036-kore-wake-for-connection-timeout-sweep.patch
+0037-kore-guard-header-length-before-pipeline-split.patch

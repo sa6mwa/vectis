@@ -16,7 +16,7 @@ applying the patch stack to a clean upstream checkout.
 Pinned upstream revision currently validated by this repo:
 
 ```text
-ba9bc3b56e24c3652f4cd808463ad45f78579ba8
+1ff3c0f6f7973dc7fc8bf38369790ef2d8079b3b
 ```
 
 Use:

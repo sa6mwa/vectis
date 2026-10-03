@@ -57,28 +57,28 @@ Release archives are fetched through the shared verified
 `${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/c.pkt.systems/deps}`
 archive cache. The current expected dependency set is:
 
-- `c.pkt.systems` 0.10.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
-  the C89 Lua runtime facade, libxml2 2.15.3, OPC UA, audio/miniaudio,
+- `c.pkt.systems` 0.11.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
+  the C89 Lua runtime facade, libxml2 2.15.4, OPC UA, audio/miniaudio,
   SUS/whisper, and supporting package metadata.
 - `liblockdc` 0.18.0 for lockd C and Lua surfaces, including Pouch local
   storage and transactional inbox/outbox workflow support.
-- `lonejson` 0.44.0 for typed JSON parsing, serialization, streaming arrays,
+- `lonejson` 0.45.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
 - `cai` 0.6.0 for OpenAI API, agent runtime, Smith preset, tool, MCP, and Lua
   binding sources.
 - `liblql` 0.3.0 for the LQL dependency exposed by `liblockdc` 0.18.0.
 - `libmdf` 0.13.0 for Markdown-to-ANSI/HTML rendering, terminal paging, and Lua
   binding sources.
-- `softline` 0.6.0 for line editing, terminal prompt UX, and Lua binding
+- `softline` 0.9.0 for line editing, terminal prompt UX, and Lua binding
   sources.
-- `libpslog` 0.10.0 for structured logging and Lua binding sources.
-- `libpid0` 0.4.2 for Linux PID 1 behavior in the `vectis` executable.
+- `libpslog` 0.12.0 for structured logging and Lua binding sources.
+- `libpid0` 0.5.0 for Linux PID 1 behavior in the `vectis` executable.
 
 Vectis validates the dependency manifest during CMake configure. A stale or
 mixed dependency root should fail early instead of producing a subtly mismatched
 SDK.
 
-The c.pkt.systems 0.10.0 shared GNU/Linux dependency set requires **glibc 2.43
+The c.pkt.systems 0.11.0 shared GNU/Linux dependency set requires **glibc 2.43
 or newer**, up from 2.38 in 0.9.0. This approved deployment minimum applies to
 shared SDK consumers on x86_64, aarch64 and armhf. Upgrade older deployment
 runtimes before adopting those shared dependencies. Public facade ABI majors
