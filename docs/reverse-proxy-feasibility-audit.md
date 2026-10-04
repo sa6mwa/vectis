@@ -1,9 +1,12 @@
 # Reverse proxy transport feasibility audit
 
-Status: architecture selected for implementation, 2026-09-25, based on source
-audit and targeted live transport probes. The probes do not implement a
-production proxy route. The intended feature contract is in
-[reverse-proxy-spec.md](reverse-proxy-spec.md).
+Status: historical pre-implementation feasibility evidence, 2026-09-25.
+The probes below are not the production proxy route. Production route
+registration, HTTP/SSE/WebSocket forwarding, hooks and later verification are
+implemented and described in [reverse-proxy-spec.md](reverse-proxy-spec.md) and
+[Lua app](../manual/lua-app.md). Open findings and implementation gates in this
+record apply to its probe candidate; they must not be read as the current feature
+backlog. Native kqueue execution still requires its own platform evidence.
 
 ## Decision
 
@@ -1165,7 +1168,7 @@ directories are gone afterward. Normal runs of both probes also pass through
 the supervisor. This covers those two probes; the broader Kore runtime test
 harness and production proxy cancellation paths still need their own proof.
 
-## Findings from the current source
+## Findings from the feasibility candidate
 
 | Boundary | Evidence and consequence | Feasibility |
 | --- | --- | --- |
@@ -1180,7 +1183,7 @@ harness and production proxy cancellation paths still need their own proof.
 | Timers and shutdown | [`kore_connection_check_timeout()`](../vendor/kore/upstream/src/connection.c) still enforces the header timer after pre-body takeover unless the proxy clears it. Worker teardown runs before [`kore_connection_cleanup()`](../vendor/kore/upstream/src/worker.c). Vectis exposes the worker teardown hook through its static-runtime symbol table. | A one-second timer killed an idle takeover before the fix; clearing `http_timeout` preserved it. Active downstream connection was observed at teardown and disconnected once. A stalled upstream TLS handshake was cancelled with its curl handle, Kore socket watchers, and deadline timer before event-loop cleanup. TCP upstream resets before and after response commitment, queued output abort over cleartext and TLS, and fault-injected cleartext and TLS write errors pass worker-loop probes. Other callback phases and timeout policies remain open. |
 | Upstream transport | The local debug bundle has libcurl 8.22.0 with asynchronous DNS, HTTP/2, and TLS. Kore's wrapper buffers responses and removes completed easy handles, so the proxy needs its own multi transport. [Libcurl requires](https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html) a connect-only WebSocket handle to remain in its multi while raw send/receive uses its socket. | Plain TCP and verified HTTPS connect-only, same-origin ordinary HTTPS on a multi retaining a connect-only tunnel, early response during paused HTTP/1.1 and HTTP/2 uploads, Linux Kore worker-loop connect-only/tunnel handoff, worker-shared HTTP/1.1 multi with overlapping SSE/upload and retained WebSocket tunnel, one completed HTTP/2 SSE download and sixteen concurrently paused and resumed HTTP/2 SSE downloads in that worker multi, 1 MiB coupled cleartext and double-TLS relays, a fixed split-header WebSocket `403` with a 1 MiB body, and standalone four- and sixteen-connection paused/resumed HTTPS HTTP/2 probes pass. A downstream reset of a live HTTP/2 stream sends `RST_STREAM`; a second SSE response completes on that same TLS connection in the worker loop. Sixteen paused HTTP/2 transfers on separate TLS connections also cancel with one `RST_STREAM` each under the default reuse policy. With close-on-cancel, all sixteen cancel by `RST_STREAM` or TCP closure, a seventeenth exchange receives `503` before curl admission, and same-origin and fresh-origin follow-on requests succeed. Separate protocol pools in Kore, general HTTP framing, other WebSocket rejection cases, other target bundles, multiplexed HTTP/2 cancellation, reuse under load after normal completion, and a production HTTP/2 memory allowance remain open. |
 
-## Implementation verification gates
+## Original implementation verification gates
 
 1. **Handoff and replay:** Add only the optional pre-body callback and a
    disposable proxy echo sink in an isolated spike. Send header plus body,

@@ -1,5 +1,9 @@
 # Vectis Lua upgrade seam audit
 
+Status: recorded integration evidence for code committed as `e20ab55`. Earlier
+iteration results below are historical; the completed verification section is
+the final result for that code, not approval of a later release candidate.
+
 This is an agent semantic integration review of the working candidate on `init`,
 based on `b1fe538013c6f9e6bfceee03cf9ee006b0f6f48a`. That commit already
 changed pins; the previous pin baseline is its parent `2fa69d8`. The reviewed

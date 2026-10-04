@@ -1,6 +1,6 @@
 # CAI Agent And Vectis Integration
 
-CAI 0.5 owns Agent Smith's coding-agent behavior. Vectis hosts it without
+CAI 0.6.0 owns Agent Smith's coding-agent behavior. Vectis hosts it without
 creating a parallel agent implementation.
 
 ## Ownership
@@ -56,8 +56,8 @@ The renderer and agent worker signal an application wake FD after publishing
 output or a status snapshot. Softline waits on that FD alongside terminal
 input and invokes a UI-owner callback. The callback drains a bounded amount of
 output through `sl_print_above()` and applies the latest status snapshot before
-returning to input handling. No worker calls Softline. This requires the
-required Softline external-event API.
+returning to input handling. No worker calls Softline. This uses Softline's
+implemented external-event API.
 
 ### Status projection
 

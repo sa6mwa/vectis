@@ -1,6 +1,6 @@
 # Agent Smith
 
-Vectis ships CAI 0.5's `smith` coding-agent preset as a Vectis-hosted product
+Vectis ships CAI 0.6.0's `smith` coding-agent preset as a Vectis-hosted product
 surface. CAI owns the agent loop, model protocol, tool semantics, review
 subagents, and session journal contract. Vectis owns the command-line
 experience, lockdc/Pouch persistence, workspace boundary, and C/Lua facades.

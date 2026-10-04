@@ -102,6 +102,17 @@ Bootlin interpreters, both runtime-path tags, absolute dependencies and static
 binaries inside multiply nested release archives. Scanner scratch stays under
 `build/`.
 
+## Historical runtime-selection verification
+
+The measurements and dependency-refresh records below describe their dated
+candidates. Their test counts, provisional failures and delivered binary digest
+are historical evidence, not the current suite or release status. The subsequent
+[Lua integration audit](lua-upgrade-seam-audit.md#completed-independent-review-and-final-verification)
+records the 211-check candidate and closure checks. The old Darwin-workflow
+policy conflict was resolved by the adopted-workflow allowlist; native Darwin
+execution and complete service-memory qualification remain separate gates.
+The SSH sanitizer finding was not requalified by the targeted source tests.
+
 ## Measurement method
 
 Measure execution, excluding the build, in a fresh cgroup for each run:
@@ -302,13 +313,14 @@ C, C++, and pkg-config consumers and 36 installed examples per mode. The
 new stripped x86_64 musl static CLI passed the supplied production probe's
 69/69 checks in script, packed, and direct modes, all with clean shutdown.
 Separate encoder shape and unsupported-session cleanup probes also passed.
-The delivered `/home/mike/vectis` SHA-256 is
+The binary delivered during that dependency-refresh task had SHA-256
 `0d07934b6a2c27d22b6af7ebad5e521c820a9fac9a1d1476627d1002f58e8625`.
 
-The lifecycle contract script stops at an existing policy conflict: it forbids
+At that point the lifecycle contract script stopped at a policy conflict: it forbade
 repository automation files, but the branch tracks
 `.github/workflows/darwin-kqueue.yml`. That policy assertion and workflow were
-left unchanged; the dependency pins were verified independently. The shared
+left unchanged in that dependency-refresh task; the later integration cutover
+resolved this assertion. The dependency pins were verified independently. The shared
 GNU/Linux glibc minimum remains 2.43 and public facade ABI majors are unchanged.
 Cross-target runtime, full service e2e, sanitizer, and Valgrind suites were not
 rerun. Evidence is retained under `build/dependency-upgrade/`. No release was

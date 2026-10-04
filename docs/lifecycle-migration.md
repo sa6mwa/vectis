@@ -1,8 +1,9 @@
 # Vectis Lifecycle Migration
 
-This ledger tracks the migration toward the pkt.systems C/CMake lifecycle. It is
-temporary until the repository has fully converged or the engineer decides to
-keep it as project documentation.
+Status: historical migration ledger. The listed cutovers are implemented, not
+pending tasks. Current commands are indexed by `make help`; current dependency
+pins are in [the README](../README.md#dependency-baseline). Version numbers in
+individual migration rows identify the original cutover, not today's baseline.
 
 | Old command or behavior | Lifecycle surface | Behavior preserved | Verification added | Status |
 | --- | --- | --- | --- | --- |
@@ -18,7 +19,7 @@ keep it as project documentation.
 | CAI was not part of the lifecycle dependency graph | Pinned CAI 0.6.0 SDK archives plus direct Lua source archives for liblockdc 0.18.0, CAI 0.6.0, LoneJSON 0.45.0, liblql 0.3.0, libpslog 0.12.0, libmdf 0.13.0, and softline 0.9.0 | The Vectis SDK exposes CAI and liblockdc's LQL dependency through installed CMake dependency closure, while the `vectis` runner statically links CAI and preloads `require("lockdc")`, `require("cai")`, and `require("lonejson")` without invoking LuaRocks | `make test-debug`, `make test-install-tree`, `make package-verify` | Implemented |
 | Vectis consumed older c.pkt.systems bundles without OPC UA, SUS, or audio facades | Pinned `c.pkt.systems` 0.9.0 SDK archives and CMake/pkg-config dependency closure for `cpkt-opcua`, `cpkt-sus`, and `cpkt-audio` | Existing curl, SSH/SFTP, MQTT, Lua runtime, XML, AI, and lockd surfaces remain; Vectis now carries the new cpkt facade libraries through CMake and pkg-config SDK metadata | `scripts/test_lifecycle_contracts.sh`, `make test-install-tree`, `make package-verify` | Implemented |
 | Linux release toolchain files selected ambient cross compiler names | Vendored `scripts/cpkt-toolchains.sh`, `scripts/cpkt-aflpp.sh`, and Bootlin-backed Linux CMake toolchain files | Target IDs remain unchanged; dependency roots stay under `.cache/deps`, while compiler/toolchain resolution moves to the shared lifecycle cache | `make test-cpkt-toolchains`, `scripts/test_lifecycle_contracts.sh` | Implemented |
-| Embedded Lua runner had no standard Lua lifecycle target | `make lua-test`, `make lua-env`, CTest `lua` labels | Vectis continues to ship an embedded Lua runner rather than a standalone Vectis Lua rock; the standard Lua test/env surface now exercises the embedded `lockdc`, `lonejson`, `cai`, and `libmdf` facades | `make lua-test`, `scripts/test_lifecycle_contracts.sh` | Implemented |
+| Embedded Lua runner had no standard Lua lifecycle target | `make lua-test`, `make lua-env`, CTest `lua` labels | The original cutover added embedded tests; Vectis now ships both the embedded runner and separate Lua source-rock artifacts. The standard Lua test/env surface exercises the embedded `lockdc`, `lonejson`, `cai`, and `libmdf` facades | `make lua-test`, `scripts/test_lifecycle_contracts.sh` | Implemented |
 | Binary SDK copied dependency Lua source trees from the external SDK `share/` tree | Binary SDK artifact contract and release privacy/layout verification | Dependency docs and c.pkt.systems manifest metadata remain in the SDK; dependency source trees, rockspec templates, and Lua C binding sources are excluded from C binary archives | `scripts/verify_release_artifacts.sh`, `make package-verify` | Implemented |
 | Darwin smoke bundle existed only as an internal package side effect | `make release-darwin-smoke-bundle` | Existing Darwin SDK and smoke bundle generation remains delegated to `scripts/package.sh arm64-apple-darwin` and skips/fails according to osxcross availability | `scripts/test_lifecycle_contracts.sh`, `make test-target-tools` | Implemented |
 | Lifecycle baseline and test tiers drifted from the shared current contract | CMake 3.24, explicit `CPKT_DEPENDENCY_CACHE`, `debug-lua` and `valgrind` presets, ABI-0 shared library, and aggregate deterministic test gate | All non-shippable local executables continue to use the pinned Bootlin runtime; shipped artifacts keep normal deployment loader metadata | `scripts/test_lifecycle_contracts.sh`, `make test-all`, package verification | Implemented |

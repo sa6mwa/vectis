@@ -1,21 +1,27 @@
 # Fast failure-mode feedback
 
 Run `make test-failures-fast` for local failure-mode checks. It incrementally
-builds only the Vectis CLI and runs the `failure-fast` CTest label serially.
+builds the Vectis CLI and the native lifetime/supervisor/audio units selected
+by the `failure-fast` CTest label, then runs that label serially.
 `make test` runs this gate before the remaining debug tests, so a failure is
 reported before the longer existing suites. These tests are also registered
 normally for direct CTest and release gates.
 
-The tests use no sleeps, polling loops, remote services, credentials, containers,
-or deliberate timeout experiments. The HTTP harness waits on startup output
-using a selector, then sends requests over loopback. Its readiness, request, and
-shutdown deadlines only bound unexpected hangs; they are not timed workloads.
+Failure injection uses deterministic allocator faults, callbacks and process/thread
+handshakes rather than sleeps or deliberate timeout workloads. Native tests use
+local threads/forks; real normal/packed fixtures use loopback and generated
+credentials/storage, not external services or containers. HTTP harnesses wait
+on readiness/effect output with selectors. Deadlines bound unexpected hangs;
+recovery/timer fixtures exercise scheduling without adding fixed test delays.
 Generated fixtures and packed executables stay under the build directory.
 
-On the upgraded native debug build, all 23 tests passed in 2.30 seconds excluding
-the build. The construction and cleanup matrix counts 1,456 checks; the HTTP
-matrix adds 96 checks and two uncaught-error exit checks. These are measured
-local timings, not a portable runtime guarantee.
+The integration candidate `e20ab55` passed all **35** fast tests in **16.05s**,
+excluding the build, followed by 176 broader checks. The earlier encoder/MCP-only
+23-test measurement is superseded as the current label count. Its construction
+and cleanup matrix still supplies 1,456 assertions; its HTTP matrix adds 96
+assertions and two uncaught-error exits. Timings are local observations, not
+portable runtime guarantees. See the [seam audit](lua-upgrade-seam-audit.md#completed-independent-review-and-final-verification)
+for exact commands and the separate nonclean full-service Memcheck diagnostic.
 
 ## Coverage
 
@@ -39,6 +45,19 @@ local timings, not a portable runtime guarantee.
 - Both bundled lonejson encoder aliases at plain and escaped Unicode string
   boundaries and full pipeline records at 1, 10, 50, 100, 200, 400, and 600 rows.
   Successful encoding must round-trip every field.
+
+- Actual worker commit receipts must wake the owner dispatcher with durable
+  discovery disabled and a candidate probe interval beyond the test deadline;
+  separate saturation cases prove repair, not direct-path latency.
+- Bounded IPC full/closed/oversize cases, coalesced wake races, owner process/thread
+  restrictions, retained mappings, timer disable and scope lifecycle errors.
+- Unknown workflow kinds, rollback-only transactions, explicit outcome lifetimes,
+  queue failure accounting and canonical client option propagation.
+- Throwing response/source getters, read/reset failures, close/reentry, coroutine
+  ownership, allocation failures after callback return, exact-once cleanup and
+  healthy continuation across normal and packed execution.
+- OPC UA logger replacement/ownership and SUS foreign-thread log delivery,
+  retained callback collection and managed-service teardown.
 
 ## Encoder regression
 

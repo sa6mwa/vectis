@@ -274,7 +274,7 @@ Browse methods materialize each borrowed cpkt callback entry into an owned Lua
 table:
 
 ```lua
-{
+local entry = {
   target_node_id = opcua.node_id(...),
   node_class = opcua.NODE_CLASS_VARIABLE,
   browse_name = { namespace_index = 1, name = "child" },
@@ -300,7 +300,7 @@ per-method storage before returning to cpkt.
 Method argument metadata readers use one-based `argument_index` and return:
 
 ```lua
-{
+local argument = {
   data_type = opcua.node_id(...),
   value_rank = -1,
   name = "InputArguments",
@@ -330,7 +330,7 @@ sampling interval. `client:monitor_value_ex()` accepts
 Value-monitor callbacks receive owned Lua tables:
 
 ```lua
-{
+local value_event = {
   subscription_id = 1,
   monitored_item_id = 2,
   value = opcua.value_integer(7),
@@ -360,7 +360,7 @@ Event-monitor callbacks follow the same retention and error rules.
 `client:monitor_events()` receives compact event data:
 
 ```lua
-{
+local event = {
   subscription_id = 1,
   monitored_item_id = 2,
   event = {
@@ -382,7 +382,7 @@ garbage collection. `client:read_async()`, `client:write_async()`,
 pumps the owning Lua state. Completion callbacks receive one owned table:
 
 ```lua
-{
+local completion = {
   request_id = 42,
   ok = true,
   result = opcua.OK,
@@ -409,7 +409,7 @@ call.
 selected fields as owned `opcua.value` userdata:
 
 ```lua
-{
+local field_event = {
   subscription_id = 1,
   monitored_item_id = 3,
   fields = {

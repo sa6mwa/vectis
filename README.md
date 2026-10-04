@@ -35,8 +35,10 @@ one deployable package:
 - Typed JSON, XML, and delimiter-separated input mapped into `lonejson` structs.
 - Lockd-backed state, leases, attachments, queue producers, and consumer
   services through `liblockdc`.
+- Serial logical supervisors, bounded process-safe IPC and transactional outbox
+  handlers with automatic worker-to-owner receipt wakeups.
 - Downstream HTTP, SFTP, MQTT, and transfer clients through libcurl.
-- OPC UA clients through the `c.pkt.systems` C89 OPC UA facade.
+- OPC UA clients and servers through the `c.pkt.systems` C89 OPC UA facade.
 - Audio capture/playback and whisper-backed speech surfaces through the
   `c.pkt.systems` audio and SUS facades.
 - SSH command execution and SFTP transfers through libssh2.
@@ -211,6 +213,21 @@ editing facilities used by the executable and exposed through their bundled Lua
 modules. Vectis does not present unimplemented protocol integrations as SDK
 features; the current public surface is documented in [the API index](manual/api.md).
 
+## Supervisors and transactional effects
+
+Declare `app:supervisor()` scopes and `app:workflow()` handlers before startup.
+Route workers commit durable effects; Vectis automatically forwards their receipt
+keys through a bounded FD-waking channel to one persistent owner dispatcher.
+Handlers run serially in the supervisor's Lua state. Reconciliation repairs
+missed wakes rather than replacing direct delivery.
+
+See [Lua supervisors and workflows](manual/lua-supervisor.md) for complete
+examples, options, streaming payloads and lifecycle rules. Pull payload sources,
+blocking-handler automatic renewal and kind-filtered intake remain upstream
+contracts; isolated lanes, managed cross-process replies and shared-runtime
+leadership remain extensions. The [documentation index](docs/README.md)
+distinguishes current contracts, remaining plans and historical evidence.
+
 ## Lua Runtime
 
 The `vectis` executable embeds the provisioned Lua 5.5 runtime facade and does
@@ -227,10 +244,12 @@ local vectis = require("vectis")
 Bundled modules are registered statically through `package.preload`. The
 runtime currently registers Vectis-owned Lua support plus dependency bindings
 such as lockdc, lonejson, cai, curl, opcua, libmdf, and softline where available
-from the provisioned sources. The embedded OPC UA Lua facade exposes the
-cpkt-opcua client foundation as `require("opcua")`, including facade/upstream
-version helpers, node-id helpers, scalar value helpers, and synchronous client
-connect/read/write/iterate operations. The embedded curl Lua facade exposes
+from the provisioned sources. The embedded OPC UA Lua facade exposes
+`require("opcua")`, including
+client/server lifecycles, discovery, node/value operations, methods, monitors,
+async operations, history and PubSub configuration. See
+[Lua OPC UA](manual/lua-opcua.md) for supported operations, managed ownership
+and C-only exclusions. The embedded curl Lua facade exposes
 `curl.perform()`, `curl.json()`, and `curl.stream_json()` for libcurl-supported
 URL schemes, including SMTP usage through the same option-table model.
 `require("vectis").http`
@@ -425,6 +444,8 @@ The following shipped surfaces are covered by the local suite:
 - Lua app helpers for guarded and unguarded JSON endpoints, static directories,
   packed assets, WebDAV, metrics, and managed services.
 - Lockd app integration and managed consumer-service helpers.
+- C supervisor channels and Lua scopes/workflows, including direct outbox
+  receipt delivery, copied IPC, coalesced repair signals and owner dispatch.
 - Lua runner, shebang/script execution, and Linux packed-script support.
 - Bundled CAI, libmdf, and softline Lua modules for AI/tool workflows,
   Markdown rendering, and terminal prompt UX.

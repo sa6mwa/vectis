@@ -2,7 +2,8 @@
 
 Vectis has two product-facing API surfaces:
 
-- the C SDK in `include/vectis/vectis.h`, shipped as `libvectis`;
+- the C SDK in `include/vectis/vectis.h` and the public extension headers,
+  shipped as `libvectis`;
 - the embedded Lua surface in the `vectis` executable, documented in
   [Lua surface](lua.md).
 
@@ -11,7 +12,8 @@ The C SDK does not ship Lua runtime state or package-manager artifacts.
 
 ## C SDK
 
-The public C SDK is declared in `include/vectis/vectis.h`. It is organized
+The public C SDK is declared in `include/vectis/vectis.h` and extension headers
+including `include/vectis/supervisor.h` and `include/vectis/proxy.h`. It is organized
 around explicit config structs, status-returning functions, and caller-owned
 cleanup functions.
 
@@ -30,6 +32,12 @@ Major groups:
 - Runtime/server: `vectis_app`, `vectis_server_config`,
   `vectis_register_route()`, foreground `vectis_run()`, process-backed
   `vectis_start()`, `vectis_stop()`, and `vectis_restart()`.
+- Supervisors and IPC: `vectis/supervisor.h` declares app-owned logical scopes,
+  owner-thread dispatch, timers, copied bounded frames, coalesced signals,
+  readiness FDs and lifecycle diagnostics. The app receiver ABI is unchanged;
+  these operations use separate receiver shells and free functions. Lua
+  `app:workflow()` composes this C transport with upstream Lockdc transactions
+  and dispatchers. See [Lua supervisors and workflows](lua-supervisor.md).
 - Requests/responses: `vectis_request_*`, `vectis_response_*`,
   materialized/spilled body helpers, JSON replies, file responses, and
   source-backed responses.
@@ -140,7 +148,7 @@ Lua docs:
 ## Release Contract
 
 Before release, new public C SDK groups must be represented here and declared in
-`include/vectis/vectis.h`. New Lua modules or workflow helpers must be linked
+the public headers under `include/vectis/`. New Lua modules or workflow helpers must be linked
 from `manual/lua.md`.
 
 The embedded Kore runtime is a private implementation detail. The Vectis SDK

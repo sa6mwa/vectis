@@ -18,6 +18,10 @@ If a public dependency API cannot support a required contract, report the exact 
 
 Update `docs/lua-coverage-matrix.md`, relevant manuals and examples, and the current dependency-surface audit. Add observable regression tests for successful and failed execution, cleanup, option propagation, and process/thread boundaries. Keep the first feedback path fast: deterministic faults, zero-wait probes, tiny fixtures, and no delay-based fault tests. Broader lifecycle, real service, packaging, and memory checks must still prove the promised product contract.
 
+## Documentation maintenance
+
+Update documentation in the same task that changes behavior. Remove delivered work from future implementation plans, document the usable API in the manual, and update indexes and examples. Keep remaining requirements explicit without presenting them as supported options. Mark superseded designs and historical verification records with their scope and replacement; historical failures or test counts are not current status. Verify documentation against public headers, Lua implementations and observable tests, including the manual embedded in the executable.
+
 ## Mandatory agent release gate
 
 Before releasing any Vectis version, the responsible agent must perform and record a fresh semantic Lua/integration surface review. This is a reasoning gate; do not move it into build shell scripts or treat a symbol scanner, coverage matrix, successful build, or test exit code as a substitute.

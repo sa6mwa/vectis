@@ -51,7 +51,7 @@ require_todo_done() {
 
 assert_core_runtime_spec_evidence() {
   require_egrep "$repo_root/docs/service-runtime-lifecycle-spec.md" \
-    'Status: draft implementation authority' \
+    'Status: implemented lifecycle contract' \
     "service runtime spec remains authoritative"
   require_egrep "$repo_root/docs/service-runtime-lifecycle-spec.md" \
     'Kore must never fork workers from a process' \

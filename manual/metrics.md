@@ -123,8 +123,9 @@ disks. The Python runner accepts `--updates`, `--ready-seconds`, and
 `--cpu-seconds` for explicit larger investigations; standard gates use fixed
 defaults.
 
-Pouch's default exclusive-writer lease may prevent immediate reopening after
-SIGKILL until the lease expires. The gate separately checks that this case
+An explicitly selected exclusive-writer lease may prevent immediate reopening
+after SIGKILL until the lease expires; Vectis-owned clients default to shared
+writer mode. The gate separately checks that the exclusive case
 fails promptly with the lockdc exclusive-writer diagnostic. Crash recovery is
 measured using an explicit `?single_writer=false` endpoint; Vectis does not
 bypass an exclusive lease or silently change the configured writer policy.
@@ -148,7 +149,7 @@ default. They use the same
 `lockd.pouch_crypto_key`, `lockd.pouch_crypto_key_file`,
 `lockd.pouch_crypto_generate_key_file`, and `lockd.pouch_compression` settings
 as other Vectis persistence. With no key setting or exact
-`pouch_crypto_key`/`pouch_crypto_key_file` endpoint query option, Vectis
+`crypto_key`/`crypto_key_file` endpoint query option, Vectis
 securely generates `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`.
 Remote endpoints and separate liblockdc clients do not use these fields.
 

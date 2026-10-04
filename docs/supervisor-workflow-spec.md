@@ -1,6 +1,7 @@
 # Supervisor and Workflow Dispatch Specification
 
-Status: implementation authority.
+Status: serial supervisor, public IPC and outbox integration implemented;
+remaining contracts are identified below.
 
 This specification extends the established Vectis T2 supervisor runtime into a
 reusable background-execution model. It uses liblockdc 0.18.0's threadless
@@ -45,9 +46,9 @@ Current logical health is state plus copied last-error diagnostics. Independent
 quotas, lane permits, automatic restart/backoff and stronger health policies below
 remain intended contracts; meaningful unsupported options are rejected.
 
-It supersedes the future-facing parts of the current statement that the T2
-control channel is permanently private. Existing lifecycle safety rules remain
-in force: Kore is forked from a thread-clean process; supervisor services
+The public supervisor transport is separate from the private VRC1 lifecycle
+control channel; it does not expose or repurpose control frames. Existing
+lifecycle safety rules remain in force: Kore is forked from a thread-clean process; supervisor services
 materialize only after that fork boundary; and no foreign thread enters an
 arbitrary Lua state.
 
@@ -151,8 +152,9 @@ Vectis app runtime
             └─ timer and reconciliation jobs
 ```
 
-Logical supervisors have independent names, source registrations, quotas,
-health, failure policy, start/stop state, and message endpoints. They share the
+Logical supervisors have independent names, source registrations, bounded inboxes,
+state/error diagnostics, failure policy, start/stop state and message endpoints.
+Independent quotas and stronger health policies remain requirements. They share the
 host process and its lifecycle monitor. The default policy is one host process
 per app because it is cheaper, easier to observe, and avoids needless process
 trees.
@@ -218,8 +220,9 @@ supervisor declaration and cannot change after the fork boundary. The C config
 uses immutable `uint32_t` signal-kind values; omission declares no application
 signal kinds.
 
-The receiver shell provides `start`, `stop`, `wait`, `state`, `channel`, and
-typed source-registration operations with the same contract. Its public method
+The receiver shell provides `start`, `stop`, `wait`, `state`, `channel`, `timer`
+and `close`. C source adapters use the configured event handler; Lua provides
+the typed source-registration helpers. The shell's public method
 table reserves eight `void *` extension slots. Every operation is also available
 as a free function so callers never need to depend on vtable layout.
 
@@ -230,26 +233,26 @@ declared → materializing → running → stopping → stopped
                     └──────────────────────→ failed
 ```
 
-Failure policy is explicit: fail the app, stop only this logical supervisor, or
-restart it with bounded backoff. A failure never leaves a source silently
-claiming durable work.
+Implemented failure policy is explicit: fail the app or stop only this logical
+supervisor. Automatic restart with bounded backoff is a remaining requirement.
+A failure never leaves a source silently claiming durable work.
 
-### Source adapters and outcomes
+### Implemented source adapters and outcomes
 
-The supervisor owns scheduling, limits, logging, lane selection, and failure
-observation. It does not redefine a source's delivery contract.
+The serial supervisor schedules one owner-state callback at a time. It does
+not redefine the source's durable delivery contract.
 
-| Adapter | Input | Handler terminal outcome |
+| Adapter | Input | Current handler outcome |
 | --- | --- | --- |
-| workflow outbox | claimed `lc_outbox_job` | complete, retry, dead-letter |
-| Lockd queue | claimed queue message | ack, nack/retry, dead-letter |
-| timer | scheduled tick | success, retry/reschedule, disable |
-| IPC receiver | copied bounded message | accept, reply, reject, drop |
-| native receiver/watch | copied typed event | adapter-defined success/failure |
+| workflow outbox | claimed `lc_outbox_job` | returned complete, retry or dead-letter token |
+| Lockd queue | batch-one queue message | returned ack or nack token; queue policy controls dead letters |
+| timer | scheduled tick | continue; false/"disable" disables; exception follows scope failure policy |
+| IPC receiver | copied bounded frame or signal | accept; false or nil,error follows scope failure policy |
+| SUS log safe point | bounded copied backend logs | explicit owner pump through a timer |
 
-All adapters have bounded in-flight capacity. They must not claim or copy more
-work than their selected lane can accept. A Lua lane defaults to one in-flight
-handler. A C-only adapter may use its own explicitly configured worker count.
+Generic native watch adapters, permits/independent quotas, timer retry policies
+and managed IPC replies remain separate extensions. The current implementation
+does not accept their configuration fields or claim their semantics.
 
 ### Public IPC
 
@@ -307,135 +310,35 @@ supervisor schedules indexed reconciliation. A closed send or signal is
 repaired by durable startup recovery. Generic coalesced signals are not used
 for per-outbox-key delivery.
 
-### Lua surface
+### Implemented Lua surface
 
-`app:supervisor(opts)` declares a logical supervisor and returns a scope. The
-scope does not create a process at declaration time.
+`app:supervisor(opts)` declares an app-owned logical scope without creating a
+process. `scope:channel()` and `app:ipc(name)` return its bounded producer
+endpoint. `send(kind, bytes[, opts])` and `signal(kind)` return `true` or
+`nil,status`, including "full" and "closed". Signal kinds are declared before
+fork. Frame metadata accepts explicit uint32 correlation IDs and flags; no
+managed reply routing or `send_json()` helper is supplied.
 
-`scope:channel()` returns its declared bounded inbox channel.
-`channel:send(kind, bytes)` and `channel:signal(kind)` are nonblocking and
-return `true` or `nil, status`, including `"full"` and `"closed"`. `send()`
-accepts bytes only; a `send_json()` convenience may encode explicitly, subject
-to the same frame bound. `signal()` accepts no payload and only declared signal
-kinds. Lua declares signal-kind labels as strings; Vectis maps those labels to
-immutable numeric ids before fork. Duplicate labels or C numeric values are
-rejected during declaration.
+`app:workflow(opts)` declares one canonical workflow identity.
+`workflow:outbox(opts)` registers one handler per kind on the lazy default
+scope or `opts.supervisor`; `scope:outbox(opts)` selects that scope explicitly.
+`workflow:transaction(callback)` owns commit/rollback and automatically
+forwards successful commit receipts. Its callback exposes `tx:append_outbox`
+and upstream participant operations such as `tx:acquire`, with guarded lifetimes.
+An unregistered kind poisons the transaction even when caught by the callback.
 
-**Required-contract sketch, not runnable current API:** the following
-`payload_source()` example requires the missing upstream pull facility. Use
-the [delivered manual](../manual/lua-supervisor.md) for runnable push streaming.
+Jobs expose genuine push `write_payload(sink)`, explicit stateless `renew(ttl)`,
+scoped state access and typed complete/retry/dead-letter tokens. The selected
+token must be returned; terminalization happens afterward. Handler exceptions
+or absent/incorrect tokens follow upstream retry policy. No callback deadline
+or preemption is supplied. Short stateful completion works; renewal in stateful
+mode is rejected because of the documented upstream completion defect.
 
-```lua
-local delivery = app:supervisor({ name = "delivery" })
-local maintenance = app:supervisor({
-  name = "maintenance",
-  channel = { signal_kinds = { "reindex" } },
-})
-
-delivery:outbox({
-  workflow = orders,
-  kind = "order.webhook",
-  handler = function(job)
-    local result, err = vectis.http.post({
-      url = job.destination,
-      headers = { ["idempotency-key"] = job.effect_key },
-      body_source = job:payload_source(),
-    })
-    if not result then
-      return job:retry(err.message)
-    end
-    if result.status >= 500 then
-      return job:retry("remote 5xx")
-    end
-    if result.status >= 400 then
-      return job:dead_letter("remote rejected payload")
-    end
-    return job:complete()
-  end,
-})
-
-maintenance:timer({
-  name = "prune-expired-orders",
-  every = "1h",
-  handler = function()
-    return orders:prune_expired()
-  end,
-})
-
-local reindex = maintenance:receiver({
-  name = "reindex",
-  handler = function(event)
-    return rebuild_index(event.payload)
-  end,
-})
-```
-
-The high-level workflow surface is intentionally simpler than raw lockdc:
-
-```lua
-local orders = app:workflow({
-  namespace = "myapp.orders",
-  max_attempts = 12,
-})
-
--- No supervisor argument: attach to the lazily declared default supervisor.
-orders:outbox({
-  kind = "order.webhook",
-  handler = deliver_webhook,
-})
-
-orders:transaction(function(tx)
-  tx:update_json(order)
-  tx:append_outbox({
-    operation_id = "order/" .. order.id,
-    effect_id = "webhook",
-    effect_key = "order-webhook-" .. order.id,
-    payload_digest = payload_digest,
-    kind = "order.webhook",
-    destination = webhook_url,
-    content_type = "application/json",
-  }, payload_source)
-end)
-```
-
-`job:complete()`, `job:retry(...)`, and `job:dead_letter(...)` construct typed
-outcomes. They do not directly perform the terminal workflow mutation; Vectis
-does that after the handler returns. A handler exception, cancellation, or
-deadline becomes a retry unless the adapter's policy says otherwise.
-
-One dispatcher owns exactly one handler registration for each `(workflow,
-kind)` pair. Registering the same pair twice, including through different
-logical supervisors, fails at declaration time; different kinds from one
-workflow may use different logical supervisors.
-
-The one native dispatcher is a source router, not a Lua lane. It maps each
-claimed job's registered `kind` to its logical supervisor and enqueues it only
-when that supervisor's selected lane has capacity. Vectis's high-level
-`tx:append_outbox()` rejects an unregistered kind before commit, so it cannot
-create an orphaned Vectis job with no terminal-outcome owner; that rejection
-marks the enclosing transaction failed, making commit impossible and rolling
-back all of its staged state. Raw liblockdc remains available for deliberately
-decoupled producers that need another unhandled-job policy.
-
-`job:payload_source()` is a handler-scoped streaming source. A convenience
-`job:json()` may exist for intentionally materialized small payloads, but it
-must document its memory limit and must not be the only payload API.
-
-The default supervisor lane serializes inline closures. Future `lua_lanes > 1`
-requires module/entry declarations because arbitrary closures cannot move into
-independent Lua states:
-
-```lua
-app:supervisor({
-  name = "parallel-import",
-  lua_lanes = 4,
-  module = "myapp.import_worker",
-  entry = "handle",
-})
-```
-
-This creates isolated lanes in the same supervisor host process. It is not an
-implicit license to run one Lua state concurrently.
+Use [Lua supervisors and workflows](../manual/lua-supervisor.md) for runnable
+examples, options and return contracts. Superseded pseudo-APIs such as
+`tx:update_json(order)`, `orders:prune_expired()` and `job:payload_source()`
+are not current Vectis methods. The pull-source and isolated-lane requirements
+remain explicit below rather than being mixed into runnable examples.
 
 ### Workflow dispatch and one local dispatcher
 
@@ -466,16 +369,18 @@ not independently construct a superficially similar workflow configuration.
 Separate post-fork clients are an isolation and ownership choice, not separate
 workflow domains.
 
-The dispatcher claims only up to its lane capacity. It renews a claim while a
-long foreign operation is in progress. A successful effect completes the job;
+The serial dispatcher claims one job per pump. Automatic renewal during a
+blocking foreign operation remains required and unavailable; current stateless
+handlers can explicitly renew between bounded operations. A successful effect completes the job;
 a transient failure returns it to `retry_wait`; a permanent, diagnosed failure
 dead-letters it. If the process stops before a terminal action, the claim
 expires and liblockdc recovery makes the immutable job eligible again. Effects
 are at-least-once and must send the stable `effect_key` to the foreign system as
 an idempotency key.
 
-For multiple Vectis runtimes that deliberately share one app/outbox identity,
-the active dispatcher is guarded by a Lockd leader lease. A replacement gains
+**Remaining shared-runtime contract:** for multiple Vectis runtimes that
+deliberately share one app/outbox identity, the active dispatcher must be guarded
+by a Lockd leader lease. Current `shared_runtime=true` is rejected. A replacement gains
 leadership only after the prior lease expires or is released. This is an
 availability optimization and does not weaken per-job claims or idempotency.
 Every such runtime must use the same canonical workflow configuration;
@@ -613,20 +518,37 @@ continue to depend on durable reconciliation after loss or partition.
   paths deterministically.
 - Multiple independent Lua worker processes safely compete for one namespace.
 
-## Implementation order
+## Remaining implementation requirements
 
-1. Use and verify liblockdc 0.18.0's `lc_outbox`, explicit dispatcher,
-   direct-key notification, and dependency-native Lua facades.
-2. Promote a narrowly scoped, declared public IPC channel above Vectis's private
-   lifecycle control bus without exposing control frames.
-3. Add the generic Vectis supervisor host/logical-supervisor C lifecycle and
-   receiver shell.
-4. Add the default supervisor Lua facade and generic timer, receiver, and
-   consumer adapters.
-5. Add the outbox Lua convenience surface and bind each asynchronous handler
-   to one persistent supervisor-owned dispatcher. Login/onboarding email is
-   synchronous and is not an outbox handler.
-6. Migrate existing C-owned worker descriptors onto supervisor scopes without
-   changing their native semantics.
-7. Add isolated Lua lanes only after the serial default, lifecycle, and IPC
-   invariants are proven end to end.
+The liblockdc integration, public bounded channel, C supervisor lifecycle,
+serial Lua scopes/timers/receivers/queue consumers, outbox handlers and automatic
+receipt forwarding are implemented. They are no longer pending implementation
+steps. The audits and manual record their executable evidence.
+
+The following requirements remain unchanged and are not supported configuration:
+
+- A handler-scoped pull `job:payload_source()` that reads storage incrementally,
+  with explicit lifetime and errors. Push `write_payload(sink)` is delivered;
+  hidden materialization or spooling cannot substitute for a public pull source.
+- Safe native claim renewal while the owner Lua handler is blocked, and correct
+  renewed-stateful checkpoint completion. Explicit stateless renewal does not
+  satisfy this requirement.
+- Kind-filtered intake so stopping one kind's scope does not pause other kinds
+  of the same workflow. Different workflow identities already remain independent.
+- Cross-runtime canonical-configuration checks and Lockd leader leases. Public
+  leases/transactions can support the local implementation; it is future Vectis
+  work, not an upstream impossibility.
+- Isolated Lua lanes using module/entry declarations, independent quotas,
+  bounded permits, stronger health policies and automatic restart/backoff.
+  Inline closures stay on the single owner state; arbitrary closures never move
+  between Lua states and one state is never entered concurrently.
+- Managed channel request/reply with bounded pending slots, runtime correlation
+  allocation, deadlines and cleanup on success, timeout, send failure or close.
+  Late/unknown replies must be dropped. Current metadata alone is not this API.
+- Migration of existing C-owned worker descriptors onto logical scopes while
+  preserving their native service contracts; additional typed/watch adapters
+  require explicit source outcomes and capacity policy.
+
+The required verification above applies to each contract when implemented;
+current passing tests do not imply completion of these remaining requirements.
+Login/onboarding email remains synchronous and is not an outbox handler.

@@ -1,5 +1,9 @@
 # Supervisor workflow implementation audit
 
+Status: recorded implementation evidence for code committed as `e20ab55`.
+Earlier scoped runs below are historical; final local verification supersedes
+their suite counts. Use the manual for the current API.
+
 This is a scoped semantic integration review for the serial default, performed
 against the working tree based on `b1fe538013c6f9e6bfceee03cf9ee006b0f6f48a`
 on branch `init`. No new pin changes are included in this implementation.

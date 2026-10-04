@@ -89,9 +89,13 @@ runtime audit and the relevant deterministic Lua/example coverage.
 The production webserver hardening item is considered implemented. Remaining
 work tracked elsewhere is not part of this closure:
 
-- broader Kore feature expansion such as WebSocket and deeper runtime config;
-- certificate/key reload hooks where Kore supports them;
-- broader Lua facade coverage audits;
 - on-device validation of Darwin release packages and the explicit pack
   unsupported response;
 - full cross-target release matrix verification.
+
+WebSocket routes, runtime guardrails, certificate reload through app restart,
+and the dependency/Lua seam audit are implemented. Their current contracts are
+in [Lua app](../manual/lua-app.md), [the Kore surface audit](kore-runtime-surface-audit.md)
+and [the dependency seam audit](lua-upgrade-seam-audit.md). The latter separately
+records remaining upstream limitations and nonclean full-service Memcheck;
+the implemented production profile does not establish release approval.

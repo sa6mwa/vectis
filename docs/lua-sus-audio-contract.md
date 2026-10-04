@@ -5,9 +5,12 @@ Vectis depends on the cpkt C89 facades for speech and audio:
 - `cpkt_sus` over whisper.cpp
 - `cpkt_audio` over miniaudio
 
-The Lua facades are partially implemented as dependency-native modules. This
-document records the required contract for completing them without weakening
-the upstream C ownership, streaming, and model-cache semantics.
+The dependency-native Lua modules and the managed worker surfaces listed below
+are implemented. This document records their ownership, streaming and model-cache
+contract. [Lua audio](../manual/lua-audio.md) and [Lua SUS](../manual/lua-sus.md)
+are the current method/option reference. Loaded-model and device behavior require
+the explicit opt-in gates below; per-model backend log ownership remains an
+upstream limitation, documented in the SUS manual.
 
 Current deterministic coverage includes:
 
@@ -110,9 +113,8 @@ network-backed model cache access remain opt-in live/hardening surfaces.
 
 ## Audio Dependency-Native Surface
 
-Initial `audio` Lua coverage should expose:
+Implemented `audio` Lua coverage includes:
 
-- `audio.version` or equivalent facade/backend version metadata if available;
 - result constants and `audio.result_string(code)`;
 - format constants for `wav`, `flac`, `mp3`, and `unknown`;
 - `audio.can_decode(format)` and `audio.can_encode(format)`;
@@ -132,12 +134,12 @@ Initial `audio` Lua coverage should expose:
 - `audio.ptt.open(opts)`, `ptt:press()`, `ptt:push_f32_mono_16k(frames)`,
   `ptt:release()`, and `ptt:flush()`.
 
-Capture/playback device helpers should be added only with opt-in tests because
+Capture/playback device helpers are implemented with opt-in tests because
 host audio devices and platform commands are environment-sensitive.
 
 ## SUS Dependency-Native Surface
 
-Initial `sus` Lua coverage should expose:
+Implemented `sus` Lua coverage includes:
 
 - facade/backend version, system info, and capabilities;
 - result constants and `sus.result_string(code)`;
@@ -184,8 +186,8 @@ explicit `insecure_no_checksum = true` option.
 
 ## Deterministic Tests
 
-Initial tests must avoid live microphones, speakers, live external network, and
-large model downloads by default.
+The deterministic tests avoid live microphones, speakers, external network
+and large model downloads by default.
 
 Required deterministic coverage:
 

@@ -1,8 +1,9 @@
 # Vectis Lua App
 
 `vectis.app` exposes C-owned app receivers for Lua applications. It
-supports fixed routes, buffered Lua request callbacks, static mounts, WebDAV,
-auth routes, and lockd consumer services.
+supports fixed routes, buffered Lua request callbacks, live response/SSE sources,
+static mounts, WebDAV, auth routes, managed services, and serial supervisor
+workflows with bounded IPC.
 
 For the supported generic content-site composition of these receivers, see
 [Serving a Lua site](lua-site.md).
@@ -206,7 +207,7 @@ lockd = {
 }
 ```
 
-With no key setting or exact `pouch_crypto_key`/`pouch_crypto_key_file`
+With no key setting or exact `crypto_key`/`crypto_key_file`
 endpoint query option, Vectis creates
 `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key` with mode 0600. This is a
 Vectis key used only by Vectis-owned local Pouch persistence; separate

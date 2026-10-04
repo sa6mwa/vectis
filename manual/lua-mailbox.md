@@ -53,7 +53,7 @@ the handler fails or the mailbox operation fails.
 Events are Lua tables:
 
 ```lua
-{
+local event = {
   kind = "worker.opcua",
   payload = "read ns=2;s=Temperature",
   correlation_id = 0,
@@ -96,9 +96,13 @@ They are valid in the domain that created them and are not a cross-process
 contract between the Kore child and the supervisor.
 
 For route-to-worker handoff in one process, use a mailbox or broker directly.
-For supervised Kore child to supervisor communication, use durable `lockdc`
-queues/pouch storage today. The private Vectis runtime control bus is currently
-reserved for lifecycle control frames and is not a public Lua request/reply API.
+For bounded one-way Kore-worker-to-supervisor communication, declare a supervisor
+channel and use `app:ipc(name)`. App-owned workflows automatically forward their
+committed receipt keys through this path. See [Lua supervisors and workflows](lua-supervisor.md).
+Use durable `lockdc` queues/Pouch storage when work must survive process exit.
+Managed request/reply across processes remains unimplemented; the existing
+mailbox broker operates within one process. The private Vectis runtime control bus
+uses VRC1 frames and is reserved for lifecycle control.
 
 ## Example
 

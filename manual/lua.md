@@ -139,7 +139,8 @@ modules or C SDK workflows:
   documented in [Lua terminal](lua-terminal.md).
 - `vectis.webdav`: WebDAV client helpers, documented in
   [Lua WebDAV](lua-webdav.md).
-- `vectis.xml`: XML parse and materialized serialize helpers, documented in
+- `vectis.xml`: XML parse, incremental callback writing and explicitly
+  materialized serialize helpers, documented in
   [Lua XML](lua-xml.md).
 
 Workflow tables including `vectis.auth`, `vectis.audio_worker`,

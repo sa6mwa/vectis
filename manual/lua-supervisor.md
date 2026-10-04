@@ -1,8 +1,8 @@
 # Lua supervisors and workflows
 
-`vectis.supervisor` and `vectis.workflow` compose the native `vectis.app`
-userdata. They are also available as `vectis.supervisor` and `vectis.workflow`
-on `require("vectis")`. Direct `lockdc` access remains available.
+`require("vectis.supervisor")` and `require("vectis.workflow")` compose the
+native `vectis.app` userdata. The same tables are available as
+`require("vectis").supervisor` and `.workflow`. Direct `lockdc` access remains available.
 App-owned methods require the native embedded `vectis.app` runtime. The
 standalone Lua source rock carries these Lua modules, but does not supply the
 native app binding or embedded runtime.
@@ -14,7 +14,9 @@ start. One host runs all callbacks serially on that caller. Route workers inheri
 producer channels but never run supervisor effects. Clients and dispatchers open
 after the applicable fork boundary. `app:wait()` dispatches channel readiness
 and timer deadlines; `app:pump(timeout_ms)` explicitly performs one bounded
-owner dispatch pass. Zero is a nonblocking probe. Do not invoke start, close, stop, or
+owner dispatch pass. Lua accepts a nonnegative millisecond timeout, default zero;
+it returns `true` or `nil,error`. Zero is a nonblocking probe, not a request to
+wait for every durable effect to complete. Do not invoke start, close, stop, or
 nested pump from a callback.
 
 ```lua
@@ -36,9 +38,31 @@ One callback cannot be preempted while inside a blocking dependency operation.
 Isolated Lua lanes, module entry points, and automatic restart policies are
 future work; only the serial default is delivered.
 
+### Scope options
+
+| Option | Default and accepted behavior |
+| --- | --- |
+| `name` | `"default"`; unique nonempty, NUL-free string within the app. |
+| `start` | `true`; false records a dormant declaration. |
+| `failure_policy` | `"fail_app"`; `"stop"` stops only the failed scope. |
+| `lua_lanes` | Only omission or `1` is supported. |
+| `channel.capacity` | `64` frames; integer from 1 to 4096. |
+| `channel.max_frame_size` | `4096` bytes; integer from 1 to 1048576, also subject to the total inbox cap. |
+| `channel.signal_kinds` | Empty; dense array of at most 64 unique nonempty, NUL-free strings. |
+
+Unknown options are rejected. `module`/`entry` are rejected until isolated lanes
+exist. Avoid names beginning `@workflow:`; workflow-owned scopes use that prefix.
+`app:ipc()` resolves the lazy `default` scope; `app:ipc(name)` requires a scope
+already declared with that name. Getting a channel during declaration is valid;
+sending before app startup returns `nil,"closed"` because IPC is prepared at start.
+Lifecycle calls return `true` or `nil,error`; `scope:wait()` is a stopped-state
+check, not a background loop. `last_error()` returns nil before failure or after
+a successful restart, otherwise a copied status/source/message table.
+
 ## Channels, receivers, and timers
 
 ```lua
+local app = assert(require("vectis").app.new({tls={mode="disabled"}}))
 local scope = app:supervisor({name="events", channel={
   capacity=16, max_frame_size=4096, signal_kinds={"repair"},
 }})
@@ -50,11 +74,15 @@ scope:receiver({kind="repair", handler=function(event)
   assert(event.type == "signal")
 end})
 local channel = scope:channel() -- also app:ipc("events")
-assert(channel:send("ready", "copied bytes"))
-assert(channel:signal("repair"))
 scope:timer({name="maintenance", every="1h", handler=function(timer)
   -- Return false/"disable", or call timer:disable(), to stop delivery.
 end})
+assert(app:start())
+assert(channel:send("ready", "copied bytes"))
+assert(channel:signal("repair"))
+assert(app:pump(0))
+assert(app:stop())
+app:close()
 ```
 
 `send(kind, bytes[, opts])` copies a Lua string into a bounded process-shared frame
@@ -77,13 +105,28 @@ This is one-way transport metadata. Managed request/reply routing and permits
 remain future work. Public C receive requires the channel's owner process and
 thread. The VRC1 lifecycle protocol is not a public channel format.
 
+`scope:receiver({kind=..., handler=...})` accepts `name` as a kind alias;
+if both are given they must agree. Omitting both registers one catch-all.
+The receiver returns an acceptance value or no values; `false` or `nil,error`
+fails the scope according to its policy. Events expose `type`, `kind`,
+`channel_id`, `correlation_id`, `flags` and copied `payload` bytes for messages.
+Signals have no payload field; the kind identifies the advisory wake.
+
+`scope:timer({name=..., every=..., handler=...})` requires a unique name and a
+positive interval: integer milliseconds or a string such as `"250ms"`, `"1s"`,
+`"5m"` or `"1h"`, bounded to 2147483647 milliseconds. `every_ms` is the numeric
+alias; `every` takes precedence if both are supplied. The callback receives its
+timer handle. Returning false/"disable" or calling `timer:disable()` disables
+it; `timer:enable()` starts the next interval from the current monotonic time.
+An exception follows scope failure policy. Timers do not start service threads.
+
 ## Workflow transactions and outbox handlers
 
 ```lua
-local workflow = app:workflow({namespace="orders", client={
-  endpoints={"pouch:///path/to/orders"},
-  pouch={single_writer=false, crypto_key_file="/path/to/key"},
-}})
+local vectis = require("vectis")
+local app = assert(vectis.app.new({app_name="orders-example", tls={mode="disabled"}}))
+local effects = app:supervisor({name="effects"})
+local workflow = app:workflow({namespace="orders"}) -- inherits app storage/key
 effects:outbox({workflow=workflow, kind="mail", handler=function(job)
   assert(job:write_payload({write=function(chunk)
     -- Send each chunk to a synchronous bounded sink.
@@ -105,6 +148,83 @@ assert(app:pump(0))
 assert(app:stop())
 app:close()
 ```
+
+### Workflow options
+
+| Option | Default and accepted behavior |
+| --- | --- |
+| `namespace` | Required nonempty, NUL-free identity; one workflow per namespace per app. |
+| `client` | Captured copy of the app's `lockd` selection; an explicit table supplies the workflow selection. |
+| `with_state` | `false`; true enables short-lived checkpoint access. |
+| `shared_runtime` | Omitted or false; true is rejected. |
+| `ipc_capacity` | `64` copied receipt-key frames; same bounds as a scope channel. |
+| `ipc_max_frame_size` | `4096` bytes; same bounds as a scope channel. |
+| `recovery_probe_ms` | `100`; positive integer up to 2147483647. Probes indexed candidates, not namespace discovery. |
+| `recovery_interval_seconds` | `30`; explicit zero disables periodic durable discovery. Startup/explicit reconciliation still applies. |
+
+The following fields pass to both upstream outboxes with upstream validation
+and defaults; unknown fields are rejected:
+
+- identity: `owner`;
+- lease durations in seconds: `transaction_ttl_seconds`, `claim_ttl_seconds`;
+- retry policy: `max_attempts`, `retry_initial_delay_seconds`,
+  `retry_max_delay_seconds`, `host_retry_delay_max_seconds`;
+- dispatcher limits: `notification_capacity`, `shutdown_timeout_ms`;
+- dead-letter policy: `replay_dead_letters_on_startup`,
+  `dead_letter_retention_seconds`, `dead_letter_max_count`, `dead_letter_max_bytes`.
+
+`client` uses the supported workflow client fields and canonical Pouch options
+in [Lua lockd](lua-lockd.md). Producer and owner clients are separate
+post-fork handles; their endpoint, encryption and workflow policy describe the
+same durable namespace.
+
+### Commit from an HTTP route
+
+This complete service accepts a plain-text operation ID and commits a `print`
+effect. Run it as a Lua script, then POST the ID to `/effects`. The `202` confirms
+the durable commit; effect output runs in the supervisor's owner state. It uses
+the app's encrypted default storage; configure `lockd` to select another root.
+
+```lua
+local vectis = require("vectis")
+local lockdc, openssl = require("lockdc"), require("openssl")
+local app = assert(vectis.app.new({app_name="effects-example",
+  bind="127.0.0.1", port=8080, worker_count=2, tls={mode="disabled"}}))
+local workflow = app:workflow({namespace="example.effects"})
+workflow:outbox({kind="print", handler=function(job)
+  assert(job:write_payload({write=function(chunk)
+    io.stdout:write(chunk); return true
+  end}))
+  io.stdout:write("\n"); io.stdout:flush()
+  return job:complete()
+end})
+assert(app:route({path="/effects", method="POST", body="buffered",
+  max_body_bytes=128, handler=function(request)
+    local id = request.body
+    if id == "" then return {status=400, body="operation ID required\n"} end
+    local result, err = workflow:transaction(function(tx)
+      return tx:append_outbox({operation_id=id, effect_id="print", effect_key=id,
+        kind="print", destination="stdout", content_type="text/plain",
+        payload_digest=openssl.sha256(id)}, id)
+    end)
+    if not result then return {status=500, body=lockdc.encode_json(err)} end
+    return {status=202, content_type="application/json",
+      body=lockdc.encode_json({receipts=#(result.outbox_receipts or {})})}
+  end}))
+assert(app:start())
+print("listening on 127.0.0.1:8080"); io.stdout:flush()
+assert(app:wait())
+app:close()
+```
+
+Declare handlers before start. Route code only stages/commits work; it neither
+pumps a dispatcher nor forwards receipt keys manually. `app:wait()` handles the
+FD wake, not a sleep or recovery scan. A repeated completed effect with the same
+stable identity does not run again. Effects remain at-least-once across crashes:
+an external side effect can succeed before its durable completion is recorded.
+Use `job.effect_key` as the external system's idempotency key.
+Duplicate commits can omit `outbox_receipts`; this example reports zero new
+receipts while still accepting the already committed operation.
 
 `workflow:outbox(opts)` selects the lazy default scope unless
 `opts.supervisor` is supplied. Registrations are immutable, unique by workflow
@@ -141,14 +261,18 @@ no public readiness FD, an owner timer probes existing candidates (default
 100 ms, `recovery_probe_ms` override). This is separate from direct-key wakeup.
 Durable discovery defaults to `recovery_interval_seconds=30`; explicit zero
 opts out. A ready-candidate probe never initiates discovery.
-`workflow:stats()` exposes forwarding/reconcile/handler counts and owner-side
-upstream dispatcher stats. `workflow:reconcile()` explicitly schedules repair.
+`workflow:stats()` exposes `forwarded_keys`, `reconcile_wakes`, `closed_wakes`,
+`failed_wakes`, `received_keys`, `received_reconciles`, `handled` and
+`dispatcher_starts`, plus owner-side `dispatcher` stats when materialized. `workflow:reconcile()` explicitly schedules repair and returns the channel
+signal result; repair completes asynchronously.
 Forwarding evidence is local to the calling process; received-key and handled
 counts belong to the owner. Producer counters are not aggregated across forks.
 
 Handlers return the unique token selected by `job:complete(metadata)`,
 `job:retry({diagnostic=..., delay_seconds=...})`, or
-`job:dead_letter(diagnostic)`. Terminalization occurs only after callback
+`job:dead_letter(diagnostic)`. `complete` metadata accepts upstream
+`delivery_reference` and `response_digest`; retry also accepts a diagnostic string
+shorthand. Terminalization occurs only after callback
 return. Exceptions, absent outcomes, and returning another value become retries
 through upstream pump policy. Duplicate durable effects do not run twice after
 completion. Job payload and renewal methods become invalid after the handler;

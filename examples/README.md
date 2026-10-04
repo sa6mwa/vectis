@@ -130,6 +130,11 @@ same code works in scratch containers where `vectis` is the only executable.
 - `lua/local_data_pipeline.lua`: dependency-native liblql filtering/projection,
   pslog JSON logging, softline editor state operations, and zlib string/file
   compression through their direct Lua modules.
+- `lua/supervisor_workflow.lua`: complete service-only transaction, automatic
+  receipt wake, streamed payload consumption and typed outbox completion. Set
+  `VECTIS_WORKFLOW_TEST_ROOT` to a new disposable Pouch directory; the example
+  generates a fresh key and must not reopen retained data. See
+  [Lua supervisors and workflows](../manual/lua-supervisor.md).
 - `lua/mailbox_pipeline.lua`: owner-state `vectis.mailbox` pipeline showing
   publish, bounded pump, correlated reply, and stats without helper layers.
 - `lua/curl_worker_service.lua`: supervised Lua server plus C-owned curl worker

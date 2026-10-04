@@ -1,15 +1,18 @@
 # Vectis Service Runtime Lifecycle Spec
 
-Status: draft implementation authority.
+Status: implemented lifecycle contract; remaining extensions are identified explicitly.
 
 The reusable serial logical-supervisor, public bounded IPC, and workflow
-dispatch architecture is specified in
+dispatch integration is implemented and documented in
 [Supervisor and Workflow Dispatch](supervisor-workflow-spec.md). This lifecycle
 document remains authoritative for fork safety, topology selection, and current
 runtime behavior; the newer specification governs the deliberate expansion of
 the supervisor domain and public IPC surface. The current implementation and
 its remaining upstream constraints are recorded in
 [Supervisor workflow audit](supervisor-workflow-audit.md).
+
+Application routes remain fail-closed with `503` until the supervised service
+graph has started successfully. Startup failure rolls back the started services.
 
 This document defines the production runtime model for Vectis applications that
 combine Kore HTTP/WebDAV/API serving with background services such as lockdc
@@ -571,10 +574,11 @@ OPC UA has three valid ownership modes:
 
 Managed OPC UA services must be descriptor-backed and materialized in the
 supervisor domain for T2. Monitor callbacks may publish copied payloads into a
-mailbox in their runtime domain. A future public runtime bus may also be a
-target after [Supervisor and Workflow
-Dispatch](supervisor-workflow-spec.md) is implemented. Monitor callbacks may
-not enter Lua directly.
+mailbox in their runtime domain. C producers may also send bounded copied
+frames to a declared supervisor channel from `vectis/supervisor.h`; the generic
+channel does not automatically wire the existing typed monitor adapter to IPC.
+See [Supervisor and Workflow Dispatch](supervisor-workflow-spec.md). Monitor
+callbacks may not enter Lua directly.
 
 The existing OPC UA mailbox adapter remains valid as a C-side adapter. A future
 OPC UA service declaration should compose that adapter rather than duplicating
@@ -642,11 +646,13 @@ quiescent process at app start and fail with an actionable error.
 When audio/SUS work is triggered by HTTP, the preferred production pattern is:
 
 1. Kore route validates and accepts work.
-2. Route sends a copied request to a supervisor worker through a lockdc queue or
-   pouch-backed storage today. [Supervisor and Workflow
-   Dispatch](supervisor-workflow-spec.md) specifies the future public runtime
-   request/reply bus for C and Lua; it does not alter this current behavior
-   until implemented.
+2. Route commits a durable effect through `app:workflow()` or a lockdc queue.
+   Workflow receipts wake the owner through public bounded IPC. A Lua outbox
+   handler may perform owner-state audio/SUS work or explicitly compose an
+   existing managed worker with its process-local mailbox. One-way public
+   channels also carry copied application events; they do not change the
+   managed audio/SUS workers' existing mailbox interfaces. Managed cross-process
+   request/reply remains a separate extension.
 3. Supervisor worker owns the audio/SUS handle and returns a result through the
    selected reply path.
 
@@ -716,9 +722,10 @@ Lua state ownership is process-local and thread-local by policy:
 This means a Lua route callback and a Lua service callback are not the same
 callback surface in T2. They communicate through copied messages, lockdc, the
 mailbox pump in the same runtime domain, or explicit persistent storage. Across
-the T2 Kore-child/supervisor process boundary, use lockdc queues or pouch-backed
-storage until the public runtime request/reply bus specified by [Supervisor and
-Workflow Dispatch](supervisor-workflow-spec.md) is implemented.
+the T2 Kore-child/supervisor process boundary, public supervisor channels deliver
+bounded copied messages and workflow receipt wakes. Durable communication uses
+lockdc queues/Pouch. Managed cross-process request/reply remains a separate
+requirement in [Supervisor and Workflow Dispatch](supervisor-workflow-spec.md).
 
 ## Communication Between Domains
 
@@ -731,8 +738,11 @@ Valid cross-domain channels:
 - the private Vectis runtime bus over Unix sockets/socketpairs for bounded
   lifecycle control frames;
 - explicit files or storage configured by the app;
+- public supervisor channels for bounded copied one-way messages and coalesced
+  signals, with a process-shared inbox and an FD wake path;
 - shared memory only for narrow process-shared data structures that are
-  designed and tested as process-shared, currently the metrics counter block.
+  designed and tested as process-shared, including metrics counters and the
+  supervisor inbox.
 
 The private runtime bus currently carries:
 
@@ -760,11 +770,11 @@ materialize unbounded "streaming" payloads.
 The public application request/reply default is not the private control bus.
 Within a single runtime domain, use `vectis_mailbox` and
 `vectis_mailbox_broker`. Across the T2 Kore-child/supervisor process boundary,
-use lockdc queues or pouch-backed storage today. [Supervisor and Workflow
-Dispatch](supervisor-workflow-spec.md) defines the future public request/reply
-contract for both C and Lua: bounded copied payloads, explicit timeout
-semantics, and no borrowed in-process pointers. It remains future-facing until
-that API is implemented.
+use public supervisor channels for bounded one-way handoff and workflow receipt
+wakes; use lockdc queues or pouch-backed storage for durable messages. Managed
+cross-process request/reply with bounded reply slots and deadlines remains an
+unimplemented extension in [Supervisor and Workflow Dispatch](supervisor-workflow-spec.md).
+Correlation/flags metadata is implemented; it does not supply reply routing.
 
 ## Quiescence Guard
 
@@ -788,8 +798,9 @@ Required checks:
 On Linux, exact thread count can be checked through `/proc/self/task`. The guard
 may wait briefly for already-stopping service or dependency threads to disappear
 from the process thread table before Kore forks, but it must fail closed when
-threads remain observable at the deadline. Darwin needs a platform-specific
-implementation or strict-mode failure until it exists.
+threads remain observable at the deadline. Darwin implements exact inspection
+with Mach `task_threads`; native Darwin execution is a separate verification
+gate and is not established by Linux tests.
 `vectis_app_config.quiescence_policy` and Lua
 `vectis.app.new({quiescence_policy = ...})` configure only the unavailable
 inspection case: `strict` is the default and fails closed; `warn_unavailable`
@@ -890,11 +901,11 @@ nonblocking managed `start()`, route-backed serving is always process-backed so
 Kore can continue after the call returns; `direct` still fails closed only when
 app-owned services or metrics persistence require supervisor-owned services.
 
-## C API Surface Changes
+## Implemented C API surface
 
 The existing receiver-shell style remains.
 
-Required additions or semantic changes:
+Current declarations and semantics:
 
 - `vectis_app_config.shutdown_grace_ms` for shutdown grace.
 - `vectis_app_config.supervision_policy` for explicit `auto`, `direct`, or
@@ -919,17 +930,17 @@ Required additions or semantic changes:
   logging and dependency logger inheritance.
 - descriptor-backed `vectis_opcua_server_service` for borrowed cpkt OPC UA
   servers that run under the managed-service lifecycle.
-- app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
-  declarations.
+- implemented app-owned service registration APIs for OPC UA/curl/CAI/audio/SUS
+  worker declarations, with ownership-safe Lua registrations.
 - documented narrow internal runtime control channel for supervisor child
   readiness, with room for later copied control frames.
 
 Public comments must state whether a function declares, materializes, starts,
 or runs a service.
 
-## Lua Surface Changes
+## Implemented Lua surface
 
-Required semantics:
+Current semantics:
 
 - `app:run()` selects T1, T2, or T3 automatically from app declarations.
 - `app:start()` starts the selected managed runtime and returns; for
@@ -969,90 +980,23 @@ Required semantics:
 - Examples must not use `os.execute`, shell `sleep`, or external commands for
   waiting.
 
-## Implementation Slices
+## Delivery status and remaining extensions
 
-1. Baseline cleanup and tests:
-   - remove unsafe Kore-in-pthread lifecycle;
-   - keep route-backed `start()` process-backed;
-   - keep signal shutdown tests passing.
-2. Quiescence guard:
-   - implement thread-count inspection;
-   - fail route-backed starts when unsafe app-owned services are already
-     running;
-   - make explicit app-owned managed service `start()` before app runtime start
-     record intent rather than materialize;
-   - reject later route/upload registration after managed service
-     materialization;
-   - add negative tests.
-3. Descriptor-backed lockdc consumer services:
-   - registration copies declarations and does not open lockdc;
-   - start intent is recorded before app start;
-   - service-only apps materialize immediately when started.
-4. Supervised route runtime:
-   - fork Kore child before materializing services;
-   - wait for child readiness before reporting successful start;
-   - supervisor starts lockdc consumer services and metrics after readiness;
-   - application routes remain fail-closed with `503` until every supervised
-     start-with-app service class has started successfully;
-   - metrics persistence is written by the supervisor worker, not request
-     handlers;
-   - parent monitors signals and child/service exit.
-5. Runtime bus/control channel:
-   - child readiness; implemented as an internal typed control frame.
-   - child stop; implemented as an internal typed control frame with signal
-     fallback.
-   - service failure propagation; implemented as a supervisor-local typed
-     control frame that wakes `wait()` after monitor state is recorded.
-   - metrics snapshot transfer; hot route counters use a process-shared counter
-     block and supervisor persistence snapshots aggregate that block.
-6. Lua lifecycle updates:
-   - align `app:consumer_service`, `app:run`, `app:start`,
-     `app:wait`;
-   - remove example shell sleeps;
-   - document callback ownership.
-7. Extend service declarations:
-   - generic managed service descriptors (`vectis_managed_service`);
-   - OPC UA managed service descriptors (`vectis_opcua_server_service`);
-   - Lua `app:opcua_server_service` registration over borrowed
-     dependency-native `opcua.server` handles, with Lua callback-bearing
-     servers rejected;
-   - curl worker descriptors with generic mailbox/lockdc ingress and protocol-
-     neutral transfer request records;
-     first C/mailbox HTTP request/reply slice implemented as
-     `vectis_curl_worker_service`, with Lua registration exposed as
-     `app:curl_worker_service()` and HTTP envelope helpers exposed as
-     `vectis.curl_worker`;
-   - audio/SUS worker descriptors with runtime-domain device/model
-     materialization and mailbox event output; first implementation must cover
-     deterministic file/PCM/VOX/transcription request kinds before live-device
-     or network-cache variants;
-   - CAI/MCP supervisor worker descriptors with runtime-domain client/agent
-     materialization and no borrowed route/Lua callback state; C and Lua
-     mailbox request/reply helpers are implemented for one-shot CAI text/JSON
-     work while Lua-mounted MCP tool execution uses an owner-state mailbox
-     broker.
-   - service declarations that accept Lua policy callbacks must publish copied
-     events to `vectis_mailbox` and require an owner-state Lua pump rather than
-     invoking Lua from service threads.
-8. Hardening:
-   - repeated supervised start/stop stress (`supervised_repeated_start_stop`);
-   - child crash and service crash tests;
-   - shutdown deadline tests
-     (`supervised_shutdown_deadline_kills_stopped_runtime`);
-   - review command from lifecycle skill until actionable issues are clean.
-9. Lifecycle phase/order contract:
-   - expose internal test observations for runtime phase ordering without
-     making the private control channel public;
-   - prove route-backed managed `start()` reaches child readiness before
-     service materialization;
-   - prove T3 service-only startup validates before service materialization;
-   - prove service class startup and stop ordering for metrics, generic
-     managed workers, and lockdc consumer services;
-   - prove startup failure stops already-started classes and leaves unreached
-     descriptors declared but not materialized;
-   - prove `supervision_policy = direct` rejects service-required supervision
-     while route-backed managed `start()` remains a supervised nonblocking
-     start.
+The lifecycle cutover, quiescence guards, delayed descriptor materialization,
+supervised route runtime, private control frames, Lua lifecycle alignment,
+C-owned OPC UA/curl/CAI/audio/SUS services, failure propagation and phase/order
+checks are implemented. Their executable evidence is recorded by the runtime
+unit selectors and the lifecycle audit; the steps that delivered them are no
+longer a future implementation plan.
+
+Public serial scopes, timers, receivers, queue consumers and workflow receipt
+IPC are implemented separately from the private control protocol. See
+[Lua supervisors and workflows](../manual/lua-supervisor.md) for current use.
+Existing C-owned worker descriptors keep their native managed-service and
+mailbox interfaces; migrating them onto logical scopes is remaining work.
+Protocol-neutral curl worker requests, live audio-device worker requests and
+long-running CAI/MCP worker shapes also remain extensions rather than currently
+accepted request kinds. The supported concrete request kinds are listed above.
 
 ## Verification Requirements
 
@@ -1119,7 +1063,7 @@ later service families:
   owning Lua state explicitly drains them.
 - The supervisor control channel remains internal lifecycle machinery, not a
   public app request/reply API.
-- Route-to-supervisor application request/reply uses lockdc queues or
-  pouch-backed storage by default until the public runtime bus specified by
-  [Supervisor and Workflow Dispatch](supervisor-workflow-spec.md) is
-  implemented for both C and Lua.
+- Public one-way supervisor channels and workflow receipt wakes are implemented.
+  Route-to-supervisor managed request/reply still uses a durable application
+  protocol through lockdc queues/Pouch until bounded reply routing is added.
+  Neither public channels nor the private bus make process-local mailboxes shared.

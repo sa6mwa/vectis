@@ -189,6 +189,28 @@ workflow/consumer `client` configuration; the app rejects them rather than
 opening storage with different settings. `logger_disabled=true` mutes native
 app clients and inherited private clients independently of the log seed.
 
+### Workflow and supervisor consumer client fields
+
+An explicit `app:workflow({client=...})` or `scope:consumer({client=...})`
+accepts these root fields; unknown names are rejected:
+
+- connection: `endpoints` (dense array, at most 64), `unix_socket_path`,
+  `timeout_ms`, `default_namespace` or `namespace`;
+- client material: `client_bundle`, `client_bundle_path`, `client_bundle_source`,
+  and the `bundle`/`bundle_path` aliases;
+- Pouch: nested `pouch` options, or the flat `pouch_crypto_key`,
+  `pouch_crypto_key_file`, `pouch_crypto_generate_key_file`, `pouch_compression`;
+- transport: `disable_mtls`, `insecure_skip_verify`, `prefer_http_2`,
+  `http_json_response_limit_bytes`;
+- logging: `disable_logger_sys_field`, `logger_disabled`.
+
+Canonical bundle names take precedence over aliases; the explicit bundle path
+selects a path source. Flat Pouch fields are normalized into the upstream
+`pouch` table. The nested table follows upstream validation; app-owned clients
+require shared writer mode. Omitted `client` inherits the captured app selection.
+This list describes private workflow/consumer clients, not extra accepted fields
+on `app.new({lockd=...})`. Direct upstream client access stays available.
+
 `with_dequeued_json(config, request, handler)` uses public bounded batch-one
 intake. Empty dequeue returns `nil, nil` without calling the handler. Its delivery
 adapter preserves `info`, payload readers/writers, `extend`, and explicit

@@ -1,6 +1,7 @@
 # Reverse Proxy Design and Verification Spec
 
-Status: architecture selected for implementation, 2026-09-25. Route
+Status: implemented reverse-proxy contract; the architecture was selected on
+2026-09-25. Route
 registration, target construction, worker curl integration, and bounded live
 HTTP/SSE request and response streaming are implemented. A successful
 HTTP/1.1 WebSocket upgrade now uses a retained connect-only transfer and a
@@ -57,7 +58,8 @@ their measurements support a conditional 256 MiB per-worker planning target
 at the existing 16-exchange admission limit.
 
 The [transport feasibility audit](reverse-proxy-feasibility-audit.md) records the
-evidence behind this choice and the checks required during implementation.
+historical probe evidence behind this choice. Its old implementation checklist
+is superseded for delivered features by the production behavior recorded here.
 
 ## Objective
 
@@ -93,7 +95,7 @@ its language mode on installed headers or downstream consumers.
 
 The C registration is `app->proxy_route(app, &config, &error)` with a
 corresponding Lua `app:proxy(opts)`. The current route configuration fields and
-planned callback phases have the following contract:
+implemented callback phases have the following contract:
 
 | Field or hook | Contract |
 | --- | --- |
@@ -1081,14 +1083,12 @@ checkout is disposable. The relevant current code is
 
 ## Delivery gates and architecture risks
 
-Deliver the transport foundation first: pre-body takeover, proxy-owned body
+The transport foundation is implemented: pre-body takeover, proxy-owned body
 framing, read gating with TLS progress, proxy-owned curl multi, and
-one-chunk-at-a-time Kore response output. Prove full-duplex
-fixed-length and chunked HTTP streaming under slow peers before adding SSE
-and raw upgrade. Then add
-informational responses and trailers, followed by WebSocket tunneling. These
-are implementation milestones, not exemptions from the wire contract above;
-the proxy route is complete only when all required cases pass.
+one-chunk-at-a-time Kore response output. Full-duplex fixed-length/chunked HTTP,
+SSE, informational responses, trailers and WebSocket tunneling have production
+route tests. These delivered milestones do not waive any wire contract above
+or establish native platform evidence where it remains unrun.
 
 The implementation was evaluated against these feasibility gates. Native BSD
 event-loop execution in item 2 remains unverified on this Linux host:

@@ -55,8 +55,10 @@ assert(rest.route(server, {
 }) == true)
 ```
 
-REST routes are buffered. Use `app:dsv()` for DSV request-body streaming and
-future dedicated route surfaces for SSE or true streaming responses.
+REST routes are buffered. Use `app:dsv()` for DSV request-body streaming,
+`app:upload()` for request chunk callbacks, `app:sse()` for live server-sent
+events, or an `app:route()` response with `stream_source` for live response
+chunks. See [Lua app](lua-app.md). `spooled_source` is explicitly file-backed.
 
 REST does not provide lockd-specific route presets. Current public examples use
 `vectis.lockd.load_json`, `save_json`, `enqueue_json`, and

@@ -1,267 +1,81 @@
 # Lockd-Backed Authentication and Self-Service Onboarding
 
-Status: implementation authority; liblockdc 0.18.0 supplies the LockDC/Pouch
-state and outbox APIs. Onboarding remains specified future work.
+Status: Lockd-backed authentication is implemented; self-service onboarding and
+additional domain-selection requirements below remain an implementation plan.
+The earlier file-store cutover/API sketches are superseded by the current
+[Lua auth manual](../manual/lua-auth.md), [packed auth contract](pack-embedded-filesystem-auth-spec.md)
+and public `include/vectis/auth.h`. Examples in the remaining onboarding
+sections describe intended behavior, not currently available commands/routes.
 
-## Purpose
+## Implemented authentication substrate
 
-Vectis authentication currently has two persistence models: durable users,
-credentials, email tokens, pending logins, and OAuth flows use local JSON files
-with filesystem locks, while browser sessions and native workflow records use
-Lockd. This is an unacceptable split. Authentication data is security-critical
-state and must never fall back to an unencrypted or independently synchronized
-file store.
+Users, credentials, OAuth2/OIDC flows, email tokens, pending logins, ordered
+login workflows, browser sessions and session signing keys are Lockd-backed.
+Local JSON credential/state stores and file-lock APIs are removed. There is no
+compatibility reader, implicit import, dual write or plaintext fallback.
+Operators must recreate or explicitly export development data when adopting
+that cutover; the implementation does not migrate it.
 
-This specification replaces that model with one Lockd-backed persistence model
-and adds an administrator-created, self-service user onboarding workflow.
+C `vectis_auth_store_config` accepts a borrowed `app`, or a standalone `lockd`
+selection, plus `ns`, `state_key`, `transient_state_key` and `max_record_bytes`.
+An app and standalone selection cannot be supplied together. Lua standalone
+operations accept `app`, `namespace`, `state_key`, `transient_state_key` and
+`max_record_bytes`; app routes use the app's `lockd` configuration. Auth defaults
+are namespace `vectis.auth` and durable record `auth/v1/store`; transient state
+shares that record unless explicitly separated. There is no current `storage`
+table or `inherit_app` option as proposed in the superseded sketch.
 
-The resulting system has these properties:
-
-- all Vectis-managed authentication state is stored through Lockd;
-- a single encrypted local Pouch root is the default for libvectis, the Vectis
-  CLI, and Lua applications;
-- any auth state domain may explicitly use another Lockd or Pouch backend;
-- a deployment may deliberately place every Vectis state domain in one Lockd
-  endpoint/root while retaining distinct namespaces and keys;
-- email-code delivery is one synchronous attempt, with an authenticating
-  verifier activated only after SMTP succeeds; other asynchronous effects may
-  use liblockdc's transactional outbox; and
-- onboarding creates a normal user and profile, but does not authenticate that
-  user or change an endpoint's independently configured login policy.
-
-This is a pre-1.0 clean cutover. Local JSON auth stores, file locks,
-`credentials_path`, and `state_path` are removed. There is no compatibility
-reader, implicit import, migration, dual write, or fallback to plaintext
-storage. Operators export/recreate development data before upgrading.
-
-## Scope and non-goals
-
-The cutover covers every Vectis-owned authentication persistence object:
-
-- native users and their password hashes, enrolled email addresses, and TOTP
-  secrets;
-- issued Basic and Bearer credentials and their revocation state;
-- OAuth2/OIDC stored flows and linked WebDAV credentials;
-- direct email-token and pending-login records;
-- ordered M2M and browser login workflows;
-- browser-session signing material and session records;
-- onboarding invitations, progress records, profile records, TOTP setup
-  material, and delivery jobs; and
-- durable Vectis-owned auth policy/configuration records, where introduced.
-
-It does not make arbitrary application configuration, static files, WebDAV
-content, or third-party identity-provider state part of the auth store. An app
-still supplies its route and deployment configuration at startup. The one
-necessary bootstrap input is the Lockd connection configuration itself; it is
-not an auth data file and must not contain a second credentials database.
-
-This change does not add a browser or HTTP administrator API. Administration is
-CLI-first. An authenticated administrator endpoint can be added later on the
-same store contract without changing onboarding records or browser behavior.
-
-## Shared state topology
-
-### Default backend
-
-When no endpoint is configured, Vectis opens exactly one local endpoint:
+The default encrypted local endpoint is:
 
 ```text
 pouch://${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage?single_writer=false
 ```
 
-It uses the existing Vectis Pouch encryption policy:
+Libvectis, Lua app-owned auth and CLI `users`/`credentials`/`oauth2` actions use
+this ordinary root unless configured otherwise. `VECTIS_POUCH_CRYPTO_KEY`, when
+nonempty, overrides Vectis-owned Pouch key selection; otherwise Vectis securely
+creates or uses `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`. Plaintext
+or differently encrypted existing roots fail unchanged. ACME also uses the
+ordinary root by default. Metrics uses the separate sibling `vectis/metrics`
+root, as documented in [Metrics](../manual/metrics.md).
 
-- Pouch encryption is enabled by default.
-- `VECTIS_POUCH_CRYPTO_KEY`, when non-empty, takes precedence.
-- Otherwise Vectis uses or securely creates
-  `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key` with private directory
-  and file permissions.
-- A plaintext root or a root encrypted with a different key is an error. It is
-  never reinitialized, migrated, or opened without encryption.
+Auth CLI actions accept the common Lockd/Pouch connection options. Removed
+file-store options are rejected rather than reinterpreted. Provision users in a
+separate administration process before route-backed serving starts; opening a
+client during server declaration would violate the Kore quiescence boundary.
 
-The default endpoint is materialized by libvectis itself, not separately by the
-CLI or Lua bindings. `vectis_app_config_init()`, `vectis.auth` store defaults,
-and `vectis -a` action receivers therefore resolve to the same root and key
-policy. Metrics, ACME, and future Vectis persistence surfaces use this same
-root unless their explicit storage override selects another one.
+## Synchronous login email and asynchronous effects
 
-### State domains
+Email-code login makes one synchronous SMTP attempt. SMTP failure leaves only
+an ineligible decoy verifier with the same public response shape as an unknown
+address. It creates no email outbox job, delayed retry or Vectis-owned retry
+queue. If SMTP accepts a code but the following state commit fails, that code
+cannot authenticate; the user starts again.
 
-Every persisted Vectis subsystem names a state domain. A domain contains a
-Lockd connection selection, namespace, owner, and key prefix. A domain defaults
-to the application's primary `lockd` configuration and inherits its endpoint,
-client bundle, Unix socket, timeout, Pouch key controls, and default namespace.
-An override replaces the complete backend selection for only that domain.
+Other asynchronous application effects can use the implemented
+`app:workflow()` transaction and outbox facade. Committed receipt keys reach the
+persistent supervisor dispatcher through bounded FD-waking IPC automatically.
+See [Lua supervisors and workflows](../manual/lua-supervisor.md). Raw liblockdc
+access remains available; Vectis does not recreate durable claims or retries.
+This delivered integration does not implement onboarding invitations or their
+administration routes.
 
-The standard domains are:
+## Remaining state-domain requirements
 
-| Domain | Default namespace | Purpose |
-| --- | --- | --- |
-| `auth.credentials` | `vectis.auth` | users, issued credentials, revocations, OAuth flows |
-| `auth.transient` | `vectis.auth` | email tokens and pending logins |
-| `auth.workflow` | `vectis.auth` | ordered M2M/browser login workflows |
-| `auth.browser_session` | `vectis.auth` | session signing keys and sessions |
-| `auth.onboarding` | `vectis.auth` | invitations and onboarding progress |
-| `auth.profile` | `vectis.profile` | completed user profiles |
+Onboarding still requires invitation/progress/profile records, enrollment
+material, bounded cleanup and atomic username/email uniqueness. Additional
+per-domain backend overrides are an intended extension; the current API selects
+auth records by namespace/key within the selected app or standalone backend.
+Do not present the old proposed `storage.profile`/`storage.onboarding` tables
+as accepted configuration.
 
-The default namespace names a storage boundary, not an authorization boundary.
-Keys are still typed and namespaced. A deployment that needs different access
-control or retention can point, for example, `auth.profile` at a dedicated
-remote Lockd endpoint while the remaining domains retain the primary backend.
-
-No code may construct an unaudited Pouch endpoint for one auth object. All
-client opening, encryption-key resolution, owner naming, and Lockd error
-translation flow through one shared libvectis state-client factory.
-
-### Keys, ownership, and retention
-
-Keys are stable, versioned logical paths under their domain. They do not embed
-filesystem paths, raw email addresses, passwords, TOTP secrets, or browser
-cookie values. Keys that require an identity component use a SHA-256 digest of
-the normalized identity, encoded as lowercase hex.
-
-Representative keys are:
-
-```text
-auth/v1/users/<username-digest>
-auth/v1/email-index/<normalized-email-digest>
-auth/v1/credentials/<client-id-digest>
-auth/v1/oauth2/<flow-id-digest>
-auth/v1/transient/email-token/<transaction-id>
-auth/v1/workflow/<workflow-id>
-auth/v1/browser-session/key/<purpose-digest>
-auth/v1/browser-session/session/<session-id>
-auth/v1/onboarding/invite/<email-digest>
-auth/v1/onboarding/progress/<workflow-id>
-auth/v1/profile/<principal-digest>
-```
-
-The Lockd owner is a stable Vectis service identity, not an end-user identity.
-Leases use bounded TTLs appropriate to the operation. Expiring workflow,
-session, token, invitation, and setup records are deleted on completion and
-also pruned in bounded batches. Durable user, profile, credential, and
-revocation records do not receive expiry leases.
-
-All state mutation uses a Lockd acquire-for-update transaction. Read-modify-
-write through separate requests is prohibited.
-
-## Auth store API cutover
-
-### C API
-
-`vectis_auth_store_config` becomes a Lockd-state selection, not a JSON path
-container. It has:
-
-- an optional borrowed app/client context for route-owned operations;
-- a primary state-domain selection, inheriting the app/default backend when
-  unset;
-- optional domain overrides for credentials, transient auth state, profiles,
-  and onboarding; and
-- bounded record-size and operation-timeout controls.
-
-It has no `credentials_path`, `state_path`, or filesystem-lock fields.
-`vectis_auth_store_config_init()` selects the shared default state backend and
-the standard auth namespaces/keys. Public auth functions keep their semantic
-names where their behavior remains coherent, but receive Lockd-backed store
-configuration only.
-
-`vectis_auth_store_init()` becomes an idempotent schema/bootstrap operation. It
-creates no filesystem file. It validates that the selected backend is reachable
-and that required typed root records can be initialized transactionally.
-
-The shared state-client factory is public enough for auth and other libvectis
-subsystems, but raw Lockd handles remain an implementation detail of normal
-auth callers. A route-owned auth store borrows the owning app's configured
-client lazily after the route process boundary is safe. A standalone C or CLI
-call opens a short-lived client from the same domain configuration and closes
-it on return.
-
-### Lua API
-
-`vectis.auth.store_init`, `user_add`, `user_login`, `issue`, `verify`,
-`revoke`, `workflow`, and all auth helpers accept a common `storage` table.
-The table has the same shape and defaults as `app.new({lockd = ...})` and may
-contain per-domain overrides. Path aliases such as `credentials_path`, `path`,
-`state_path`, and `auth_state_path` are removed.
-
-An application normally needs no duplicated auth storage configuration:
-
-```lua
-local server = assert(vectis.app.new({
-  lockd = {
-    endpoints = {"pouch:///srv/vectis/state?single_writer=false"},
-    default_namespace = "example",
-  },
-}))
-
-local flow = assert(vectis.auth.workflow({
-  path_prefix = "/auth",
-  storage = { inherit_app = true },
-  steps = {"password", "totp"},
-}))
-assert(flow:mount(server))
-```
-
-When no `lockd` table and no explicit auth storage override are supplied,
-`app.new`, the workflow, and direct `vectis.auth` calls resolve to the shared
-default Pouch root. A separate backend is explicit and complete:
-
-```lua
-storage = {
-  profile = {
-    endpoints = {"https://profiles-lockd.example.test"},
-    client_bundle_path = "/run/secrets/profiles-lockd.pem",
-    namespace = "customer-profiles",
-  },
-}
-```
-
-### CLI action receivers
-
-`vectis -a` action receivers use the same common state-client configuration as
-libvectis and Lua. With no storage arguments they open the shared default
-Pouch root. They do not create a JSON credential file.
-
-The receiver shell accepts common Lockd options before its action-specific
-arguments: endpoint(s), Unix socket, client bundle, namespace, timeout, and
-the established Pouch encryption controls. The names and meanings match the
-Lua `lockd` table and C `vectis_lockd_config`; they are parsed by one common
-receiver helper rather than reimplemented by `users`, `credentials`, and
-`oauth2`.
-
-`--store FILE` is removed. It must not be silently reinterpreted as a Pouch
-directory because that would conceal a breaking storage change. The help text
-and error diagnostics direct operators to the common Lockd/Pouch options.
-
-## Synchronous authentication email and outbox scope
-
-Email-code login and onboarding use one synchronous SMTP attempt in the
-request. The workflow record is created first. On SMTP failure it stores only
-a decoy code state with an ineligible principal, so the code-entry page and
-response shape match an unknown address but cannot authenticate. The failure
-is logged without the code or recipient. There is no email
-outbox job, synchronous retry, delayed retry, or Vectis-owned retry queue.
-SMTP acceptance and LockDC commit are not one atomic operation: if commit fails
-after acceptance, the received code is unusable and the user must begin again.
-
-Other effects that genuinely require durable asynchronous dispatch must use
-liblockdc 0.18.0's threadless `lc_outbox` transaction and dispatcher APIs
-directly. Vectis must not implement a parallel queue, lease convention,
-polling format, or retry protocol. The generic supervisor design is in
-[Supervisor and Workflow Dispatch](supervisor-workflow-spec.md).
-
-Raw codes, provisioning URIs, password values, and TOTP secrets are never
-logged, included in metrics, or stored in an unencrypted side file.
-
-Invitation creation itself does not send email. The administrator registers an
-address; the user starts onboarding from the login surface, and that action
-attempts one synchronous email-code delivery. Resend is a configured,
-rate-limited operation that invalidates the previous code and attempts one
-replacement delivery.
-
-The future inbox primitive is used for external/admin command ingestion when
-that surface is added. The CLI in this specification writes directly through
-the state transaction API; it does not create an HTTP administration endpoint.
+Profile state belongs in `vectis.profile`; auth state stays in `vectis.auth` by
+default. Any future domain override must inherit the full configured transport,
+client material, timeout, logger and Pouch policy, replace the complete backend
+selection for that domain, and preserve transactional mutation and encryption.
+Keys must not embed raw email addresses, passwords, TOTP secrets or cookie
+values; normalize and hash identity components. No onboarding code may create
+an unaudited secondary Pouch root or restore file-backed auth storage.
 
 ## Onboarding model
 
@@ -506,20 +320,17 @@ Run the complete debug, release, Lua facade, CLI action, Lockd/Pouch, browser
 workflow, and SMTP integration suites. Test failure boundaries as well as
 successful delivery; do not infer activation merely from a 202 response.
 
-## Implementation order
+## Remaining implementation work
 
-1. Upgrade to liblockdc 0.18.0 and verify the direct LockDC/Pouch state APIs.
-2. Introduce the common Vectis state-client factory and shared default Pouch
-   root; migrate existing persistence users such as metrics/ACME to it.
-3. Replace the file-backed auth store with typed Lockd records and transactional
-   indexes. Remove file-store API fields, tests, docs, and CLI options in the
-   same change.
-4. Migrate direct auth primitives, issued credentials, OAuth flows, ordered
-   workflows, and browser sessions to the unified domain contract.
-5. Use a single synchronous SMTP send and activate email-code verifiers only
-   after successful delivery.
-6. Add invitation administration, profile storage/projection, onboarding M2M
-   routes, and browser pages.
-7. Add SVG QR rendering and TOTP-confirmation enrollment.
-8. Run the acceptance suite, inspect the worktree, and publish updated C, Lua,
-   CLI, and operational documentation together.
+1. Add invitation administration, profile storage/projection, onboarding M2M
+   routes and browser pages on the existing Lockd-backed auth substrate.
+2. Add SVG QR rendering and TOTP-confirmation enrollment.
+3. Define and implement any additional per-domain backend selection needed by
+   onboarding without creating a second auth store or changing current defaults.
+4. Prove the remaining acceptance criteria and update the C, Lua, CLI and
+   operational manuals together.
+
+The liblockdc upgrade, removal of file-backed auth APIs and synchronous login
+email delivery are implemented prerequisites, not pending steps. Metrics keeps
+its documented separate default root; this plan does not mandate a persistence
+migration merely to introduce onboarding.

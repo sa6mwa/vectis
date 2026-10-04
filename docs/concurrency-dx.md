@@ -7,8 +7,10 @@ background-thread side effect.
 
 The process/thread lifecycle authority for combining Kore with background
 services is [Service Runtime Lifecycle](service-runtime-lifecycle-spec.md).
-The planned reusable supervisor and public IPC expansion is defined in
-[Supervisor and Workflow Dispatch](supervisor-workflow-spec.md).
+The serial supervisor, public bounded IPC and automatic outbox receipt delivery
+are implemented. See [Lua supervisors and workflows](../manual/lua-supervisor.md)
+for the usable API and [Supervisor and Workflow Dispatch](supervisor-workflow-spec.md)
+for the contract and explicitly remaining requirements.
 
 The DX layer provides a small mailbox primitive for cross-service handoff:
 
@@ -96,11 +98,12 @@ failure counts, and request/reply correlation counters. The stats surface is
 diagnostic only and must not be used as an exclusive synchronization primitive.
 
 In supervised route runtimes, ordinary `vectis_mailbox` handles remain process-local.
-Use lockdc queues or pouch-backed storage for application
-messages between the Kore child and the supervisor unless and until a public
-runtime request/reply bus is deliberately added. The current runtime control bus
-is private and reserved for lifecycle frames such as readiness, stop, and service
-failure wakeups.
+Use declared supervisor channels for bounded one-way copied messages between
+Kore workers and the supervisor. `app:workflow()` automatically forwards committed
+outbox receipt keys over this wake path. Use lockdc queues or pouch-backed storage
+when messages must be durable. Managed cross-process request/reply remains a
+separate unimplemented extension. The VRC1 runtime control bus is private and
+reserved for lifecycle frames such as readiness, stop, and service failure wakeups.
 
 ## Performance Model
 
@@ -373,7 +376,11 @@ Lua mailbox events are tables with `kind`, `payload`, `correlation_id`, and
 `expects_reply`. The facade does not invoke handlers from background service
 threads.
 
-## Open Follow-Ups
+## Remaining integration work
 
-- Add typed event adapters for common route, lockd, OPC UA, and WebDAV events
-  when concrete scenario code proves that generic byte payloads are too noisy.
+Typed route, Lockd consumer and OPC UA monitor mailbox adapters are implemented
+and described above. A WebDAV operation observer remains a separate interface
+decision; no typed WebDAV adapter is promised without that contract. Managed
+request/reply over public supervisor channels and isolated Lua lanes remain
+separate work. Existing C-owned worker descriptors retain their mailbox
+interfaces; public IPC does not automatically make those mailboxes process-shared.

@@ -1,7 +1,8 @@
 # vectis TODO
 
-This file is the implementation contract. It tracks the product shape Vectis is
-moving toward, not just the next patch. Keep items observable and testable.
+This is the implementation ledger: checked items are delivered, unchecked
+items are remaining work. Current APIs and constraints are in the manual and
+[documentation index](docs/README.md). Keep items observable and testable.
 
 ## Area 1: Project Skeleton
 
@@ -184,7 +185,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 8: lockd / Workflow Runtime
 
-- [x] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.15.0 API: C consumers now have bounded `vectis_lockd_consumer_json_into()` payload-to-lonejson decoding, while direct `liblockdc` remains the queue/ack/nack/retry authority.
+- [x] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.18.0 API: C consumers now have bounded `vectis_lockd_consumer_json_into()` payload-to-lonejson decoding, while direct `liblockdc` remains the queue/ack/nack/retry authority.
 - [x] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
 - [x] Add first Vectis-owned Lua `vectis.lockd` helper for config normalization, embedded bundle source wiring, and client cleanup.
@@ -212,6 +213,20 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.
 - [x] Add direct liblockdc C examples for open client, lease save/load, query, attachments, enqueue, manual dequeue, and managed consumer services.
+
+### Supervisor and outbox delivery
+
+- [x] Add serial logical supervisors, timers, receivers and bounded public IPC in C and Lua.
+- [x] Add `app:workflow()` transactions and typed handlers with automatic committed receipt forwarding to one persistent owner dispatcher.
+- [x] Prove direct worker-to-owner FD wakes separately from startup/overflow recovery in normal and packed execution.
+- [x] Add canonical client/logging inheritance, guarded callback ownership and deterministic failure regressions.
+- [ ] Obtain upstream pull payload, blocking-handler automatic renewal, kind-filtered intake and renewed-stateful-completion contracts; see [the current audit](docs/lua-upgrade-seam-audit.md#required-upstream-contracts-and-reports).
+- [ ] Add isolated lanes, quotas/permits, automatic restart policies, shared-runtime leadership and managed cross-process replies under the [remaining specification](docs/supervisor-workflow-spec.md#remaining-implementation-requirements).
+- [ ] Migrate C-owned worker descriptors onto logical scopes while preserving their native service interfaces.
+
+SQLite, PostgreSQL, libharu/PDF and libpng Lua facades remain a separate task.
+The proposed remote-execution SSH adapter remains parked; existing SSH/SFTP/SCP
+APIs are implemented.
 
 ## Area 9: Downstream HTTP / curl
 
@@ -313,7 +328,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Integrate existing Lua rocks/source archives for lockdc, pslog, liblql, and dependency Lua modules from pinned dependency sources.
 - [x] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
 - [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
-- [x] Statically preload every bundled dependency-native Lua facade that exists or is Vectis-owned: lockdc, lonejson, pslog, lql, cai, libmdf, softline, curl, opcua, XML/libxml2, DSV/CSV/TSV, OpenSSL, libssh2/SFTP/SCP, WebDAV client helpers, sus/whisper, audio/miniaudio, and future protocol facades.
+- [x] Statically preload every bundled dependency-native Lua facade that exists or is Vectis-owned: lockdc, lonejson, pslog, lql, cai, libmdf, softline, curl, opcua, XML/libxml2, DSV/CSV/TSV, OpenSSL, libssh2/SFTP/SCP, WebDAV client helpers, sus/whisper, audio/miniaudio, and the currently documented protocol facades.
 - [x] Add a top-level `vectis.libs` namespace that collects bundled dependency Lua facades (`lockdc`, `lonejson`, `pslog`, `lql`, `cai`, `libmdf`, `softline`, `curl`, `opcua`, `openssl`, `zlib`, `audio`, `sus`) without replacing direct `require(...)` access.
 - [x] Keep `vectis.libs` coverage current whenever any bundled Lua facade is added or renamed, including direct module aliasing, Lua smoke assertions, and coverage-matrix documentation in the same change.
 - [x] Add a dependency-native zlib Lua facade for buffered string deflate/inflate, gzip/gunzip, auto-decompress, file-backed bounded transforms, version, and explicit output limits.
@@ -399,7 +414,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add descriptor-backed `vectis_sus_worker_service` over bounded `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file` mailbox request/reply records, with runtime-domain model/transcriber materialization, explicit materialized/file-backed output naming, and deterministic no-model plus opt-in loaded-model coverage.
 - [x] Add Lua helpers for SUS worker mailbox envelope build/decode and `app:sus_worker_service()` registration without replacing direct `require("sus")`.
 - [x] Add Lua helpers for libmdf/softline where Vectis-owned terminal workflows need higher-level DX; keep their direct modules available without wrapping.
-- [ ] Integrate CAI agent mode with Vectis host adapters once CAI exposes stable agent tool/state/callback contracts; keep Agent Smith mechanics CAI-owned rather than adding a parallel Vectis agent runtime.
+- [x] Integrate CAI agent mode through `vectis_smith_store`, the public `vectis_smith` receiver, `vectis -a smith` and non-TUI `vectis.smith`; Agent Smith mechanics remain CAI-owned.
 - [x] Add deterministic Lua examples for dependency-native pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [x] Add packed execution coverage for dependency-native pslog, liblql, and softline Lua module workflows.
 - [x] Add a narrow Vectis-owned Lua logging helper over pslog for JSON logger defaults, default fields, and structured Vectis error metadata without replacing direct pslog access.
