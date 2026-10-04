@@ -1,6 +1,6 @@
-# Vectis production instructions
+# Vectis agent instructions
 
-Follow the production executive's instructions and the pkt CMake lifecycle skill. Work on a named non-default branch, keep scratch in ignored `build/`, run operational commands serially, and preserve unrelated changes. Commit verified task-owned changes with Conventional Commits; do not push without authorization.
+Follow user and developer instructions and the repository's documented lifecycle. Work on a named non-default branch, keep scratch in ignored `build/`, run operational commands serially, and preserve unrelated changes. Commit verified task-owned changes with Conventional Commits; do not push without authorization.
 
 ## Dependency upgrades and Lua integration
 
@@ -20,7 +20,7 @@ Update `docs/lua-coverage-matrix.md`, relevant manuals and examples, and the cur
 
 ## Mandatory agent release gate
 
-Before releasing any Vectis version, the responsible **agent/LLM** must perform and record a fresh semantic Lua/integration surface review. This is a reasoning gate; do not move it into build shell scripts or treat a symbol scanner, coverage matrix, successful build, or test exit code as a substitute.
+Before releasing any Vectis version, the responsible agent must perform and record a fresh semantic Lua/integration surface review. This is a reasoning gate; do not move it into build shell scripts or treat a symbol scanner, coverage matrix, successful build, or test exit code as a substitute.
 
 The review must:
 
