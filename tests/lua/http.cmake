@@ -930,6 +930,8 @@ assert(api_server:proxy({
   target = "http://127.0.0.1:9/unused",
   alternate_targets = {"http://127.0.0.1:28484"},
   rewrite = function(inbound, outbound)
+    local closed,close_error=pcall(api_server.close,api_server)
+    assert(not closed and tostring(close_error):find("app close is not allowed inside an app callback",1,true))
     if previous_proxy_set_path ~= nil then
       local usable, expired = pcall(previous_proxy_set_path, "/stale")
       assert(usable == false and tostring(expired):find("expired", 1, true))
@@ -950,6 +952,7 @@ assert(api_server:proxy({
     return true
   end,
   modify_response = function(response)
+    assert(not pcall(api_server.close,api_server))
     if previous_proxy_set_status ~= nil then
       local usable, expired = pcall(previous_proxy_set_status, 203)
       assert(usable == false and tostring(expired):find("expired", 1, true))

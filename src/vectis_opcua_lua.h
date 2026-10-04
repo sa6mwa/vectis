@@ -8,4 +8,6 @@ int vectis_opcua_lua_borrow_server(lua_State *lua, int index,
                                    cpkt_opcua_server **out,
                                    int *has_lua_callbacks_out);
 
+void vectis_opcua_lua_server_managed(lua_State *lua, int index, int managed);
+
 #endif

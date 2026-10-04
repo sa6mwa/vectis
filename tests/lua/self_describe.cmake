@@ -295,3 +295,12 @@ if(source_force_stdout_result EQUAL 0 OR
    NOT source_force_stdout_stderr MATCHES "--force requires --output")
   message(FATAL_ERROR "source --force without a filesystem output was not rejected")
 endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module lonejson.upstream
+  --output "${WORK_DIR}/lonejson-upstream.lua" --force
+  RESULT_VARIABLE upstream_result OUTPUT_VARIABLE upstream_source ERROR_VARIABLE upstream_error)
+file(READ "${WORK_DIR}/lonejson-upstream.lua" upstream_source)
+file(READ "${VECTIS_UPSTREAM_LONEJSON}" upstream_expected)
+if(NOT upstream_result EQUAL 0 OR NOT upstream_source STREQUAL upstream_expected)
+  message(FATAL_ERROR "authoritative lonejson.upstream source mismatch: ${upstream_error}")
+endif()

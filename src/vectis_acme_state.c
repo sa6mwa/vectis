@@ -322,7 +322,7 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
   lc_client_config client_config;
   char *default_key_file;
   const char *environment_key;
-  int rc;
+  int rc, crypto_present;
 
   *client = NULL;
   *memory = NULL;
@@ -335,6 +335,10 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
   client_config.unix_socket_path = NULL;
   client_config.default_namespace = config->ns;
   if (vectis_acme_state_endpoint_is_pouch(config->endpoint)) {
+    rc = vectis_pouch_endpoint_has_crypto_option(config->endpoint,
+                                                 &crypto_present, lcerr);
+    if (rc != LC_OK)
+      return rc;
     environment_key = getenv(VECTIS_POUCH_CRYPTO_KEY_ENV);
     if (environment_key != NULL) {
       if (environment_key[0] == '\0') {
@@ -348,8 +352,7 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
       client_config.pouch_crypto_generate_key_file = 0;
       client_config.pouch_crypto_generate_key_file_set = 1;
     } else if (client_config.pouch_crypto_key == NULL &&
-               client_config.pouch_crypto_key_file == NULL &&
-               !vectis_pouch_endpoint_has_crypto_option(config->endpoint)) {
+               client_config.pouch_crypto_key_file == NULL && !crypto_present) {
       default_key_file = vectis_persistence_default_pouch_key_file();
       if (default_key_file == NULL) {
         lcerr->code = LC_ERR_TRANSPORT;

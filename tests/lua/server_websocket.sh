@@ -85,13 +85,14 @@ local server = assert(vectis.app.new({
 }))
 assert(server:websocket({
   path = "/ws",
-  connect = function() error("fixture/connect") end,
+  connect = function() assert(not pcall(server.close,server)); error("fixture/connect") end,
   message = function(ws, opcode, payload)
+    assert(not pcall(server.close,server))
     assert(opcode == vectis.websocket.TEXT)
     assert(ws:send_text("lua:" .. payload) == true)
     error("fixture/message")
   end,
-  disconnect = function() error("fixture/disconnect") end,
+  disconnect = function() assert(not pcall(server.close,server)); error("fixture/disconnect") end,
 }) == true)
 collectgarbage("collect")
 assert(server:start() == true)

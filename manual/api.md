@@ -102,6 +102,7 @@ cover service workflows where Vectis owns the cross-library DX.
 
 Lua docs:
 
+- [Lua supervisors and workflows](lua-supervisor.md)
 - [Lua auth](lua-auth.md)
 - [Lua certificates](lua-certs.md)
 - [Lua CAI](lua-cai.md)
@@ -121,6 +122,7 @@ Lua docs:
 - [Lua OpenSSL](lua-openssl.md)
 - [Lua OPC UA](lua-opcua.md)
 - [Lua app](lua-app.md)
+- [Lua LoneJSON](lua-lonejson.md)
 - [Lua pslog](lua-pslog.md)
 - [Lua REST](lua-rest.md)
 - [Serving a Lua site](lua-site.md)

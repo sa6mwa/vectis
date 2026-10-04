@@ -307,3 +307,46 @@ if not model then
   assert(err.result == sus.ERR_IO or err.result == sus.ERR_MODEL)
 end
 ```
+
+## Thread-safe log delivery and ownership
+
+`set_log_sink(callback)` explicitly owns a process-global destination. Owner
+thread emissions deliver synchronously. Foreign-thread emissions copy borrowed
+C strings into a 64-record native queue: component capacity 128 bytes, message
+capacity 4096 bytes, both including their terminator. Oversize records are
+rejected rather than truncated. Full queues drop the incoming record.
+
+`sus.pump_logs([max])` drains up to 64 records on the registered VM's owner
+thread and returns `delivered, {queued, overflow, oversize, callback_errors}`.
+Zero observes counters without delivering. Counters and queued records reset
+on sink replacement; unregister/VM close discard the old generation. A static
+native callback context remains safe for late worker callbacks. No mutex is
+held while calling Lua. Segment/progress/segmented/cache callbacks reject foreign
+thread entry; abort requests cancellation there.
+
+For an app owner loop, explicitly declare
+`app:supervisor({name="logs"}):sus_logs({every_ms=50,max=64})` before start.
+This timer drains the registered owner queue during app wait/run and installs
+no destination. Disable it using the returned timer. It does not reroute a
+sink belonging to another VM or app.
+
+The public backend setter is global, with no per-model/app identity. Managed
+service lifecycle logs inherit the app seed, but automatic per-app routing of
+whisper backend records is **not** provided: overriding the global user sink
+would violate its ownership. A public per-model native logger is required for
+that integration. Loaded-model/device execution remains an opt-in gate.
+
+The first explicit sink setup must precede backend worker activity. The public
+upstream setter has no concurrent-replacement contract; Vectis installs one
+static native hook at that setup and leaves it in place, silently discarding
+records after unregister/VM close. Subsequent Lua replacement changes only the
+mutex-protected subscriber. Direct native users may take over global backend
+logging only at a quiescent boundary; mixing independent global setters while
+workers emit is unsupported until upstream synchronizes that ownership.
+
+The stable Vectis hook protects subscriber replacement and copied record delivery.
+The pinned SUS bridge still has an upstream shared continuation-severity race:
+independent whisper model constructors can emit concurrently before our hook.
+Concurrent backend logging is therefore not claimed fully thread-safe until
+upstream owns severity per thread or serializes it. Per-app routing also remains
+excluded because the native logger is process-global.

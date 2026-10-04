@@ -562,7 +562,8 @@ vectis_status vectis_lua_proxy_preflight(const vectis_proxy_inbound *in,
   vectis_lua_proxy_push_in(lua, lua_absindex(lua, -1), in);
   lua_rawgeti(lua, LUA_REGISTRYINDEX, route->preflight_ref);
   lua_pushvalue(lua, -2);
-  result = lua_pcall(lua, 1, 1, 0);
+  result = route->invoke != NULL ? route->invoke(lua, route, 1, 1)
+                                 : lua_pcall(lua, 1, 1, 0);
   view->active = 0;
   view->in = NULL;
   if (result != LUA_OK) {
@@ -607,7 +608,8 @@ vectis_status vectis_lua_proxy_on_error(const vectis_error *cause,
     lua_pushstring(lua, cause->message);
     lua_setfield(lua, -2, "message");
   }
-  result = lua_pcall(lua, 1, 1, 0);
+  result = route->invoke != NULL ? route->invoke(lua, route, 1, 1)
+                                 : lua_pcall(lua, 1, 1, 0);
   if (result != LUA_OK) {
     message = lua_tostring(lua, -1);
     vectis_lua_proxy_error(error, VECTIS_ERR_STATE,
@@ -655,7 +657,8 @@ vectis_status vectis_lua_proxy_rewrite(const vectis_proxy_inbound *in,
   lua_rawgeti(lua, LUA_REGISTRYINDEX, route->rewrite_ref);
   lua_pushvalue(lua, in_index);
   lua_pushvalue(lua, out_index);
-  result = lua_pcall(lua, 2, 1, 0);
+  result = route->invoke != NULL ? route->invoke(lua, route, 2, 1)
+                                 : lua_pcall(lua, 2, 1, 0);
   view->active = 0;
   view->in = NULL;
   view->out = NULL;
@@ -707,7 +710,8 @@ vectis_status vectis_lua_proxy_modify_response(vectis_proxy_response *response,
   response_index = lua_absindex(lua, -1);
   lua_rawgeti(lua, LUA_REGISTRYINDEX, route->response_ref);
   lua_pushvalue(lua, response_index);
-  result = lua_pcall(lua, 1, 1, 0);
+  result = route->invoke != NULL ? route->invoke(lua, route, 1, 1)
+                                 : lua_pcall(lua, 1, 1, 0);
   view->active = 0;
   view->response = NULL;
   if (result != LUA_OK) {

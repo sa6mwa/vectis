@@ -63,6 +63,8 @@ for entry in "${local_behavior[@]}"; do
 done
 
 workflow_behavior=(
+  "vectis.supervisor|vectis_lua_supervisor_workflow|tests/lua/supervisor_workflow.lua|app:supervisor"
+  "vectis.workflow|vectis_lua_supervisor_workflow|tests/lua/supervisor_workflow.lua|outbox_receipts"
   "vectis.auth|vectis_cli_admin_credentials|tests/lua/admin_credentials.cmake|webdav_key"
   "vectis.audio_worker|vectis_example_lua_audio_worker_service|examples/lua/audio_worker_service.lua|audio_worker.vox_request"
   "vectis.cai|vectis_example_lua_cai_local|examples/lua/cai_local.lua|cai.mcp_client"
@@ -95,6 +97,7 @@ for entry in "${workflow_behavior[@]}"; do
 done
 
 packed_behavior=(
+  "supervisor workflow|vectis_lua_supervisor_workflow|tests/lua/supervisor_workflow.cmake|packed workflow behavior"
   "local dependency facades|vectis_example_lua_local_facades_pack|examples/lua/local_data_pipeline.lua|zlib.gzip_file"
   "API/server/http/rest routes|vectis_example_lua_api_server_pack|examples/lua/api_server.lua|stream_source"
   "downstream HTTP|vectis_example_lua_downstream_api_pack|examples/lua/downstream_api.lua|rest.client"

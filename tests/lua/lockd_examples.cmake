@@ -26,20 +26,24 @@ package.loaded.lockdc = {
       queued_payload = body
       return true
     end
-    function client:dequeue(req)
+    function client:dequeue_batch(req)
+      assert(req.page_size == 1)
       dequeued_req = req
       local message = {}
       function message:read_payload_json()
         return lonejson.decode_json(queued_payload), #queued_payload
       end
-      function message:ack()
+      function message:close()
+        assert(not self.closed, "raw batch message closed twice")
+        self.closed = true
+        closed_messages = closed_messages + 1
+      end
+      function client:queue_ack(raw)
+        assert(raw == message and not raw.closed)
         acked_messages = acked_messages + 1
         return true
       end
-      function message:close()
-        closed_messages = closed_messages + 1
-      end
-      return message
+      return { message }
     end
     function client:acquire(req)
       local lease = {}
@@ -82,6 +86,7 @@ assert(closed_leases == 0)
 assert(queued_req.queue == "lua-orders")
 assert(queued_req.content_type == "application/json")
 assert(lonejson.decode_json(queued_payload).type == "order.created")
+assert(dequeued_req.page_size == 1)
 assert(dequeued_req.owner == "vectis-lua-lockd-queue-example")
 assert(acked_messages == 1)
 assert(closed_messages == 1)

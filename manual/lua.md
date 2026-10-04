@@ -39,7 +39,7 @@ These modules are intended to expose upstream or bundled C library behavior
 with minimal Vectis opinion:
 
 - `lockdc`: upstream liblockdc Lua module.
-- `lonejson`: upstream LoneJSON Lua module.
+- `lonejson`: complete upstream LoneJSON Lua module with the small schema overlay, documented in [Lua LoneJSON](lua-lonejson.md).
 - `pslog`: upstream libpslog Lua module, documented in
   [Lua pslog](lua-pslog.md).
 - `lql`: upstream liblql Lua module, documented in [Lua lql](lua-lql.md).
@@ -78,6 +78,10 @@ These modules are Vectis-owned helpers over one or more dependency-native
 modules or C SDK workflows:
 
 - `vectis`: top-level runtime helpers and module namespace.
+- `vectis.supervisor`: serial logical scopes, bounded copied IPC, timers, and
+  queue delivery, documented in [Lua supervisors and workflows](lua-supervisor.md).
+- `vectis.workflow`: durable outbox transactions and automatic receipt
+  forwarding, documented in [Lua supervisors and workflows](lua-supervisor.md).
 - `vectis.auth`: Lua DX helpers plus the native auth, TOTP/QR, email token,
   OAuth2/OIDC, and WebDAV key facade, documented in
   [Lua auth](lua-auth.md).
@@ -173,3 +177,8 @@ workflow gets a Lua helper, add it to this document and to the `workflow:*`
 section of the coverage matrix. If the helper is intended for packed
 self-contained applications, it also needs packed execution coverage before it
 can be considered release-ready.
+
+The current [semantic upgrade audit](../docs/lua-upgrade-seam-audit.md) records
+implemented integration, deliberate exclusions and upstream blockers. Source-only
+`require("vectis")` tolerates absent optional roots and known dependency native
+cores; genuine loader/init errors propagate unchanged, including table errors.

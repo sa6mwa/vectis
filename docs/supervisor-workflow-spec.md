@@ -4,8 +4,46 @@ Status: implementation authority.
 
 This specification extends the established Vectis T2 supervisor runtime into a
 reusable background-execution model. It uses liblockdc 0.18.0's threadless
-outbox and explicit dispatcher APIs; the generic Vectis supervisor remains
-future implementation work.
+outbox and explicit dispatcher APIs. The serial default host, named logical
+scopes, bounded public channels, timers, receivers, queue consumers, and
+transaction-to-dispatcher receipt forwarding are implemented. This remains the
+authority for the complete intended contract, including requirements blocked
+by the current upstream public API.
+
+## Delivery status
+
+The implemented default runs callbacks serially in the supervisor's main Lua
+caller state. Declarations precede fork; clients and dispatchers materialize
+after fork. One persistent dispatcher per workflow identity receives committed
+keys through a bounded FD-waking channel. Overflow coalesces a separate repair
+signal; startup reconciliation and candidate probes recover durable work.
+The private VRC1 service-control bus remains private.
+
+[`lua-supervisor.md`](../manual/lua-supervisor.md) describes the available API;
+[`supervisor-workflow-audit.md`](supervisor-workflow-audit.md) records behavior
+evidence and limitations. In particular, the `payload_source()` pull interface
+and automatic lease renewal throughout a blocking handler remain blocked:
+liblockdc 0.18.0 exposes push payload streaming and explicit renewal, but neither
+a public pull source nor a safe automatic-renewal facility for Lua-owned jobs.
+The implementation exposes genuine `write_payload(sink)` streaming and explicit
+`renew(ttl)` instead. These do not satisfy those two stronger requirements.
+
+Isolated/module Lua lanes, bounded automatic restart policies, and cross-runtime
+leader/configuration guards remain future work. Unsupported lanes and shared
+runtime mode are rejected. Stopping a kind-owning scope pauses the workflow's
+shared dispatcher while that scope is stopped: upstream has no kind-filtered
+claim API. Different workflows retain independent lifecycle control. Release
+approval must account for these limits; this status does not weaken the intended
+contracts below.
+
+Short stateful effect claims support checkpoint read/update/completion. Renewal
+in stateful mode is rejected: the upstream probe reaches deferred completion
+after successful renewal/update and then fails a Pouch version precondition.
+This does not satisfy long stateful handlers. The audit records the reproduction.
+
+Current logical health is state plus copied last-error diagnostics. Independent
+quotas, lane permits, automatic restart/backoff and stronger health policies below
+remain intended contracts; meaningful unsupported options are rejected.
 
 It supersedes the future-facing parts of the current statement that the T2
 control channel is permanently private. Existing lifecycle safety rules remain
@@ -282,6 +320,10 @@ to the same frame bound. `signal()` accepts no payload and only declared signal
 kinds. Lua declares signal-kind labels as strings; Vectis maps those labels to
 immutable numeric ids before fork. Duplicate labels or C numeric values are
 rejected during declaration.
+
+**Required-contract sketch, not runnable current API:** the following
+`payload_source()` example requires the missing upstream pull facility. Use
+the [delivered manual](../manual/lua-supervisor.md) for runnable push streaming.
 
 ```lua
 local delivery = app:supervisor({ name = "delivery" })

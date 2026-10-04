@@ -259,44 +259,75 @@ function M.with_acquired_lease(config, req, handler)
   end)
 end
 
+-- Public batch-one adapter. Client terminal methods leave the batch handle
+-- intact so explicit close releases both the native message and client retain.
+function M._dequeue_one(client, req)
+  local request = copy_table(req)
+  request.page_size = 1
+  local batch, err = client:dequeue_batch(request)
+  if not batch then
+    if err and err.code == lockdc.ERR_TIMEOUT then return nil end
+    return nil, err
+  end
+  local raw = batch[1]
+  if not raw then return nil end
+  local active = true
+  local delivery = {}
+  local function live() assert(active, "queue delivery is outside its handler lifetime") end
+  function delivery:close()
+    if active then active = false; raw:close() end
+  end
+  function delivery:is_open() return active end
+  local function terminal(action, request)
+    live()
+    local ok, result, failure = pcall(function()
+      if action == "ack" then return client:queue_ack(raw) end
+      local args = copy_table(request); args.message = raw
+      return client:queue_nack(args)
+    end)
+    delivery:close()
+    if not ok then error(result, 0) end
+    return result, failure
+  end
+  function delivery:ack() return terminal("ack") end
+  function delivery:nack(request) return terminal("nack", request) end
+  for _, name in ipairs({"info", "extend", "state", "rewind_payload", "write_payload", "read_payload", "read_payload_json"}) do
+    delivery[name] = function(_, ...) live(); return raw[name](raw, ...) end
+  end
+  return delivery
+end
+
 function M.with_dequeued_json(config, req, handler)
   if type(handler) ~= "function" then
     error("vectis.lockd.with_dequeued_json requires a handler", 2)
   end
-
-  return M.with_client(config, function(client)
-    local message, dequeue_err = client:dequeue(req)
-    if message == nil then
-      return nil, lockdc_error(dequeue_err, "lockdc dequeue failed")
+  local client, err = M.open(config)
+  if not client then return nil, err end
+  local message
+  local ok, result, failure = pcall(function()
+    local dequeue_err
+    message, dequeue_err = M._dequeue_one(client, req)
+    if not message then
+      if dequeue_err then return nil, lockdc_error(dequeue_err, "lockdc dequeue failed") end
+      return nil -- empty is ordinary no-work, never a handler invocation
     end
-
-    local ok_payload, payload, payload_written_or_err = pcall(function()
-      return message:read_payload_json()
-    end)
-    if not ok_payload then
-      close_handle(message)
-      error(payload)
-    end
-    if payload == nil then
-      close_handle(message)
-      return nil, lockdc_error(payload_written_or_err,
-                               "lockdc read_payload_json failed")
-    end
-
-    local ok, result, handler_err =
-        pcall(handler, payload, message, client, payload_written_or_err)
-    close_handle(message)
-    if not ok then
-      error(result)
-    end
-    if handler_err ~= nil then
-      return nil, handler_error(handler_err)
-    end
-    if result == nil then
-      return true
-    end
-    return result
+    local payload, payload_err = message:read_payload_json()
+    if payload == nil then return nil, lockdc_error(payload_err, "lockdc read_payload_json failed") end
+    local value, handler_err = handler(payload, message, client, payload_err)
+    if handler_err ~= nil then return nil, handler_error(handler_err) end
+    if value == nil then return true end
+    return value
   end)
+  if message then message:close() end
+  client:close()
+  if not ok then error(result, 0) end
+  return result, failure
 end
 
+function M.pouch_endpoint_build(root, options)
+  return require("vectis.lockd.core").pouch_endpoint_build(root, options)
+end
+function M.pouch_endpoint_has_option(endpoint, name)
+  return require("vectis.lockd.core").pouch_endpoint_has_option(endpoint, name)
+end
 return M

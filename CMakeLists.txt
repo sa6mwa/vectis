@@ -542,11 +542,13 @@ set(vectis_public_headers
   include/vectis/embedded_fs.h
   include/vectis/totp_qr.h
   include/vectis/webdav.h
+  include/vectis/supervisor.h
   "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
 )
 
 set(vectis_sources
   src/vectis.c
+  src/vectis_supervisor.c
   src/vectis_acme_state.c
   src/vectis_auth.c
   src/vectis_embedded_fs.c
@@ -877,6 +879,8 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/vectis/dsv.lua|vectis/dsv.lua|vectis.dsv|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/http.lua|vectis/http.lua|vectis.http|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/kore.lua|vectis/kore.lua|vectis.kore|vectis standalone fallback"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/supervisor.lua|vectis/supervisor.lua|vectis.supervisor|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/workflow.lua|vectis/workflow.lua|vectis.workflow|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/lockd.lua|vectis/lockd.lua|vectis.lockd|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/log.lua|vectis/log.lua|vectis.log|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/mqtt.lua|vectis/mqtt.lua|vectis.mqtt|vectis"
@@ -888,6 +892,7 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/vectis/webdav.lua|vectis/webdav.lua|vectis.webdav|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/xml.lua|vectis/xml.lua|vectis.xml|vectis"
     "${vectis_lockdc_lua_source_dir}/lua/lockdc/init.lua|lockdc/init.lua|lockdc|liblockdc"
+    "${vectis_lonejson_lua_source_dir}/lua/lonejson/init.lua|lonejson/upstream.lua|lonejson.upstream|lonejson"
     "${CMAKE_SOURCE_DIR}/lua/lonejson/init.lua|lonejson/init.lua|lonejson|vectis compatibility facade"
     "${vectis_pslog_lua_source_dir}/lua/pslog/init.lua|pslog/init.lua|pslog|pslog"
     "${vectis_liblql_lua_source_dir}/lua/lql/init.lua|lql/init.lua|lql|liblql"
@@ -957,6 +962,7 @@ const unsigned char vectis_cli_lua_sources_data[] = {
     "${vectis_lockdc_lua_source_dir}/src/lua"
   )
   target_compile_definitions(vectis_lockdc_lua PRIVATE
+    lc_client_open=vectis_lua_lockdc_client_open
     _POSIX_C_SOURCE=200809L)
   set_target_properties(vectis_lockdc_lua PROPERTIES
     C_STANDARD 99
@@ -974,6 +980,8 @@ const unsigned char vectis_cli_lua_sources_data[] = {
   )
   target_compile_definitions(vectis_lonejson_lua PRIVATE
     _POSIX_C_SOURCE=200809L)
+  target_link_libraries(vectis_lonejson_lua PRIVATE
+    lonejson::openssl lonejson::oidc lonejson::curl)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vectis_lonejson_lua PRIVATE -fvisibility=hidden)
   endif()
@@ -1096,6 +1104,7 @@ const unsigned char vectis_cli_lua_sources_data[] = {
 
   add_library(vectis_opcua_lua OBJECT "${vectis_opcua_lua_source}")
   target_include_directories(vectis_opcua_lua PRIVATE
+    "${vectis_pslog_lua_source_dir}/include"
     "${CMAKE_SOURCE_DIR}/include"
     "${vectis_external_include_dir}"
   )
@@ -1186,6 +1195,8 @@ const unsigned char vectis_cli_lua_sources_data[] = {
 
   set(vectis_binary_runner_sources
     src/vectis_cli.c
+    src/vectis_lua_supervisor.c
+    src/vectis_lua_lockdc.c
     src/vectis_cli_proxy_lua.c
     src/vectis_smith_cli.c
     src/vectis_main.c

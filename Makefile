@@ -63,7 +63,7 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run all debug CTest tests with the pinned Bootlin runtime.' \
-		'make test-failures-fast Build only the CLI and run fast Lua/MCP failure and JSON boundary checks.' \
+		'make test-failures-fast Build CLI and lightweight seam units; run deterministic failure and boundary checks.' \
 		'make test-proxy-fast    Build and run focused proxy tests in Debug.' \
 		'make test-proxy-asan-fast Build and run the same focused proxy tests under ASan/UBSan.' \
 		'make test-proxy-lua-fast Build and run Lua proxy hook integration in Debug.' \
@@ -377,7 +377,7 @@ test-failures-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)
 		[ CMakePresets.json -nt build/$(DEBUG_PRESET)/build.ninja ]; then \
 		$(TIMED) failures-fast-configure $(CMAKE) --preset $(DEBUG_PRESET); \
 	fi
-	$(TIMED) failures-fast-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
+	$(TIMED) failures-fast-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_failures_fast
 	$(TIMED) failures-fast-test $(CTEST) --preset $(DEBUG_PRESET) -j 1 -L failure-fast --no-tests=error
 
 test-proxy-fast: $(HOST_DEBUG_MANIFEST) $(KORE_PATCH_STAMP)

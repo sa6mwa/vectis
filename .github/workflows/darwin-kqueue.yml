@@ -45,7 +45,12 @@ jobs:
 
       - name: Build proxy integration tests
         run: |
-          cmake --build --preset darwin-debug --parallel 2 --target \
+          cmake --build --preset darwin-debug --parallel 1 --target \
+            vectis_bin \
+            vectis_unit_supervisor \
+            vectis_opcua_lua_cleanup \
+            vectis_sus_lua_lifetime \
+            vectis_app_source_lifetime \
             vectis_unit_proxy_curl_capabilities \
             vectis_unit_kore_quiescence_darwin \
             vectis_unit_kore_proxy_live \
@@ -57,5 +62,5 @@ jobs:
 
       - name: Exercise native kqueue HTTP, SSE, WebSocket, and WSS
         run: |
-          ctest --preset darwin-debug --no-tests=error \
-            -R '^(vectis_unit_proxy_curl_capabilities|vectis_unit_forked_kore_darwin_supervisor|vectis_unit_kore_quiescence_darwin|vectis_unit_kore_proxy_(live|local_live|overlap_live|ws_live|ws_rejection_live|wss_live))$'
+          ctest --preset darwin-debug -j1 --no-tests=error \
+            -R '^(vectis_unit_supervisor|vectis_opcua_lua_cleanup|vectis_sus_lua_lifetime|vectis_app_source_lifetime|vectis_lua_app_source_lifetime|vectis_lua_upgrade_seams|vectis_lua_supervisor_(workflow|client_options|route)|vectis_unit_proxy_curl_capabilities|vectis_unit_forked_kore_darwin_supervisor|vectis_unit_kore_quiescence_darwin|vectis_unit_kore_proxy_(live|local_live|overlap_live|ws_live|ws_rejection_live|wss_live))$'

@@ -10,14 +10,35 @@ serializer to Lua scripts.
 - `vectis.xml.parse_record(opts)` parses XML into a Lua-owned LoneJSON record.
 - `vectis.xml.serialize(opts)` serializes a Lua table or Lua-owned LoneJSON
   record into a materialized XML string.
+- `vectis.xml.write(opts, sink)` writes native XML chunks directly to a sink
+  function or `{write=function(chunk) ... end}` table and returns `true, bytes`.
 
 `parse()` is intentionally materialized because it converts the final record to
 a Lua table. Use `parse_record()` when the schema contains spooled fields or
 when the caller wants to preserve LoneJSON record ownership.
 
-`serialize()` is also intentionally materialized in Lua. The C SDK exposes the
-same writer as `vectis_xml_write_lonejson()` for callers that need to stream XML
-to an `lc_sink`, plus `vectis_xml_lonejson_to_bytes()` for owned byte output.
+`write()` and `serialize()` share the native `vectis_xml_write_lonejson()`
+emitter. Only `serialize()` collects output in memory. `write()` calls the sink
+synchronously on the caller's Lua state with chunks of at most 4096 bytes;
+there is no whole-output buffer or output staging file. The caller owns the sink,
+which is never closed by this operation. A sink may return nothing or success;
+`false`, `nil, error`, or a thrown error stops emission and returns `nil, err`
+with a structured message. Nested independent writes are permitted.
+
+Callback writes accept `value`/`table` input only. They assign it into a private
+record before output starts; option strings and schema remain retained through
+callbacks and garbage collection. Mutating the original table or options during
+a callback cannot alter that record or its configuration. Spooled input fields
+are copied through public schema assignment into private input storage, using
+the configured spill policy; this is input preparation, not output spooling.
+External record userdata is rejected with an actionable error because public
+LoneJSON borrowed views have no mutation lease. Use the explicitly buffered
+`serialize()` for external records. Assignment misuse raises after cleanup;
+sink failures return structured errors after cleanup.
+
+Parsing builds a mapped record, potentially with spooled fields. It is not an
+incremental XML DOM API. The C SDK also exposes `vectis_xml_lonejson_to_bytes()`
+for owned byte output.
 
 ## Options
 

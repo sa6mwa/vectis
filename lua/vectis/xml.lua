@@ -38,6 +38,10 @@ function M.serialize(first, second)
   return core.serialize(first)
 end
 
+function M.write(opts, sink)
+  return core.write(opts, sink)
+end
+
 M.core = core
 
 return M

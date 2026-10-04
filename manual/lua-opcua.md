@@ -544,3 +544,42 @@ by deterministic local e2e. Live OPC UA PubSub/MQTT broker validation is an
 opt-in integration workflow through `VECTIS_OPCUA_PUBSUB_LIVE=1 make
 test-opcua-pubsub-live` or `prerelease-live`; it uses the local MQTT
 integration service and must not replace the deterministic local gate.
+
+## Structured native logging
+
+`opcua.client({logger=pslog_logger})`, `opcua.connect(endpoint,opts)` and every
+server constructor (port, JSON or JSON-file options) accept `logger` or
+`logger_disabled=true`. `client:set_logger(opts)` and `server:set_logger(opts)`
+replace or mute the destination. Only live pslog userdata with the official
+native-sink capability is accepted; Lua function outputs are rejected.
+Without an explicit destination, direct constructors preserve upstream stdout.
+Mute installs a null native callback. Close and failed initialization retain the
+logger through native teardown, then release its official reference.
+Logger setters validate the receiver before retaining a replacement. Configuration
+getters cannot close or borrow the receiver while replacement is in progress;
+errors and ownership changes release any partial replacement reference. A failed
+replacement leaves the previous destination intact.
+
+Records preserve the exact message byte length, including embedded NUL, and
+carry numeric `category`, `format_status` and `opcua_level` fields. Upstream
+FATAL records use `log_view` and do not terminate the process. Native emitting
+threads never invoke Lua logging callbacks.
+
+Managed `app:opcua_server_service` installs the app-derived `sub=opcua` sink
+before startup, or mutes it under the subsystem/service disable policy. While
+registered, the app owns operations on the borrowed Lua server: direct methods,
+logger replacement and close are rejected. Service cleanup joins/quiesces the
+worker, shuts down the server and removes the app logger before its seed is
+freed. A server retained past app close is usable again with its old managed
+sink muted. Duplicate registration across apps is rejected. This lease covers every direct
+server method, including callback registration before worker startup. App stop
+alone retains the lease; app close releases it after join and logger reset.
+GC defers server destruction until that release, including whole-VM finalization
+in either userdata creation order. Same-VM coroutine-created servers are valid;
+registration retains the creation/registration coroutines through cleanup.
+
+Unmanaged method/access-control callbacks reject server close, logger/configuration
+replacement, runtime iteration and other server operations while their native
+callback stack is active. Returned access-control tables are read as plain data
+without executing metamethods. Failed callbacks fail closed; later ordinary
+operations remain usable.

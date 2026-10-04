@@ -29,6 +29,19 @@ if(VECTIS_BUILD_FUZZERS)
   add_subdirectory(fuzz)
 endif()
 
+if(VECTIS_BUILD_BINARY)
+  add_test(NAME vectis_lua_queue_seams
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/queue-seams"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/queue_seams.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_queue_seams PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_upgrade_seams
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/upgrade-seams"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_upgrade_seams PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
+endif()
 if(NOT APPLE)
   add_executable(vectis_pack_smtp_harness
     helpers/vectis_pack_smtp_harness.c)
@@ -84,9 +97,13 @@ if(TARGET vectis_bin)
     $<TARGET_OBJECTS:vectis_opcua_lua>)
   add_executable(vectis_opcua_lua_cleanup unit/test_vectis_opcua_lua_cleanup.c)
   target_include_directories(vectis_opcua_lua_cleanup PRIVATE
+    "${vectis_pslog_lua_source_dir}/include"
     "${CMAKE_SOURCE_DIR}/src")
+  target_compile_definitions(vectis_opcua_lua_cleanup PRIVATE
+    VECTIS_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(vectis_opcua_lua_cleanup PRIVATE
-    ${vectis_test_link_target} cpkt::lua_runtime cpkt::opcua)
+    ${vectis_test_link_target} cpkt::lua_runtime cpkt::opcua
+    $<TARGET_OBJECTS:vectis_pslog_lua>)
   set_target_properties(vectis_opcua_lua_cleanup PROPERTIES
     C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -95,14 +112,16 @@ if(TARGET vectis_bin)
   endif()
   add_test(NAME vectis_opcua_lua_cleanup COMMAND vectis_opcua_lua_cleanup)
   set_tests_properties(vectis_opcua_lua_cleanup PROPERTIES
-    LABELS "unit;lua;local" TIMEOUT 30)
+    LABELS "unit;lua;local;failure-fast" TIMEOUT 30)
   target_include_directories(vectis_opcua_lua_e2e PRIVATE
+    "${vectis_pslog_lua_source_dir}/include"
     "${VECTIS_EXTERNAL_ROOT}/include")
   target_compile_definitions(vectis_opcua_lua_e2e PRIVATE
     _POSIX_C_SOURCE=200809L)
   target_link_libraries(vectis_opcua_lua_e2e PRIVATE
     cpkt::lua_runtime
-    cpkt::opcua
+    cpkt::opcua pslog::pslog_static
+    $<TARGET_OBJECTS:vectis_pslog_lua>
     Threads::Threads)
   if(UNIX AND NOT APPLE)
     target_link_libraries(vectis_opcua_lua_e2e PRIVATE m)
@@ -160,7 +179,7 @@ if(TARGET vectis_bin)
   add_test(NAME vectis_audio_lua_validation
     COMMAND vectis_audio_lua_validation)
   set_tests_properties(vectis_audio_lua_validation PROPERTIES
-    LABELS "unit;lua;local" TIMEOUT 30)
+    LABELS "unit;lua;local;failure-fast" TIMEOUT 30)
   add_executable(vectis_sus_lua_lifetime
     unit/test_vectis_sus_lua_lifetime.c
     ../src/vectis_audio_lua.c)
@@ -176,7 +195,7 @@ if(TARGET vectis_bin)
   endif()
   add_test(NAME vectis_sus_lua_lifetime COMMAND vectis_sus_lua_lifetime)
   set_tests_properties(vectis_sus_lua_lifetime PROPERTIES
-    LABELS "unit;lua;local" TIMEOUT 30)
+    LABELS "unit;lua;local;failure-fast" TIMEOUT 30)
   add_executable(vectis_smith_cli_stream
     unit/test_vectis_smith_cli_stream.c)
   target_include_directories(vectis_smith_cli_stream PRIVATE
@@ -286,7 +305,7 @@ if(TARGET vectis_bin)
                      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                      -P "${CMAKE_SOURCE_DIR}/tests/lua/top_level_module.cmake")
     set_tests_properties(vectis_lua_top_level_module PROPERTIES
-      LABELS "lua;smoke;local"
+      LABELS "lua;smoke;local;failure-fast"
       TIMEOUT 30)
   endif()
   add_test(NAME vectis_lua_curl
@@ -357,6 +376,49 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_openssl PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  if((CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin") AND VECTIS_WITH_KORE_RUNTIME)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME vectis_lua_app_source_lifetime
+      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tests/lua/app_source_lifetime.py"
+        --vectis "$<TARGET_FILE:vectis_bin>"
+        --script "${CMAKE_SOURCE_DIR}/tests/lua/app_source_lifetime.lua"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/app-source-lifetime")
+    set_tests_properties(vectis_lua_app_source_lifetime PROPERTIES
+      LABELS "lua;local;integration;packed;failure-fast" TIMEOUT 45 RUN_SERIAL TRUE)
+    add_test(NAME vectis_lua_supervisor_route
+      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_route.py"
+        --vectis "$<TARGET_FILE:vectis_bin>"
+        --script "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_route.lua"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/supervisor-route")
+    set_tests_properties(vectis_lua_supervisor_route PROPERTIES
+      LABELS "lua;local;integration;packed" TIMEOUT 45 RUN_SERIAL TRUE)
+  endif()
+  add_test(NAME vectis_lua_supervisor_workflow
+    COMMAND "${CMAKE_COMMAND}"
+      "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_workflow.cmake")
+  set_tests_properties(vectis_lua_supervisor_workflow PROPERTIES
+    LABELS "lua;local;integration;packed" TIMEOUT 60 RUN_SERIAL TRUE)
+  add_test(NAME vectis_example_lua_supervisor_workflow
+    COMMAND "${CMAKE_COMMAND}"
+      "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/supervisor-example"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/supervisor_workflow.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_workflow.cmake")
+  set_tests_properties(vectis_example_lua_supervisor_workflow PROPERTIES
+    LABELS "lua;local;integration;packed;example" TIMEOUT 60 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_supervisor_upstream_stateful
+    COMMAND "${CMAKE_COMMAND}"
+      "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/supervisor-upstream"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/supervisor_upstream_stateful.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_workflow.cmake")
+  set_tests_properties(vectis_lua_supervisor_upstream_stateful PROPERTIES
+    LABELS "lua;local;integration;packed;upstream-contract" TIMEOUT 60 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_dsv
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -481,6 +543,7 @@ if(TARGET vectis_bin)
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_UPSTREAM_LONEJSON=${vectis_lonejson_lua_source_dir}/lua/lonejson/init.lua"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/self_describe.cmake")
   set_tests_properties(vectis_cli_self_describe PROPERTIES
@@ -818,4 +881,47 @@ if(TARGET vectis_bin)
       LABELS "lua;example-smoke;local"
       TIMEOUT 30)
   endif()
+endif()
+
+if(VECTIS_BUILD_BINARY)
+  set_property(TEST vectis_lua_supervisor_workflow
+    APPEND PROPERTY LABELS failure-fast)
+  if(VECTIS_WITH_KORE_RUNTIME)
+    set_property(TEST vectis_lua_supervisor_route APPEND PROPERTY LABELS failure-fast)
+  endif()
+  # Include the actual CLI source and reuse its declared closure for deterministic
+  # native-destruction instrumentation; no alternate callback implementation.
+  set(app_source_unit_sources ${vectis_binary_runner_sources})
+  list(REMOVE_ITEM app_source_unit_sources src/vectis_cli.c src/vectis_main.c)
+  list(TRANSFORM app_source_unit_sources PREPEND "${CMAKE_SOURCE_DIR}/"
+    REGEX "^src/")
+  add_executable(vectis_app_source_lifetime
+    unit/test_vectis_app_source_lifetime.c ${app_source_unit_sources})
+  foreach(property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES LINK_OPTIONS)
+    get_target_property(app_source_unit_property vectis_bin ${property})
+    if(app_source_unit_property)
+      set_property(TARGET vectis_app_source_lifetime PROPERTY ${property} "${app_source_unit_property}")
+    endif()
+  endforeach()
+  set_target_properties(vectis_app_source_lifetime PROPERTIES
+    C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_app_source_lifetime PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME vectis_app_source_lifetime COMMAND vectis_app_source_lifetime)
+  set_tests_properties(vectis_app_source_lifetime PROPERTIES
+    LABELS "unit;lua;local;failure-fast" TIMEOUT 15)
+  add_custom_target(vectis_failures_fast DEPENDS vectis_bin vectis_unit_supervisor
+    vectis_opcua_lua_cleanup vectis_sus_lua_lifetime vectis_app_source_lifetime
+    vectis_audio_lua_validation)
+endif()
+
+if(VECTIS_BUILD_BINARY)
+  add_test(NAME vectis_lua_supervisor_client_options
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/client-options"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/supervisor_client_options.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_workflow.cmake")
+  set_tests_properties(vectis_lua_supervisor_client_options PROPERTIES
+    LABELS "lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
 endif()

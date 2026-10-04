@@ -6,6 +6,7 @@
 
 typedef struct vectis_lua_proxy_route {
   lua_State *lua;
+  int (*invoke)(lua_State *, void *, int, int);
   int rewrite_ref;
   int preflight_ref;
   int response_ref;

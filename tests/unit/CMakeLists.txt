@@ -67,6 +67,7 @@ function(vectis_add_cpp_header_test target_name)
     TIMEOUT 180)
 endfunction()
 
+vectis_add_unit_test(vectis_unit_supervisor test_vectis_supervisor.c)
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
 vectis_add_unit_test(vectis_unit_proxy_route_selection
   test_proxy_route_selection.c)
@@ -509,4 +510,8 @@ if(VECTIS_TARGET_ID STREQUAL "x86_64-linux-gnu" AND CMAKE_HOST_SYSTEM_NAME STREQ
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test_runtime_mapping.py"
             "${CMAKE_BINARY_DIR}")
   set_tests_properties(vectis_runtime_mapping PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 30)
+endif()
+
+if(TARGET vectis_unit_supervisor)
+  set_property(TEST vectis_unit_supervisor APPEND PROPERTY LABELS failure-fast)
 endif()

@@ -12,6 +12,7 @@
 #include <pslog.h>
 #include <softline/softline.h>
 #include <vectis/proxy.h>
+#include <vectis/supervisor.h>
 #include <vectis/vectis.h>
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
@@ -22,8 +23,13 @@ int main(void) {
   vectis_app_config config;
   vectis_http_client_config http_config;
   vectis_proxy_route_config proxy_config;
+  vectis_supervisor_config supervisor_config;
   vectis_error error;
   vectis_app *app;
+  vectis_supervisor *scope;
+  vectis_supervisor_channel *channel;
+  vectis_supervisor_event event;
+  char frame[4];
   vectis_http_client *http;
   struct lc_client *client;
   struct kore_server *server;
@@ -40,6 +46,10 @@ int main(void) {
 
   vectis_app_config_init(&config);
   vectis_proxy_route_config_init(&proxy_config);
+  vectis_supervisor_config_init(&supervisor_config);
+  if (supervisor_config.capacity == 0u) {
+    return 12;
+  }
   if (proxy_config.path != NULL ||
       proxy_config.upstream_http_version != VECTIS_PROXY_HTTP_AUTO ||
       proxy_config.tls_ca_pem != NULL ||
@@ -70,6 +80,19 @@ int main(void) {
       app->proxy_route == NULL || app->close == NULL) {
     app->close(app);
     return 3;
+  }
+  supervisor_config.name = "installed";
+  if (vectis_supervisor_new(app, &supervisor_config, &scope, &error) !=
+          VECTIS_OK ||
+      vectis_supervisor_channel_get(scope, &channel, &error) != VECTIS_OK ||
+      vectis_supervisor_channel_send(channel, 42u, "sdk", 3u, &error) !=
+          VECTIS_OK ||
+      vectis_supervisor_channel_receive(channel, &event, frame, sizeof(frame),
+                                        &error) != VECTIS_OK ||
+      event.kind != 42u || event.payload_size != 3u ||
+      memcmp(frame, "sdk", 3u) != 0) {
+    app->close(app);
+    return 13;
   }
   app->close(app);
 

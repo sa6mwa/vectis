@@ -1,6 +1,8 @@
 #include "vectis_acme_state.h"
 #include "vectis_internal.h"
+#include "vectis_opcua_log.h"
 #include "vectis_pouch_crypto.h"
+#include "vectis_supervisor_internal.h"
 #include <vectis/proxy.h>
 
 #include <arpa/inet.h>
@@ -421,6 +423,7 @@ typedef struct vectis_spill_writer {
 } vectis_spill_writer;
 
 typedef struct vectis_app_impl {
+  vectis_supervisor_host *supervisor_host;
   pthread_mutex_t mutex;
   pthread_cond_t service_cond;
   pthread_mutex_t service_control_write_mutex;
@@ -527,6 +530,7 @@ typedef struct vectis_app_impl {
   size_t openapi_doc_capacity;
   vectis_metrics_state *metrics;
   struct lc_client *lockd_client;
+  lc_pouch_settings shared_pouch_settings;
   pid_t lockd_client_pid;
   vectis_auth_cleanup_entry *auth_cleanup_entries;
   struct vectis_consumer_receiver_entry *consumer_receivers;
@@ -950,6 +954,7 @@ typedef struct vectis_managed_service_impl {
 static void vectis_destroy_impl_final(vectis_app_impl *impl);
 
 typedef struct vectis_opcua_server_service_context {
+  pslog_logger *logger;
   cpkt_opcua_server *server;
   int wait_internal;
   long max_wait_ms;
@@ -5995,6 +6000,15 @@ static vectis_status vectis_opcua_server_service_start(void *context,
     return VECTIS_ERR_INVALID;
   }
   status = 0u;
+  {
+    cpkt_opcua_log_config logger;
+    memset(&logger, 0, sizeof(logger));
+    logger.fn = ctx->logger != NULL ? vectis_opcua_log_record : NULL;
+    logger.user = ctx->logger;
+    result = cpkt_opcua_server_set_logger(ctx->server, &logger);
+    if (result != CPKT_OPCUA_OK)
+      return vectis_set_opcua_error(error, result, 0u, "opcua service logger");
+  }
   result = cpkt_opcua_server_startup(ctx->server, &status);
   if (result != CPKT_OPCUA_OK) {
     return vectis_set_opcua_error(error, result, status,
@@ -6095,6 +6109,13 @@ static void vectis_opcua_server_service_cleanup(void *context) {
     return;
   }
   (void)vectis_opcua_server_service_stop(ctx, NULL);
+  /* Managed monitor is joined before cleanup. The borrowed server can outlive
+   * the app, so remove the app-owned logger before freeing the context/seed. */
+  {
+    cpkt_opcua_log_config muted;
+    memset(&muted, 0, sizeof(muted));
+    (void)cpkt_opcua_server_set_logger(ctx->server, &muted);
+  }
   (void)pthread_mutex_destroy(&ctx->mutex);
   free(ctx);
 }
@@ -10191,7 +10212,8 @@ static int vectis_app_has_metrics_persistence(const vectis_app_impl *impl) {
 }
 
 static int vectis_app_needs_supervised_runtime(const vectis_app_impl *impl) {
-  return vectis_app_has_requested_consumer_services(impl) ||
+  return vectis_supervisor_host_requested(impl->supervisor_host) ||
+         vectis_app_has_requested_consumer_services(impl) ||
          vectis_app_has_requested_managed_services(impl) ||
          vectis_app_has_metrics_persistence(impl);
 }
@@ -10410,6 +10432,8 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
     (void)close(impl->kore_child_control_fd);
     impl->kore_child_control_fd = -1;
   }
+  vectis_supervisor_host_destroy(impl->supervisor_host);
+  impl->supervisor_host = NULL;
   vectis_app_close_managed_services(impl);
   vectis_app_close_consumer_services(impl);
   vectis_app_service_control_close(impl);
@@ -10863,6 +10887,8 @@ static vectis_status vectis_configure_pouch_client(lc_client_config *config,
                                                    char **default_key_file,
                                                    vectis_error *error) {
   const char *environment_key;
+  lc_error native_error;
+  int crypto_present, rc;
 
   if (default_key_file != NULL) {
     *default_key_file = NULL;
@@ -10892,9 +10918,23 @@ static vectis_status vectis_configure_pouch_client(lc_client_config *config,
     config->pouch_crypto_generate_key_file_set = 1;
     return VECTIS_OK;
   }
+  lc_error_init(&native_error);
+  rc = vectis_pouch_endpoint_has_crypto_option(endpoint, &crypto_present,
+                                               &native_error);
+  if (rc != LC_OK) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     native_error.message != NULL ? native_error.message
+                                                  : "invalid Pouch endpoint");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+      error->dependency_code = rc;
+    }
+    lc_error_cleanup(&native_error);
+    return VECTIS_ERR_INVALID;
+  }
+  lc_error_cleanup(&native_error);
   if (config->pouch_crypto_key != NULL ||
-      config->pouch_crypto_key_file != NULL ||
-      vectis_pouch_endpoint_has_crypto_option(endpoint)) {
+      config->pouch_crypto_key_file != NULL || crypto_present) {
     /* Do not retry without encryption or reinitialize an existing root. A
      * plaintext root or a different key must fail through liblockdc unchanged.
      */
@@ -10928,7 +10968,21 @@ static void vectis_lockd_client_config_from_app(const vectis_app_impl *impl,
                                                 const char *unix_socket_path,
                                                 const char *default_namespace,
                                                 long timeout_ms) {
+  lc_error endpoint_error;
+  int explicit_writer = 0;
   lc_client_config_init(config);
+  /* App-owned native/workflow clients share a root. Preserve explicit query
+   * selection; apply shared mode only when the endpoint leaves it unset. */
+  if (impl != NULL && endpoint_count == 1u &&
+      vectis_endpoint_is_pouch(endpoints[0])) {
+    lc_error_init(&endpoint_error);
+    if (lc_pouch_endpoint_has_option(endpoints[0], "single_writer",
+                                     &explicit_writer,
+                                     &endpoint_error) == LC_OK &&
+        !explicit_writer)
+      config->pouch_settings = &impl->shared_pouch_settings;
+    lc_error_cleanup(&endpoint_error);
+  }
   config->endpoints = endpoints;
   config->endpoint_count = endpoint_count;
   config->unix_socket_path = unix_socket_path;
@@ -11510,6 +11564,9 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     return NULL;
   }
 
+  lc_pouch_settings_init(&impl->shared_pouch_settings);
+  impl->shared_pouch_settings.set_mask = LC_POUCH_SETTING_SINGLE_WRITER;
+  impl->shared_pouch_settings.single_writer = 0;
   if (pthread_mutex_init(&impl->mutex, NULL) != 0) {
     free(app);
     free(impl);
@@ -11851,6 +11908,79 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
 
 void vectis_app_close(vectis_app *app) { vectis_destroy(app); }
 
+vectis_status vectis_app_supervisor_host(vectis_app *app,
+                                         vectis_supervisor_host **out,
+                                         vectis_error *error) {
+  vectis_app_impl *impl;
+  if (app == NULL || app->impl == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "app and supervisor output are required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (impl->supervisor_host == NULL) {
+    if (impl->started) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "declare supervisors before app start");
+      return VECTIS_ERR_STATE;
+    }
+    impl->supervisor_host = vectis_supervisor_host_create();
+    if (impl->supervisor_host == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "supervisor host allocation failed");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  *out = impl->supervisor_host;
+  return VECTIS_OK;
+}
+
+vectis_status vectis_app_workflow_storage_defaults(
+    vectis_app *app, int need_endpoint, int need_key_file, char *endpoint,
+    size_t endpoint_capacity, char *key_file, size_t key_file_capacity,
+    vectis_error *error) {
+  char *value;
+  if (app == NULL || app->impl == NULL ||
+      !((vectis_app_impl *)app->impl)->started || endpoint == NULL ||
+      endpoint_capacity == 0u || key_file == NULL || key_file_capacity == 0u) {
+    vectis_set_error(
+        error, VECTIS_ERR_STATE,
+        "workflow defaults require a started app and output buffers");
+    return VECTIS_ERR_STATE;
+  }
+  endpoint[0] = key_file[0] = '\0';
+  if (need_endpoint) {
+    value = vectis_persistence_default_pouch_endpoint(error);
+    if (value == NULL)
+      return VECTIS_ERR_STATE;
+    if (strlen(value) >= endpoint_capacity) {
+      free(value);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "workflow endpoint buffer too small");
+      return VECTIS_ERR_INVALID;
+    }
+    (void)strcpy(endpoint, value);
+    free(value);
+  }
+  if (need_key_file) {
+    value = vectis_persistence_default_pouch_key_file();
+    if (value == NULL) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to prepare Vectis Pouch key directory");
+      return VECTIS_ERR_STATE;
+    }
+    if (strlen(value) >= key_file_capacity) {
+      free(value);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "workflow key-file buffer too small");
+      return VECTIS_ERR_INVALID;
+    }
+    (void)strcpy(key_file, value);
+    free(value);
+  }
+  return VECTIS_OK;
+}
+
 void vectis_destroy(vectis_app *app) {
   vectis_app_impl *impl;
   vectis_error error;
@@ -11859,6 +11989,8 @@ void vectis_destroy(vectis_app *app) {
     return;
   }
   impl = (vectis_app_impl *)app->impl;
+  if (impl != NULL && vectis_supervisor_host_dispatching(impl->supervisor_host))
+    return;
   if (impl != NULL && impl->started) {
     (void)vectis_stop(app, &error);
   }
@@ -12319,6 +12451,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     }
   }
 
+  status = vectis_supervisor_host_prepare(impl->supervisor_host, error);
+  if (status != VECTIS_OK)
+    return status;
+
   if (vectis_app_has_metrics_persistence(impl)) {
     vectis_metrics_mark_checkpoint_restore(impl->metrics);
   }
@@ -12375,6 +12511,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       return VECTIS_ERR_STATE;
     }
     if (pid == 0) {
+      vectis_supervisor_host_producer(impl->supervisor_host);
       if (setpgid(0, 0) != 0) {
         _exit(1);
       }
@@ -12473,6 +12610,11 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       vectis_app_clear_kore_ready_state(impl);
       return status;
     }
+    status = vectis_supervisor_host_start(impl->supervisor_host, error);
+    if (status != VECTIS_OK) {
+      (void)vectis_app_stop_impl(app, NULL);
+      return status;
+    }
     vectis_app_mark_kore_ready(impl);
     vectis_error_clear(error);
     return VECTIS_OK;
@@ -12508,6 +12650,11 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     (void)vectis_app_stop_impl(app, NULL);
     return status;
   }
+  status = vectis_supervisor_host_start(impl->supervisor_host, error);
+  if (status != VECTIS_OK) {
+    (void)vectis_app_stop_impl(app, NULL);
+    return status;
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -12530,6 +12677,11 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
+  if (vectis_supervisor_host_dispatching(impl->supervisor_host)) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "app stop is not allowed inside a supervisor callback");
+    return VECTIS_ERR_STATE;
+  }
   first_status = VECTIS_OK;
   vectis_error_clear(&first_error);
   vectis_deadline_after_ms(&shutdown_deadline,
@@ -12589,6 +12741,15 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
     vectis_close_fd_if_open(&control_fd);
   }
   vectis_app_clear_kore_ready_state(impl);
+
+  vectis_error_clear(&local_error);
+  phase_timeout_ms = vectis_shutdown_phase_timeout_ms(impl, &shutdown_deadline);
+  status = vectis_supervisor_host_stop(impl->supervisor_host, phase_timeout_ms,
+                                       &local_error);
+  if (status != VECTIS_OK && first_status == VECTIS_OK) {
+    first_status = status;
+    first_error = local_error;
+  }
 
   vectis_error_clear(&local_error);
   status =
@@ -13018,7 +13179,6 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
   struct sigaction old_int;
   struct sigaction old_term;
   struct sigaction old_quit;
-  struct pollfd service_poll;
   int have_int;
   int have_term;
   int have_quit;
@@ -13076,11 +13236,14 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
       (void)pthread_mutex_unlock(&impl->mutex);
     }
     if (service_fd >= 0) {
-      memset(&service_poll, 0, sizeof(service_poll));
-      service_poll.fd = service_fd;
-      service_poll.events = POLLIN;
-      poll_rc = poll(&service_poll, 1u, 100);
-      if (poll_rc > 0 && service_poll.revents != 0) {
+      if (vectis_supervisor_host_poll(impl->supervisor_host, service_fd, 100L,
+                                      &poll_rc, error) != VECTIS_OK) {
+        (void)sigaction(SIGINT, &old_int, NULL);
+        (void)sigaction(SIGTERM, &old_term, NULL);
+        (void)sigaction(SIGQUIT, &old_quit, NULL);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      if (poll_rc > 0) {
         if (vectis_app_read_service_control(impl, error) != VECTIS_OK) {
           (void)sigaction(SIGINT, &old_int, NULL);
           (void)sigaction(SIGTERM, &old_term, NULL);
@@ -13140,7 +13303,6 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
   int status;
   int service_fd;
   int poll_rc;
-  struct pollfd service_poll;
   pid_t waited;
 
   if (impl == NULL || child_pid <= 0) {
@@ -13230,11 +13392,14 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
     service_fd = impl->service_control_read_fd;
     (void)pthread_mutex_unlock(&impl->mutex);
     if (service_fd >= 0) {
-      memset(&service_poll, 0, sizeof(service_poll));
-      service_poll.fd = service_fd;
-      service_poll.events = POLLIN;
-      poll_rc = poll(&service_poll, 1u, 100);
-      if (poll_rc > 0 && service_poll.revents != 0) {
+      if (vectis_supervisor_host_poll(impl->supervisor_host, service_fd, 100L,
+                                      &poll_rc, error) != VECTIS_OK) {
+        (void)sigaction(SIGINT, &old_int, NULL);
+        (void)sigaction(SIGTERM, &old_term, NULL);
+        (void)sigaction(SIGQUIT, &old_quit, NULL);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      if (poll_rc > 0) {
         if (vectis_app_read_service_control(impl, error) != VECTIS_OK) {
           (void)sigaction(SIGINT, &old_int, NULL);
           (void)sigaction(SIGTERM, &old_term, NULL);
@@ -29155,6 +29320,9 @@ vectis_status vectis_opcua_server_service_new(
     return VECTIS_ERR_STATE;
   }
   ctx->server = effective.server;
+  ctx->logger = effective.logger_disabled  ? NULL
+                : effective.logger != NULL ? effective.logger
+                                           : vectis_logger(app);
   ctx->wait_internal = effective.wait_internal ? 1 : 0;
   ctx->max_wait_ms = effective.max_wait_ms;
   vectis_managed_service_config_init(&managed);
@@ -45532,4 +45700,21 @@ void vectis_internal_runtime_observe(
   observation->consumer_start_sequence = impl->consumer_start_sequence;
   observation->consumer_stop_sequence = impl->consumer_stop_sequence;
   (void)pthread_mutex_unlock(&impl->mutex);
+}
+
+vectis_status vectis_app_configure_workflow_client(vectis_app *app,
+                                                   lc_client_config *config,
+                                                   vectis_error *error) {
+  vectis_app_impl *impl;
+  if (app == NULL || app->impl == NULL || config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "workflow client requires a live app");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = app->impl;
+  config->logger = impl->lockd_logger_disabled  ? NULL
+                   : impl->lockd_logger != NULL ? impl->lockd_logger
+                                                : impl->logger;
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }

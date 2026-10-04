@@ -63,17 +63,52 @@ local workflow_modules = {
   mqtt = "vectis.mqtt",
   smtp = "vectis.smtp",
   lockd = "vectis.lockd",
+  supervisor = "vectis.supervisor",
+  workflow = "vectis.workflow",
   dsv = "vectis.dsv",
   xml = "vectis.xml",
   kore = "vectis.kore",
 }
 
+-- Only exact root absence or a known native core absent from a source-only
+-- rock is optional. Preserve loader exceptions, including table identities.
+local optional_native = {
+  lockdc = { ["lockdc.core"] = true }, lonejson = { ["lonejson.core"] = true },
+  pslog = { ["pslog.core"] = true }, lql = { ["lql.core"] = true },
+  cai = { ["cai.core"] = true }, libmdf = { ["libmdf.core"] = true },
+  softline = { ["softline.core"] = true },
+  curl = { ["curl.core"] = true },
+  ["vectis.auth"] = { ["vectis.auth.core"] = true },
+  ["vectis.dsv"] = { ["vectis.dsv.core"] = true },
+  ["vectis.xml"] = { ["vectis.xml.core"] = true },
+}
+local helper_dependencies = {
+  ["vectis.lockd"]={"lockdc"}, ["vectis.workflow"]={"lockdc"},
+  ["vectis.log"]={"pslog"}, ["vectis.http"]={"curl"},
+  ["vectis.webdav"]={"curl"}, ["vectis.rest"]={"curl","lonejson"},
+  ["vectis.smtp"]={"curl"}, ["vectis.mqtt"]={"curl"},
+  ["vectis.cai"]={"cai"}, ["vectis.smith"]={"cai"},
+  ["vectis.terminal"]={"libmdf","softline"}, ["vectis.dsv"]={"lonejson"},
+}
+for helper, dependencies in pairs(helper_dependencies) do
+  optional_native[helper] = optional_native[helper] or {}
+  for _, dependency in ipairs(dependencies) do
+    optional_native[helper][dependency] = true
+    for core in pairs(optional_native[dependency] or {}) do optional_native[helper][core] = true end
+  end
+end
 local function optional_require(name)
   local ok, module = pcall(require, name)
   if ok then
     return module
   end
-  return nil
+  local missing = type(module) == "string" and (module:match("^module '([^']+)' not found:")
+    or module:match("^.-:%d+: module '([^']+)' not found:"))
+  local search_failure = missing and module:find("\n\tno field package.preload[", 1, true)
+  if search_failure and (missing == name or (optional_native[name] and optional_native[name][missing])) then
+    return nil
+  end
+  error(module, 0)
 end
 
 for _, name in ipairs(status_exports) do

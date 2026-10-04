@@ -2,6 +2,7 @@
 
 #include <vectis/auth.h>
 #include <vectis/proxy.h>
+#include <vectis/supervisor.h>
 #include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
@@ -10,6 +11,7 @@ int main() {
   vectis_app_config app_config;
   vectis_http_client_config http_config;
   vectis_proxy_route_config proxy_config;
+  vectis_supervisor_config supervisor_config;
   vectis_auth_store_config auth_store_config;
   vectis_auth_issue_config auth_issue_config;
   vectis_webdav_auth_provider_config webdav_auth_provider_config;
@@ -22,6 +24,10 @@ int main() {
   vectis_app_config_init(&app_config);
   vectis_http_client_config_init(&http_config);
   vectis_proxy_route_config_init(&proxy_config);
+  vectis_supervisor_config_init(&supervisor_config);
+  if (supervisor_config.capacity == 0u) {
+    return 7;
+  }
   vectis_auth_store_config_init(&auth_store_config);
   vectis_auth_issue_config_init(&auth_issue_config);
   vectis_webdav_auth_provider_config_init(&webdav_auth_provider_config);

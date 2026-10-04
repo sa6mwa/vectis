@@ -117,13 +117,15 @@ package.loaded.lockdc = {
       return { matched = 1 }
     end
     function client:queue_ack()
+      acked_messages = acked_messages + 1
       return true
     end
     function client:queue_nack()
       return true
     end
-    function client:dequeue_batch()
-      return {}
+    function client:dequeue_batch(req)
+      assert(req.page_size == 1)
+      return {self:dequeue(req)}
     end
     function client:dequeue_with_state(req)
       return self:dequeue(req)

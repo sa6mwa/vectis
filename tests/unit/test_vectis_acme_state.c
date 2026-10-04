@@ -156,23 +156,34 @@ static void assert_plaintext_state(const char *endpoint, const char *ns,
   lc_error_cleanup(&error);
 }
 
+static int crypto_present(const char *endpoint) {
+  lc_error error;
+  int present;
+  lc_error_init(&error);
+  assert(vectis_pouch_endpoint_has_crypto_option(endpoint, &present, &error) ==
+         LC_OK);
+  lc_error_cleanup(&error);
+  return present;
+}
 static void assert_pouch_crypto_query_option_detection(void) {
-  assert(!vectis_pouch_endpoint_has_crypto_option(NULL));
-  assert(!vectis_pouch_endpoint_has_crypto_option(
-      "pouch:///var/lib/pouch_crypto_key=data"));
-  assert(!vectis_pouch_endpoint_has_crypto_option(
-      "pouch:///var/lib/storage?note=pouch_crypto_key=data"));
-  assert(!vectis_pouch_endpoint_has_crypto_option(
-      "pouch:///var/lib/storage?pouch_crypto_key_file_backup=/tmp/key"));
-  assert(!vectis_pouch_endpoint_has_crypto_option(
-      "pouch:///var/lib/storage#?pouch_crypto_key=key"));
+  lc_error error;
+  int present;
+  assert(crypto_present("pouch:///var/lib/storage?%63rypto_key_file=/tmp/key"));
+  lc_error_init(&error);
   assert(vectis_pouch_endpoint_has_crypto_option(
-      "pouch:///var/lib/storage?pouch_crypto_key=key"));
-  assert(vectis_pouch_endpoint_has_crypto_option(
-      "pouch:///var/lib/storage?single_writer=false&pouch_crypto_key_file=/tmp/"
+             "pouch:///var/lib/storage?%xx=x", &present, &error) != LC_OK);
+  lc_error_cleanup(&error);
+  assert(!crypto_present(NULL));
+  assert(!crypto_present("pouch:///var/lib/crypto_key=data"));
+  assert(!crypto_present("pouch:///var/lib/storage?note=crypto_key=data"));
+  assert(!crypto_present(
+      "pouch:///var/lib/storage?crypto_key_file_backup=/tmp/key"));
+  assert(!crypto_present("pouch:///var/lib/storage#?crypto_key=key"));
+  assert(crypto_present("pouch:///var/lib/storage?crypto_key=key"));
+  assert(crypto_present(
+      "pouch:///var/lib/storage?single_writer=false&crypto_key_file=/tmp/"
       "key"));
-  assert(vectis_pouch_endpoint_has_crypto_option(
-      "pouch:///var/lib/storage?pouch_crypto_key"));
+  assert(crypto_present("pouch:///var/lib/storage?crypto_key"));
 }
 
 static void assert_default_pouch_root_separation(void) {
@@ -212,6 +223,7 @@ static void assert_default_pouch_root_separation(void) {
 
 int main(void) {
   char root[] = "/tmp/vectis-acme-state-XXXXXX";
+  char queried_endpoint[8192];
   char endpoint[4096];
   char storage[4096];
   char default_storage[4096];
@@ -389,6 +401,17 @@ int main(void) {
   assert(vectis_acme_state_hydrate(&config, &hydrated, &error) == VECTIS_OK);
   assert(hydrated != 0);
   assert_file(account_two, "account-key");
+
+  /* Reopen the existing encrypted root with a decoded query name. The
+   * unrelated default key must not override this explicit endpoint key. */
+  assert(snprintf(queried_endpoint, sizeof(queried_endpoint),
+                  "%s?%%63rypto_key_file=%s", endpoint, key_file) > 0);
+  config.endpoint = queried_endpoint;
+  config.lockd_client_config.pouch_crypto_key_file = NULL;
+  config.lockd_client_config.pouch_crypto_generate_key_file_set = 0;
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) == VECTIS_OK);
+  assert(hydrated != 0);
 
   write_plaintext_state(plaintext_endpoint, "vectis.acme", "legacy",
                         "legacy plaintext state");

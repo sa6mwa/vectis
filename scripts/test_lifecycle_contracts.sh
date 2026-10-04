@@ -1928,10 +1928,17 @@ assert_contains "$repo_root/tests/CMakeLists.txt" \
   'pack_unsupported\.cmake'
 assert_contains "$repo_root/tests/lua/pack_unsupported.cmake" \
   'Darwin pack unexpectedly created an output artifact'
+assert_contains "$repo_root/docs/release-matrix.md" '\.github/workflows/darwin-kqueue\.yml'
 github_dir="$repo_root/.github"
-if [ -d "$github_dir" ] && find "$github_dir" -type f -print -quit | grep -q .; then
-  echo "Vectis lifecycle is local-only; remove repository automation files" >&2
-  exit 1
+# Preserve the declared native Darwin verification lane. Its presence grants
+# no push/dispatch authority; other automation still needs explicit adoption.
+if [ -d "$github_dir" ]; then
+  while IFS= read -r automation_file; do
+    case "$automation_file" in
+      "$github_dir/workflows/darwin-kqueue.yml") ;;
+      *) echo "undeclared repository automation: $automation_file" >&2; exit 1 ;;
+    esac
+  done < <(find "$github_dir" -type f)
 fi
 assert_contains "$repo_root/Makefile" '^release-matrix:'
 assert_contains "$repo_root/TODO.md" \

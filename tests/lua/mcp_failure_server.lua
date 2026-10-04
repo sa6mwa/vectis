@@ -12,6 +12,8 @@ local app = assert(vectis.app.new({
 local tools = {}
 local callbacks = {
   good = function(raw)
+    local ok,err=pcall(app.close,app)
+    assert(not ok and tostring(err):find("app close is not allowed inside an app callback",1,true))
     if next(json.decode_value(raw)) ~= nil then
       return nil, "expected empty arguments"
     end

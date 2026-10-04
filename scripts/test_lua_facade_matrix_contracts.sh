@@ -46,6 +46,8 @@ dependency_modules=(
 )
 
 workflow_modules=(
+  "vectis.supervisor|workflow:supervisor|package.loaded[\"vectis.supervisor\"] == vectis.supervisor|vectis.supervisor == require(\"vectis.supervisor\")|lua-supervisor.md"
+  "vectis.workflow|workflow:outbox|package.loaded[\"vectis.workflow\"] == vectis.workflow|vectis.workflow == require(\"vectis.workflow\")|lua-supervisor.md"
   "vectis.auth|workflow:auth|package.loaded[\"vectis.auth\"] == auth|vectis.auth == auth|lua-auth.md"
   "vectis.audio_worker|workflow:audio|package.loaded[\"vectis.audio_worker\"] == vectis.audio_worker|vectis.audio_worker == require(\"vectis.audio_worker\")|lua-audio.md"
   "vectis.cai|workflow:cai|package.loaded[\"vectis.cai\"] == vcai|vectis.cai == vcai|lua-cai.md"

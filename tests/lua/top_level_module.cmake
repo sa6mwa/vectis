@@ -173,6 +173,29 @@ assert(err.status == vectis.ERR_STATE)
 assert(err.source_code == vectis.ERROR_SOURCE_VECTIS)
 assert(err.message == "no embedded lockd bundle")
 
+assert(vectis.supervisor == require("vectis.supervisor"))
+assert(vectis.workflow == require("vectis.workflow"))
+local function reload() package.loaded.vectis=nil; return pcall(require,"vectis") end
+for _, failure in ipairs({"loader init failed", "module 'opcua' not found: intentional loader fault", {message="table init failed"}}) do
+  package.loaded.opcua=nil
+  package.preload.opcua=function() error(failure,0) end
+  local ok,err=reload(); assert(not ok and err==failure)
+end
+package.loaded.opcua=nil; package.preload.opcua=nil
+assert(reload()) -- absent optional root
+local curl_loader=package.preload.curl
+package.loaded.curl=nil
+package.preload.curl=function() return require("curl.core") end
+local curl_ok,curl_value=reload(); assert(curl_ok and curl_value.libs.curl==nil)
+package.preload.curl=function() return require("curl.unknown_nested") end
+curl_ok,curl_value=reload(); assert(not curl_ok and curl_value:find("curl.unknown_nested",1,true))
+package.preload.curl=curl_loader
+package.loaded.curl=nil
+package.loaded.pslog=nil
+package.preload.pslog=function() return require("pslog.core") end
+local ok, value=reload(); assert(ok and value.libs.pslog==nil)
+package.preload.pslog=function() return require("unexpected.nested.dependency") end
+ok,value=reload(); assert(not ok and value:find("unexpected.nested.dependency",1,true))
 print("vectis top-level Lua module ok")
 ]=])
 

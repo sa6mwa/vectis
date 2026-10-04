@@ -5,6 +5,7 @@
 
 #include <lauxlib.h>
 #include <lua.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,7 @@ typedef struct vectis_sus_model_lua {
 typedef struct vectis_sus_transcriber_lua {
   cpkt_sus_transcriber *transcriber;
   lua_State *lua;
+  pthread_t thread;
   int segment_ref;
   int progress_ref;
   int abort_ref;
@@ -31,23 +33,40 @@ typedef struct vectis_sus_transcriber_lua {
 
 typedef struct vectis_sus_cache_status_lua {
   lua_State *lua;
+  pthread_t thread;
   int ref;
 } vectis_sus_cache_status_lua;
 
 typedef struct vectis_sus_segmented_lua {
   lua_State *lua;
+  pthread_t thread;
   int ref;
 } vectis_sus_segmented_lua;
 
 typedef struct vectis_sus_log_lua {
   lua_State *lua;
+  pthread_t thread;
   int ref;
 } vectis_sus_log_lua;
 
 int luaopen_sus(lua_State *lua);
+size_t vectis_sus_lua_pump_pending(lua_State *lua, size_t maximum);
 
 static vectis_sus_log_lua *vectis_sus_lua_log;
 static char vectis_sus_lua_log_key;
+#define SUS_LOG_CAPACITY 64u
+#define SUS_LOG_TEXT_LIMIT 4096u
+#define SUS_LOG_COMPONENT_LIMIT 128u
+typedef struct sus_log_copy {
+  cpkt_sus_log_level level;
+  char component[SUS_LOG_COMPONENT_LIMIT];
+  char message[SUS_LOG_TEXT_LIMIT];
+} sus_log_copy;
+static pthread_mutex_t sus_log_mutex = PTHREAD_MUTEX_INITIALIZER;
+static sus_log_copy sus_logs[SUS_LOG_CAPACITY];
+static size_t sus_log_head, sus_log_count;
+static int sus_log_hook_installed;
+static unsigned long sus_log_overflow, sus_log_oversize, sus_log_errors;
 
 static void vectis_sus_lua_set_string(lua_State *lua, const char *key,
                                       const char *value) {
@@ -284,6 +303,8 @@ static int vectis_sus_lua_segment_sink(const cpkt_sus_segment *segment,
   int failed;
 
   handle = (vectis_sus_transcriber_lua *)user;
+  if (!pthread_equal(handle->thread, pthread_self()))
+    return -1;
   lua = handle->lua;
   if (handle->segment_ref == LUA_NOREF) {
     return 0;
@@ -307,6 +328,8 @@ static int vectis_sus_lua_progress_sink(int progress, void *user) {
   int failed;
 
   handle = (vectis_sus_transcriber_lua *)user;
+  if (!pthread_equal(handle->thread, pthread_self()))
+    return -1;
   lua = handle->lua;
   if (handle->progress_ref == LUA_NOREF) {
     return 0;
@@ -330,6 +353,8 @@ static int vectis_sus_lua_abort_fn(void *user) {
   int abort_requested;
 
   handle = (vectis_sus_transcriber_lua *)user;
+  if (!pthread_equal(handle->thread, pthread_self()))
+    return 1;
   lua = handle->lua;
   if (handle->abort_ref == LUA_NOREF) {
     return 0;
@@ -353,6 +378,8 @@ static int vectis_sus_lua_segmented_sink(const cpkt_sus_segmented_event *event,
   int failed;
 
   sink = (vectis_sus_segmented_lua *)user;
+  if (!pthread_equal(sink->thread, pthread_self()))
+    return -1;
   lua = sink->lua;
   if (sink->ref == LUA_NOREF) {
     return 0;
@@ -369,30 +396,117 @@ static int vectis_sus_lua_segmented_sink(const cpkt_sus_segmented_event *event,
   return failed;
 }
 
+static void sus_log_deliver(vectis_sus_log_lua *sink,
+                            const sus_log_copy *record) {
+  lua_State *lua = sink->lua;
+  int top = lua_gettop(lua);
+  int failed;
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, sink->ref);
+  lua_newtable(lua);
+  lua_pushinteger(lua, record->level);
+  lua_setfield(lua, -2, "level");
+  vectis_sus_lua_set_string(lua, "component", record->component);
+  vectis_sus_lua_set_string(lua, "message", record->message);
+  failed = lua_pcall(lua, 1, 0, 0) != LUA_OK;
+  lua_settop(lua, top);
+  if (failed) {
+    (void)pthread_mutex_lock(&sus_log_mutex);
+    ++sus_log_errors;
+    (void)pthread_mutex_unlock(&sus_log_mutex);
+  }
+}
 static void vectis_sus_lua_log_sink(const cpkt_sus_log_event *event,
                                     void *user) {
   vectis_sus_log_lua *sink;
-  lua_State *lua;
-  int top;
-
-  sink = (vectis_sus_log_lua *)user;
-  if (sink == NULL || sink->lua == NULL || sink->ref == LUA_NOREF ||
-      event == NULL) {
+  sus_log_copy record;
+  const char *component, *message;
+  size_t component_size, message_size;
+  (void)
+      user; /* Native callback data has static lifetime, never Lua userdata. */
+  if (event == NULL)
+    return;
+  component = event->component != NULL ? event->component : "";
+  message = event->message != NULL ? event->message : "";
+  component_size = strnlen(component, SUS_LOG_COMPONENT_LIMIT);
+  message_size = strnlen(message, SUS_LOG_TEXT_LIMIT);
+  (void)pthread_mutex_lock(&sus_log_mutex);
+  sink = vectis_sus_lua_log;
+  if (sink == NULL) {
+    (void)pthread_mutex_unlock(&sus_log_mutex);
     return;
   }
-  lua = sink->lua;
-  top = lua_gettop(lua);
-  lua_rawgeti(lua, LUA_REGISTRYINDEX, sink->ref);
+  if (component_size == SUS_LOG_COMPONENT_LIMIT ||
+      message_size == SUS_LOG_TEXT_LIMIT) {
+    ++sus_log_oversize;
+    (void)pthread_mutex_unlock(&sus_log_mutex);
+    return;
+  }
+  record.level = event->level;
+  memcpy(record.component, component, component_size + 1u);
+  memcpy(record.message, message, message_size + 1u);
+  if (pthread_equal(sink->thread, pthread_self())) {
+    (void)pthread_mutex_unlock(&sus_log_mutex);
+    sus_log_deliver(sink, &record);
+    return;
+  }
+  if (sus_log_count == SUS_LOG_CAPACITY)
+    ++sus_log_overflow;
+  else {
+    sus_logs[(sus_log_head + sus_log_count) % SUS_LOG_CAPACITY] = record;
+    ++sus_log_count;
+  }
+  (void)pthread_mutex_unlock(&sus_log_mutex);
+}
+/* Owner-only safe point; it neither installs a global sink nor enters another
+ * VM. Replacement/close discards the old generation's queued records. */
+size_t vectis_sus_lua_pump_pending(lua_State *lua, size_t maximum) {
+  size_t i;
+  lua_State *main;
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
+  main = lua_tothread(lua, -1);
+  lua_pop(lua, 1);
+  for (i = 0u; i < maximum; ++i) {
+    vectis_sus_log_lua *sink;
+    sus_log_copy record;
+    (void)pthread_mutex_lock(&sus_log_mutex);
+    sink = vectis_sus_lua_log;
+    if (sink == NULL || sink->lua != main ||
+        !pthread_equal(sink->thread, pthread_self()) || sus_log_count == 0u) {
+      (void)pthread_mutex_unlock(&sus_log_mutex);
+      break;
+    }
+    record = sus_logs[sus_log_head];
+    sus_log_head = (sus_log_head + 1u) % SUS_LOG_CAPACITY;
+    --sus_log_count;
+    (void)pthread_mutex_unlock(&sus_log_mutex);
+    sus_log_deliver(sink, &record);
+  }
+  return i;
+}
+static int vectis_sus_lua_pump_logs(lua_State *lua) {
+  lua_Integer maximum = luaL_optinteger(lua, 1, SUS_LOG_CAPACITY);
+  size_t delivered, after;
+  unsigned long overflow, oversize, errors;
+  if (maximum < 0 || maximum > SUS_LOG_CAPACITY)
+    return luaL_error(lua, "sus pump_logs max must be between 0 and 64");
+  delivered = vectis_sus_lua_pump_pending(lua, (size_t)maximum);
+  (void)pthread_mutex_lock(&sus_log_mutex);
+  after = sus_log_count;
+  overflow = sus_log_overflow;
+  oversize = sus_log_oversize;
+  errors = sus_log_errors;
+  (void)pthread_mutex_unlock(&sus_log_mutex);
+  lua_pushinteger(lua, (lua_Integer)delivered);
   lua_newtable(lua);
-  lua_pushinteger(lua, (lua_Integer)event->level);
-  lua_setfield(lua, -2, "level");
-  vectis_sus_lua_set_string(lua, "component", event->component);
-  vectis_sus_lua_set_string(lua, "message", event->message);
-  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
-    lua_settop(lua, top);
-    return;
-  }
-  lua_settop(lua, top);
+  lua_pushinteger(lua, (lua_Integer)after);
+  lua_setfield(lua, -2, "queued");
+  lua_pushinteger(lua, overflow);
+  lua_setfield(lua, -2, "overflow");
+  lua_pushinteger(lua, oversize);
+  lua_setfield(lua, -2, "oversize");
+  lua_pushinteger(lua, errors);
+  lua_setfield(lua, -2, "callback_errors");
+  return 2;
 }
 
 static int
@@ -404,6 +518,8 @@ vectis_sus_lua_cache_status_sink(const cpkt_sus_cache_status_event *event,
   int failed;
 
   status = (vectis_sus_cache_status_lua *)user;
+  if (!pthread_equal(status->thread, pthread_self()))
+    return -1;
   lua = status->lua;
   top = lua_gettop(lua);
   lua_rawgeti(lua, LUA_REGISTRYINDEX, status->ref);
@@ -488,6 +604,7 @@ static void vectis_sus_lua_segmented_config(lua_State *lua, int index,
                                             vectis_sus_segmented_lua *sink) {
   cpkt_sus_segmented_config_default(config);
   sink->lua = lua;
+  sink->thread = pthread_self();
   sink->ref = LUA_NOREF;
   if (index == 0 || lua_isnoneornil(lua, index)) {
     return;
@@ -603,6 +720,7 @@ vectis_sus_lua_new_transcriber(lua_State *lua) {
       (vectis_sus_transcriber_lua *)lua_newuserdatauv(lua, sizeof(*handle), 2);
   handle->transcriber = NULL;
   handle->lua = lua;
+  handle->thread = pthread_self();
   handle->segment_ref = LUA_NOREF;
   handle->progress_ref = LUA_NOREF;
   handle->abort_ref = LUA_NOREF;
@@ -1005,9 +1123,13 @@ static void vectis_sus_lua_log_clear(vectis_sus_log_lua *sink) {
   if (sink == NULL) {
     return;
   }
+  (void)pthread_mutex_lock(&sus_log_mutex);
   if (vectis_sus_lua_log == sink) {
-    cpkt_sus_log_set(NULL, NULL);
     vectis_sus_lua_log = NULL;
+    sus_log_count = sus_log_head = 0u;
+    (void)pthread_mutex_unlock(&sus_log_mutex);
+  } else {
+    (void)pthread_mutex_unlock(&sus_log_mutex);
   }
   luaL_unref(sink->lua, LUA_REGISTRYINDEX, sink->ref);
   sink->ref = LUA_NOREF;
@@ -1021,12 +1143,22 @@ static int vectis_sus_lua_log_gc(lua_State *lua) {
 
 static int vectis_sus_lua_set_log_sink(lua_State *lua) {
   vectis_sus_log_lua *sink;
-  int ref;
-
+  int ref, old_ref, install_hook;
+  lua_State *old_lua;
+  vectis_sus_log_lua *previous;
   if (lua_isnoneornil(lua, 1) ||
       (lua_type(lua, 1) == LUA_TBOOLEAN && !lua_toboolean(lua, 1))) {
-    vectis_sus_lua_log_clear(vectis_sus_lua_log);
-    cpkt_sus_log_set(NULL, NULL);
+    (void)pthread_mutex_lock(&sus_log_mutex);
+    previous = vectis_sus_lua_log;
+    if (previous != NULL && !pthread_equal(previous->thread, pthread_self())) {
+      (void)pthread_mutex_unlock(&sus_log_mutex);
+      return luaL_error(lua,
+                        "sus global log sink belongs to another owner thread");
+    }
+    vectis_sus_lua_log = NULL;
+    sus_log_count = sus_log_head = 0u;
+    (void)pthread_mutex_unlock(&sus_log_mutex);
+    vectis_sus_lua_log_clear(previous);
     lua_pushboolean(lua, 1);
     return 1;
   }
@@ -1040,6 +1172,7 @@ static int vectis_sus_lua_set_log_sink(lua_State *lua) {
     lua_pop(lua, 1);
     sink = (vectis_sus_log_lua *)lua_newuserdatauv(lua, sizeof(*sink), 0);
     sink->ref = LUA_NOREF;
+    sink->thread = pthread_self();
     lua_rawgeti(lua, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
     sink->lua = lua_tothread(lua, -1);
     lua_pop(lua, 1);
@@ -1054,10 +1187,34 @@ static int vectis_sus_lua_set_log_sink(lua_State *lua) {
   lua_pop(lua, 1);
   lua_pushvalue(lua, 1);
   ref = luaL_ref(lua, LUA_REGISTRYINDEX);
-  vectis_sus_lua_log_clear(vectis_sus_lua_log);
+  /* Claim and replace atomically: two VMs may finish allocating guards on
+   * different threads at once. No Lua operations occur under this mutex. */
+  (void)pthread_mutex_lock(&sus_log_mutex);
+  previous = vectis_sus_lua_log;
+  if (previous != NULL && !pthread_equal(previous->thread, pthread_self())) {
+    (void)pthread_mutex_unlock(&sus_log_mutex);
+    luaL_unref(lua, LUA_REGISTRYINDEX, ref);
+    return luaL_error(lua,
+                      "sus global log sink belongs to another owner thread");
+  }
+  old_lua = previous != NULL ? previous->lua : NULL;
+  old_ref = previous != NULL ? previous->ref : LUA_NOREF;
+  if (previous != NULL)
+    previous->ref = LUA_NOREF;
   sink->ref = ref;
   vectis_sus_lua_log = sink;
-  cpkt_sus_log_set(vectis_sus_lua_log_sink, sink);
+  sus_log_head = sus_log_count = 0u;
+  sus_log_overflow = sus_log_oversize = sus_log_errors = 0ul;
+  install_hook = !sus_log_hook_installed;
+  sus_log_hook_installed = 1;
+  (void)pthread_mutex_unlock(&sus_log_mutex);
+  if (old_lua != NULL)
+    luaL_unref(old_lua, LUA_REGISTRYINDEX, old_ref);
+  /* The public backend setter is not synchronized with emitters. Install
+   * once during explicit, quiescent setup; replacements/close only change
+   * our mutex-protected subscriber, never the backend callback pointer. */
+  if (install_hook)
+    cpkt_sus_log_set(vectis_sus_lua_log_sink, NULL);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -1160,6 +1317,7 @@ static int vectis_sus_lua_open_cached(lua_State *lua) {
       vectis_sus_lua_table_bool(
           lua, 1, "preserve_initial_space_after_first_transcriber", 0);
   status.lua = lua;
+  status.thread = pthread_self();
   status.ref = vectis_sus_lua_table_function_ref(lua, 1, "status");
   if (status.ref != LUA_NOREF) {
     config.status_sink = vectis_sus_lua_cache_status_sink;
@@ -1259,6 +1417,7 @@ int luaopen_sus(lua_State *lua) {
       {"backend_capabilities", vectis_sus_lua_backend_capabilities},
       {"facade_version", vectis_sus_lua_facade_version},
       {"set_log_sink", vectis_sus_lua_set_log_sink},
+      {"pump_logs", vectis_sus_lua_pump_logs},
       {"model_catalog_count", vectis_sus_lua_catalog_count},
       {"model_catalog_entry", vectis_sus_lua_catalog_entry},
       {"model_catalog_default", vectis_sus_lua_catalog_default},

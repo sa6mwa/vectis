@@ -25,11 +25,18 @@ test fails if the C table gains an unclassified receiver.
 | `app->json_route()`, `app->json_typed_route()`, `app->xml_route()`, `app->prefixed_json_route()`, `app->prefixed_json_typed_route()`, `app->prefixed_xml_route()` | `app:route()` plus LoneJSON or `vectis.xml` | The C forms require C-owned maps and C callbacks. Lua deliberately keeps the request callback and its values in Lua. |
 | `app->dsv_route()`, `app->prefixed_dsv_route()` | `app:dsv()` | Native streaming DSV parsing with Lua row callbacks; it does not materialize the request body. |
 | `app->upload_stream()`, `app->upload_file()`, `app->upload_reader()` | `app:upload()` | Lua exposes an ownership-safe bounded chunk callback rather than borrowed C file/reader callbacks. |
-| `app->cai_mcp_route()` | `app:mcp()` | Lua MCP dispatch stays in the Lua route domain; the C adapter is the streaming C-owned handler path. |
+| `app->cai_mcp_route()` | `app:mcp()` | Lua MCP routes buffer request, tool result and response and are stateless; the C adapter exposes a response sink. A future persistent/streamed Lua server needs an explicit product contract. |
 | `app->logger()`, `app->cai_client()`, `app->lockd_client()` | C-only | These return borrowed process-local native handles; Lua must not fabricate or own them. |
 | `app->managed_service()`, `app->register_consumer_receiver()`, `app->consumer_service_receiver()` | C-only | These accept borrowed C callbacks or native lockdc receiver handles. Lua instead provides the concrete mailbox-backed consumer, curl, CAI, audio, SUS, and OPC UA service workflows. |
 
 ## Lifecycle
+
+`app:supervisor(opts)`, `app:workflow(opts)`, and `app:ipc(name)` compose the
+serial supervisor domain while preserving this native app userdata and its auth
+identity. Declare these on the main Lua caller before `app:start()`; drive them
+with `app:wait()`/`app:run()`, or use `app:pump(timeout_ms)` for explicit owner
+dispatch. See [Lua supervisors and workflows](lua-supervisor.md) for lifecycle,
+transaction, streaming, and failure contracts.
 
 ```lua
 local vectis = require("vectis")
@@ -423,6 +430,26 @@ again. `reset` is
 called before the first read when present; without it, the source is valid for
 the initial response pass only. `close` is called when C closes the callback
 source.
+
+Response and source configuration getters run under the same protected app
+ownership guard, including tables returned by `before`/`after`, DSV/upload
+completion and callback auth providers. Getter errors produce HTTP 500 and
+permit later requests; upload cleanup still runs. Getter-produced strings and
+callbacks are pinned before native use, and partial source construction releases
+its state and references on failure. Configuration snapshots do not read or
+materialize a source payload.
+
+Response-source `read`, `reset`, and `close` callbacks retain the owning app
+through native response processing and reject `app:close()`, including sources
+returned by DSV and upload completion callbacks. Callback errors unwind the
+lifecycle guard; source cleanup still runs. Close callback errors are caught
+during cleanup. Protection covers the complete read/reset operation, including
+numeric chunk conversion and pending-chunk registry retention. Lua allocation
+failures return native errors so source, spool-file, and descriptor cleanup can
+finish normally. Numeric or table error objects use a generic diagnostic rather
+than unprotected string coercion. App teardown rejects reentrant lifecycle calls,
+clears its guard on a caught failure, and ordinary later close is idempotent. Graceful `app:stop()`
+from an ordinary route callback remains supported.
 
 `stream_source` is a live response source, not file-backed materialization. The
 source table requires `read(max_bytes)` and accepts optional `reset()` and
@@ -940,3 +967,9 @@ full persistence and recovery contract.
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,
 OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.
+
+`app:close()` is rejected inside app-owned HTTP/auth/upload/DSV/WebSocket/MCP
+and proxy callbacks, retaining native callback context until callback return.
+Documented graceful `app:stop()` from an ordinary route remains supported.
+Workflow transactions additionally reject stop/pump/scope lifecycle reentry for
+the entire private-client operation, including native transaction completion.

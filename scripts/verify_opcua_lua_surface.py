@@ -37,6 +37,16 @@ def main() -> int:
         if symbol.startswith("cpkt_opcua_client_") and "pubsub" in symbol
     ]
 
+    logger_apis = [symbol for symbol in symbols if "with_logger" in symbol or symbol.endswith("set_logger")]
+    for symbol in logger_apis:
+        if not re.search(r"\b" + re.escape(symbol) + r"\s*\(", source):
+            unexpected_missing.append(symbol)
+    if source.count('{"set_logger",') != 2 or not all(
+        name in source for name in ("PSLOG_LUA_LOGGER_NATIVE_SINK", "pslog_lua_ref_logger", "pslog_lua_unref_logger")
+    ):
+        print("OPC UA structured logging requires both Lua setters and official native-sink ownership", file=sys.stderr)
+        return 1
+
     if unexpected_missing:
         print("OPC UA Lua facade is missing non-native cpkt C89 symbols:", file=sys.stderr)
         for symbol in unexpected_missing:

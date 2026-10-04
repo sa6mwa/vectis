@@ -20,8 +20,10 @@ static void frame_free(void *p) {
 }
 
 static cpkt_sus_log_sink native_log_sink;
+static int native_log_set_calls;
 static void *native_log_user;
 static void fixture_log_set(cpkt_sus_log_sink sink, void *user) {
+  ++native_log_set_calls;
   native_log_sink = sink;
   native_log_user = user;
 }
@@ -162,6 +164,80 @@ static lua_State *new_state(void) {
   lua_setglobal(lua, "read_frames");
   return lua;
 }
+static void *emit_foreign(void *unused) {
+  size_t i;
+  cpkt_sus_log_event event;
+  char oversized[SUS_LOG_TEXT_LIMIT + 1u];
+  (void)unused;
+  memset(&event, 0, sizeof(event));
+  event.level = CPKT_SUS_LOG_INFO;
+  event.message = "fixture";
+  assert(native_log_user == NULL);
+  for (i = 0u; i < SUS_LOG_CAPACITY + 3u; ++i)
+    native_log_sink(&event, native_log_user);
+  memset(oversized, 'x', sizeof(oversized));
+  oversized[sizeof(oversized) - 1u] = 0;
+  event.message = oversized;
+  native_log_sink(&event, native_log_user);
+  return NULL;
+}
+typedef struct foreign_callbacks {
+  vectis_sus_transcriber_lua transcriber;
+  vectis_sus_segmented_lua segmented;
+  vectis_sus_cache_status_lua cache;
+} foreign_callbacks;
+static void *check_foreign_callbacks(void *arg) {
+  foreign_callbacks *callbacks = (foreign_callbacks *)arg;
+  /* Lua pointers are deliberately NULL: rejection must precede any Lua use. */
+  assert(vectis_sus_lua_segment_sink(NULL, &callbacks->transcriber) == -1);
+  assert(vectis_sus_lua_progress_sink(50, &callbacks->transcriber) == -1);
+  assert(vectis_sus_lua_abort_fn(&callbacks->transcriber) == 1);
+  assert(vectis_sus_lua_segmented_sink(NULL, &callbacks->segmented) == -1);
+  assert(vectis_sus_lua_cache_status_sink(NULL, &callbacks->cache) == -1);
+  return NULL;
+}
+typedef struct log_gate {
+  pthread_mutex_t mutex;
+  pthread_cond_t condition;
+  int waiting, release;
+  cpkt_sus_log_sink sink;
+} log_gate;
+static void *emit_across_generation(void *arg) {
+  log_gate *gate = (log_gate *)arg;
+  cpkt_sus_log_event event;
+  memset(&event, 0, sizeof(event));
+  event.message = "fixture";
+  gate->sink(&event, NULL);
+  (void)pthread_mutex_lock(&gate->mutex);
+  gate->waiting = 1;
+  (void)pthread_cond_signal(&gate->condition);
+  while (!gate->release)
+    (void)pthread_cond_wait(&gate->condition, &gate->mutex);
+  (void)pthread_mutex_unlock(&gate->mutex);
+  gate->sink(&event,
+             NULL); /* retained static hook, after replace or VM close */
+  return NULL;
+}
+static void gate_start(log_gate *gate, pthread_t *thread) {
+  memset(gate, 0, sizeof(*gate));
+  gate->sink = native_log_sink;
+  assert(pthread_mutex_init(&gate->mutex, NULL) == 0);
+  assert(pthread_cond_init(&gate->condition, NULL) == 0);
+  assert(pthread_create(thread, NULL, emit_across_generation, gate) == 0);
+  (void)pthread_mutex_lock(&gate->mutex);
+  while (!gate->waiting)
+    (void)pthread_cond_wait(&gate->condition, &gate->mutex);
+  (void)pthread_mutex_unlock(&gate->mutex);
+}
+static void gate_finish(log_gate *gate, pthread_t thread) {
+  (void)pthread_mutex_lock(&gate->mutex);
+  gate->release = 1;
+  (void)pthread_cond_signal(&gate->condition);
+  (void)pthread_mutex_unlock(&gate->mutex);
+  assert(pthread_join(thread, NULL) == 0);
+  (void)pthread_cond_destroy(&gate->condition);
+  (void)pthread_mutex_destroy(&gate->mutex);
+}
 static void emit_log(void) {
   cpkt_sus_log_event event;
   memset(&event, 0, sizeof(event));
@@ -170,10 +246,74 @@ static void emit_log(void) {
   assert(native_log_sink != NULL);
   native_log_sink(&event, native_log_user);
 }
+typedef struct vm_race {
+  pthread_mutex_t mutex;
+  pthread_cond_t condition;
+  int arrived, start, attempted, successes, finish;
+} vm_race;
+static void *register_vm(void *arg) {
+  vm_race *race = (vm_race *)arg;
+  lua_State *lua = new_state();
+  int success;
+  (void)pthread_mutex_lock(&race->mutex);
+  ++race->arrived;
+  (void)pthread_cond_broadcast(&race->condition);
+  while (!race->start)
+    (void)pthread_cond_wait(&race->condition, &race->mutex);
+  (void)pthread_mutex_unlock(&race->mutex);
+  assert(luaL_dostring(lua, "return pcall(sus.set_log_sink,function() end)") ==
+         LUA_OK);
+  success =
+      lua_toboolean(lua, 1); /* pcall failure also returns an error string */
+  (void)pthread_mutex_lock(&race->mutex);
+  race->successes += success;
+  ++race->attempted;
+  (void)pthread_cond_broadcast(&race->condition);
+  while (!race->finish)
+    (void)pthread_cond_wait(&race->condition, &race->mutex);
+  (void)pthread_mutex_unlock(&race->mutex);
+  lua_close(lua);
+  return NULL;
+}
+static void check_vm_race(void) {
+  vm_race race;
+  pthread_t threads[2];
+  memset(&race, 0, sizeof(race));
+  assert(pthread_mutex_init(&race.mutex, NULL) == 0);
+  assert(pthread_cond_init(&race.condition, NULL) == 0);
+  assert(pthread_create(&threads[0], NULL, register_vm, &race) == 0);
+  assert(pthread_create(&threads[1], NULL, register_vm, &race) == 0);
+  (void)pthread_mutex_lock(&race.mutex);
+  while (race.arrived != 2)
+    (void)pthread_cond_wait(&race.condition, &race.mutex);
+  race.start = 1;
+  (void)pthread_cond_broadcast(&race.condition);
+  while (race.attempted != 2)
+    (void)pthread_cond_wait(&race.condition, &race.mutex);
+  assert(race.successes == 1);
+  race.finish = 1;
+  (void)pthread_cond_broadcast(&race.condition);
+  (void)pthread_mutex_unlock(&race.mutex);
+  assert(pthread_join(threads[0], NULL) == 0);
+  assert(pthread_join(threads[1], NULL) == 0);
+  (void)pthread_cond_destroy(&race.condition);
+  (void)pthread_mutex_destroy(&race.mutex);
+}
 
 int main(void) {
   lua_State *lua = new_state();
   lua_State *other;
+  pthread_t emitter;
+  foreign_callbacks callbacks;
+  log_gate gate;
+  cpkt_sus_log_sink late_sink;
+  cpkt_sus_log_event late_event;
+  memset(&callbacks, 0, sizeof(callbacks));
+  callbacks.transcriber.thread = callbacks.segmented.thread =
+      callbacks.cache.thread = pthread_self();
+  assert(pthread_create(&emitter, NULL, check_foreign_callbacks, &callbacks) ==
+         0);
+  assert(pthread_join(emitter, NULL) == 0);
   run(lua,
       "local audio=require('audio')\n"
       "local payload=string.rep('\\0',32000)\n"
@@ -281,9 +421,33 @@ int main(void) {
            "collectgarbage('collect'); assert(weak.co==nil)\n"
            "assert(not pcall(sus.set_log_sink, {}))\n");
   emit_log();
-  run(lua, "assert(logs==1); assert(sus.set_log_sink(nil))");
-  assert(native_log_sink == NULL);
-  run(lua, "sus.set_log_sink(function() end)");
+  assert(pthread_create(&emitter, NULL, emit_foreign, NULL) == 0);
+  assert(pthread_join(emitter, NULL) == 0);
+  run(lua, "assert(logs==1); local n,s=sus.pump_logs(0); assert(n==0 and "
+           "s.queued==64 and s.overflow==3 and s.oversize==1)\n"
+           "n,s=sus.pump_logs(2); assert(n==2 and logs==3 and s.queued==62)\n"
+           "n,s=sus.pump_logs(); assert(n==62 and logs==65 and s.queued==0)\n"
+           "assert(not pcall(sus.pump_logs,-1)); assert(not "
+           "pcall(sus.pump_logs,65))\n"
+           "sus.set_log_sink(function() error('log callback fault') end)\n");
+  emit_log();
+  run(lua, "local n,s=sus.pump_logs(0); assert(n==0 and s.callback_errors==1)\n"
+           "sus.set_log_sink(function() logs=logs+1 end)\n");
+  assert(pthread_create(&emitter, NULL, emit_foreign, NULL) == 0);
+  assert(pthread_join(emitter, NULL) == 0);
+  run(lua, "sus.set_log_sink(function() logs=logs+1 end); local "
+           "n,s=sus.pump_logs(); assert(n==0 and s.queued==0)\n"
+           "assert(sus.set_log_sink(nil))");
+  assert(native_log_sink == vectis_sus_lua_log_sink &&
+         native_log_set_calls == 1);
+  run(lua,
+      "sus.set_log_sink(function() logs=logs+1 end); before_generation=logs");
+  gate_start(&gate, &emitter);
+  run(lua, "sus.set_log_sink(function() logs=logs+1 end); "
+           "assert(logs==before_generation)");
+  gate_finish(&gate, emitter);
+  run(lua,
+      "local n=sus.pump_logs(); assert(n==1 and logs==before_generation+1)");
   other = new_state();
   run(other, "logs=0; sus.set_log_sink(function() logs=logs+1 end)");
   /* Closing the previous state must not unregister the replacement. */
@@ -292,8 +456,18 @@ int main(void) {
   run(other, "assert(logs==1); assert(sus.set_log_sink(false))\n"
              "sus.set_log_sink(function() end)\n"
              "m=new_model(); t=m:create_transcriber()\n");
+  late_sink = native_log_sink;
+  gate_start(&gate, &emitter);
   lua_close(other);
-  assert(native_log_sink == NULL && vectis_sus_lua_log == NULL);
+  gate_finish(&gate, emitter);
+  memset(&late_event, 0, sizeof(late_event));
+  late_event.message = "late static callback";
+  late_sink(&late_event, NULL);
+  assert(native_log_sink == vectis_sus_lua_log_sink &&
+         vectis_sus_lua_log == NULL);
+  assert(native_log_set_calls == 1);
+  check_vm_race();
+  assert(vectis_sus_lua_log == NULL && native_log_set_calls == 1);
   assert(live_models == 0 && live_transcribers == 0);
   assert(frame_allocations == 0u);
   return 0;

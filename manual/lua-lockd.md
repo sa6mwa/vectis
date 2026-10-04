@@ -5,6 +5,12 @@ dependency-native `lockdc` Lua module. It keeps the upstream module available as
 `vectis.lockd.native` while adding Vectis-specific config normalization for packed
 lockd bundle sources.
 
+For app-owned transactions with automatic bounded receipt forwarding, one
+persistent owner dispatcher, and typed outbox handlers, see
+[Lua supervisors and workflows](lua-supervisor.md). Direct lockdc access remains
+available; a raw notification method alone does not connect route workers to
+the supervisor.
+
 ## Entry Points
 
 - `vectis.lockd.config(opts)` normalizes a lockd config table.
@@ -143,3 +149,51 @@ assert(vectis.lockd.with_dequeued_json({
   return message:ack()
 end))
 ```
+
+## Canonical Pouch endpoints and owned workflow clients
+
+`vectis.lockd.pouch_endpoint_build(absolute_root, options)` binds the public
+native builder. `options` is an ordered array of `{name=...,value=...}`;
+omitting value emits a bare option, while `value=""` emits an empty value.
+The builder percent-encodes reserved root/name/value bytes and frees its native
+allocation after copying the result. `pouch_endpoint_has_option(endpoint,name)`
+requires the runner/native `vectis.lockd.core` companion; source-only rocks
+ship no native implementation. The inspector checks decoded names using the native parser, including duplicates, bare options
+and fragments. Native parse errors return `nil,error`; NUL strings are rejected.
+Query encryption names are `crypto_key` and `crypto_key_file`; native app
+configuration fields use `pouch_crypto_*`.
+
+Both workflow and scope-consumer clients resolve the actual app endpoint/key
+after startup/fork. Flat app crypto options become typed upstream Pouch options;
+endpoint queries remain untouched for the native parser. A scoped owning-thread
+bridge bypasses only upstream Lua's query prohibition, restoring the exact
+original endpoints at public `lc_client_open`. It injects the app's native
+borrowed lockd logger or explicit mute and closes owned children/clients before
+logger cleanup. Direct `lockdc.open` and standalone `vectis.lockd.open` retain
+their upstream behavior. Independent temporary logger injection is unsupported
+because native child handles can outlive Lua client close.
+
+Native Pouch single-writer policy is preserved: explicitly use
+`single_writer=false` when the app and its workflow clients share an opened root.
+The app default selects shared-writer storage and encryption consistently.
+
+App-level `lockd` settings use Vectis's native configuration: `endpoints`,
+`unix_socket_path`, `client_bundle="embedded"` (or `bundle`),
+`client_bundle_path` (or `bundle_path`), `default_namespace` (or `namespace`),
+`timeout_ms`, flat `pouch_crypto_key`, `pouch_crypto_key_file`,
+`pouch_crypto_generate_key_file`, `pouch_compression`, and `logger_disabled`.
+Unknown fields, malformed endpoint arrays and NUL strings are rejected.
+Use official endpoint query options for additional native app Pouch settings.
+Nested `pouch` tables and upstream-only transport controls belong in an explicit
+workflow/consumer `client` configuration; the app rejects them rather than
+opening storage with different settings. `logger_disabled=true` mutes native
+app clients and inherited private clients independently of the log seed.
+
+`with_dequeued_json(config, request, handler)` uses public bounded batch-one
+intake. Empty dequeue returns `nil, nil` without calling the handler. Its delivery
+adapter preserves `info`, payload readers/writers, `extend`, and explicit
+`ack`/`nack`; terminal operations use public client methods followed by explicit
+handle close. Delivery access after callback return is rejected. All error paths
+close the message and client. A handler throw retains its error identity;
+`nil, error` returns a structured error; a successful handler with no result
+returns `true`. Raw `lockdc` access is unchanged.

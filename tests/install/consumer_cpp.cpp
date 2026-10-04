@@ -1,16 +1,22 @@
 #include <cstring>
 
+#include <vectis/supervisor.h>
 #include <vectis/vectis.h>
 
 int main() {
   vectis_app_config app_config;
   vectis_http_client_config http_config;
+  vectis_supervisor_config supervisor_config;
   vectis_error error;
   vectis_app *app;
   vectis_http_client *http;
 
   std::memset(&error, 0, sizeof(error));
   vectis_app_config_init(&app_config);
+  vectis_supervisor_config_init(&supervisor_config);
+  if (supervisor_config.capacity == 0u) {
+    return 6;
+  }
   app = vectis_app_new(&app_config, &error);
   if (app == 0) {
     return 1;

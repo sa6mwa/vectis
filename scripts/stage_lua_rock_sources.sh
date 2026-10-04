@@ -51,8 +51,13 @@ for manual_doc in "$repo_root"/manual/*.md; do
   copy_file "manual/$(basename -- "$manual_doc")" "manual/$(basename -- "$manual_doc")"
 done
 
+# Source Vectis rocks depend on installed upstream modules. The embedded-only
+# LoneJSON overlay must not shadow its canonical dependency root on LUA_PATH.
+# curl is Vectis's owned facade and is explicitly registered by the rockspec.
 mkdir -p "$stage_root/lua"
-cp -R "$repo_root/lua/." "$stage_root/lua/"
+cp "$repo_root/lua/vectis.lua" "$stage_root/lua/"
+cp -R "$repo_root/lua/vectis" "$stage_root/lua/"
+cp -R "$repo_root/lua/curl" "$stage_root/lua/"
 printf 'return "%s"\n' "$version" >"$stage_root/lua/vectis/version.lua"
 printf '%s\n' "$version" >"$stage_root/VERSION"
 

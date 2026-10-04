@@ -95,6 +95,10 @@ function M.to_string(first, second)
   return core.to_string(opts_from(first, second))
 end
 
+function M.write(opts, sink)
+  return core.write(opts, sink)
+end
+
 M.core = core
 
 return M
