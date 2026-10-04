@@ -46,8 +46,11 @@ The [remaining supervisor contracts](supervisor-workflow-spec.md#remaining-imple
 include pull payloads, automatic blocking-handler renewal, kind-filtered intake,
 correct renewed stateful completion, isolated lanes, quotas/restart policy,
 shared-runtime leadership and managed cross-process replies. Their existence
-does not undo the delivered receipt/wake path. SQLite, PostgreSQL, PDF and PNG
-facades remain a separate task; the proposed remote-execution adapter is parked.
+does not undo the delivered receipt/wake path. The
+[SQLite/PostgreSQL receiver design](sql-database-facades-spec.md) is reviewed but
+implementation is paused on a public C89 PostgreSQL result-retrieval gap; these
+facades are not delivered. PDF and PNG remain separate tasks; the proposed
+remote-execution adapter is parked.
 
 ## Historical evidence and superseded plans
 
