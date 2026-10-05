@@ -17,6 +17,7 @@ Common options:
 
 - `format = "ansi"` for terminal output.
 - `format = "html"` for HTML output.
+- `format = "deck"` for HTML slides.
 - `width = n` to constrain wrapping where the renderer supports it.
 - `ansi_mode = "auto"|"on"|"off"` to control ANSI escapes independently of
   decoration. The default `auto` enables styling only for a known terminal.
@@ -31,6 +32,19 @@ HTML rendering is unaffected.
 `render_stream` is callback-backed: the reader returns one string chunk at a
 time and returns `nil` at EOF; the writer receives output chunks as they are
 produced. Do not treat it as a buffered string helper.
+
+The bundled libmdf 0.14.0 preserves hyperlink labels, punctuation and enclosing
+styles across fragmented ANSI input and wrapping. Escaped table pipes render
+as literal `|`, including inside inline code. HTML and deck output declare each
+default font style once, with a variable weight range of 400–700.
+
+For incremental documents, use dependency-native
+`libmdf.document_stream(opts, writer)` and its `write`, `finish_document` and
+`close` methods. Manual-token rendering uses `libmdf.new(opts)`, `set_sink`,
+`write_token` and `finish`; `finish` emits any deferred link label and repeated
+successful finish does not duplicate output. Reader/writer failures are
+observable errors. Rendering may retain unfinished layout decisions; HTML
+tables retain the whole table and ANSI tables follow `table_buffer_mode`.
 
 ## Example
 

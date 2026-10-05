@@ -245,6 +245,13 @@ if(TARGET vectis_bin)
            COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/tests/lua/mdf_output_policy.lua")
   set_tests_properties(vectis_lua_mdf_output_policy PROPERTIES
     LABELS "unit;lua;local" TIMEOUT 15)
+  add_test(NAME vectis_lua_mdf_regressions
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/mdf-regressions"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/mdf_regressions.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_mdf_regressions PROPERTIES
+    LABELS "unit;lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_logger_native_sink
            COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/tests/lua/logger_native_sink.lua")
   set_tests_properties(vectis_lua_logger_native_sink PROPERTIES
@@ -912,6 +919,7 @@ if(VECTIS_BUILD_BINARY)
   set_tests_properties(vectis_app_source_lifetime PROPERTIES
     LABELS "unit;lua;local;failure-fast" TIMEOUT 15)
   add_custom_target(vectis_failures_fast DEPENDS vectis_bin vectis_unit_supervisor
+    vectis_unit_mdf_failure
     vectis_opcua_lua_cleanup vectis_sus_lua_lifetime vectis_app_source_lifetime
     vectis_audio_lua_validation)
 endif()

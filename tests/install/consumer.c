@@ -5,6 +5,7 @@
 #include <curl/curl.h>
 #include <kore/kore.h>
 #include <lc/lc.h>
+#include <libmdf.h>
 #include <libssh2.h>
 #include <libxml/parser.h>
 #include <lonejson.h>
@@ -40,9 +41,32 @@ int main(void) {
   cai_client_config cai_config;
   sl_config_t softline_config;
   pslog_logger logger;
+  mdf_options markdown_options;
+  mdf *markdown;
+  mdf_status markdown_status;
+  char *rendered;
+  int markdown_ok;
 
   memset(&error, 0, sizeof(error));
   memset(&logger, 0, sizeof(logger));
+
+  mdf_options_init(&markdown_options);
+  markdown = NULL;
+  if (mdf_create(MDF_FORMAT_HTML, &markdown_options, &markdown) != MDF_OK) {
+    return 1;
+  }
+  rendered = NULL;
+  markdown_status = markdown->render_cstr(
+      markdown, "| value |\n| --- |\n| `left\\|right` |\n", &rendered);
+  markdown_ok = markdown_status == MDF_OK && rendered != NULL &&
+                strstr(rendered, ">left|right</") != NULL;
+  if (rendered != NULL) {
+    markdown->string_free(markdown, rendered);
+  }
+  markdown->destroy(markdown);
+  if (!markdown_ok) {
+    return 1;
+  }
 
   vectis_app_config_init(&config);
   vectis_proxy_route_config_init(&proxy_config);

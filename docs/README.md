@@ -57,7 +57,7 @@ remote-execution adapter is parked.
 | Record | How to read it |
 | --- | --- |
 | [Supervisor integration audit](supervisor-workflow-audit.md) | Evidence for `e20ab55`; final verification supersedes earlier scoped suite counts. |
-| [Dependency seam audit](lua-upgrade-seam-audit.md) | Dependency comparison and review/fix evidence for `e20ab55`, including unresolved upstream contracts and nonclean full-service Memcheck. |
+| [Dependency seam audit](lua-upgrade-seam-audit.md) | Current libmdf 0.14.0 upgrade evidence plus historical `e20ab55` comparison/review, unresolved upstream contracts and nonclean full-service Memcheck. |
 | [Packed behavior audit](pack-embedded-filesystem-auth-audit.md) | Requirement-to-test mapping; use the packed contract/manual for APIs. |
 | [Reverse-proxy feasibility](reverse-proxy-feasibility-audit.md) | Historical probes preceding the production implementation; its old open list is superseded for delivered features. |
 | [Lifecycle migration ledger](lifecycle-migration.md) | Completed cutovers; old version numbers identify those cutovers. |

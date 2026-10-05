@@ -341,7 +341,9 @@ assert(mqtt.publish({
   payload = "hello",
 }).ok == true)
 assert(last_curl_opts.protocols == "mqtt")
-assert(last_curl_opts.upload == true)
+assert(last_curl_opts.method == "POST")
+assert(last_curl_opts.upload == false)
+assert(last_curl_opts.body == "hello")
 local smtp = loaded["vectis.smtp"]
 assert(smtp.send({
   url = "smtp://mail",

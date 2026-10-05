@@ -2053,7 +2053,7 @@ for expected in \
   '^cai_sha256=f7f78d9f847f1265267bbc33a6d6cb2058602d82967357ab561f36ebb1d0daf8$' \
   '^lql_sha256=fafb04f9af5d9610f77380ac1f848d1edd3d60dcf7ce6a098f6a04e30dd2b47a$' \
   '^lql_lua_sha256=c4610615f4315081c519afe47d519e72c1242cce449620cf90f8f8828eccdfe1$' \
-  '^mdf_sha256=6be317bb232702cab5fb2f7f6041fa6b6cc0cb6d3676cb1230f80a3778c1c4b4$' \
+  '^mdf_sha256=b250a82e2562897102aee69bca2c946e53eadffddd1d85131975eaea00651b65$' \
   '^softline_sha256=09612ec2cc3fc1ecdcefaf4afff4e5e80555d9618c13a7e6db3405d0ead835f5$'
 do
   if ! printf '%s\n' "$linux_deps_output" | grep -Eq "$expected"; then

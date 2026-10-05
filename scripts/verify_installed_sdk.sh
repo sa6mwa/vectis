@@ -82,10 +82,19 @@ if command -v pkg-config >/dev/null 2>&1; then
   mkdir -p "$pkg_config_build_root"
   cat >"$pkg_config_build_root/consumer.c" <<'EOF'
 #include <vectis/vectis.h>
+#include <libmdf.h>
 
 int main(void) {
   vectis_app_config config;
+  mdf_options options;
+  mdf *renderer;
   vectis_app_config_init(&config);
+  mdf_options_init(&options);
+  renderer = NULL;
+  if (mdf_create(MDF_FORMAT_ANSI, &options, &renderer) != MDF_OK) {
+    return 1;
+  }
+  renderer->destroy(renderer);
   return config.tls.port == 8443u ? 0 : 1;
 }
 EOF

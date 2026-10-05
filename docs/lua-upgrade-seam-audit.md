@@ -1,5 +1,81 @@
 # Vectis Lua upgrade seam audit
 
+## Current libmdf 0.14.0 upgrade
+
+The upgrade starts from `ae48963` and changes only libmdf's seven SDK pins, its
+Lua source pin and the expected version. Other dependency versions and archives
+remain unchanged. This is development integration evidence, not release approval
+or a resumption of the separately paused SQL facade goal.
+
+[The published release](https://github.com/sa6mwa/libmdf/releases/tag/v0.14.0)
+identifies `c018a03` and retains shared ABI 5. Comparison with 0.13.0 found no
+changes to the public C API beyond generated version macros, Lua module/binding
+sources, imported target names or dependency closure. The release contains internal ANSI link-label/wrap and
+manual-finish fixes, table code-span pipe handling, emission-capacity failure
+classification and HTML/deck variable-font deduplication. Existing receiver,
+callback, allocator, ownership and process/thread contracts remain applicable.
+
+| Artifact | 0.14.0 SHA-256 |
+| --- | --- |
+| x86_64 GNU SDK | `b250a82e2562897102aee69bca2c946e53eadffddd1d85131975eaea00651b65` |
+| x86_64 musl SDK | `144827811d9e1477a6e0835b8a94492c2a1ba7eb7fa6d091ee0e0c73f2e7b2ee` |
+| aarch64 GNU SDK | `2909a4888a8e422ba0fe59efd6676a105be692fce5f67d0b2d0d3ea3e978afb6` |
+| aarch64 musl SDK | `0f6ebaf7dd8754fa08bef3b14b7a15dc8f5074bf64ecd353d39e007aa963a574` |
+| armhf GNU SDK | `2534b31a2c6222fac57b30e6ed3f63424d6b981c8bf1d5ad54fdebb00827b136` |
+| armhf musl SDK | `1b02a34681d4e730849b8bd90afe52c44f0d825436e52674aa45c70f5e2bdc5f` |
+| arm64 Darwin SDK | `d4cf9445fe175810a2cd223a7928374094aab2944894a99b50b3b11cac8972fe` |
+| Lua source | `fcff4bf1b4eb9165dadd76fa4dc9a2c4b8d8f409bb7200469f4b6e6177cf30e8` |
+
+The embedded upstream binding links the same static SDK as the CLI; its direct
+module and `vectis.libs.libmdf` identity are retained. `vectis.terminal` already
+forwards the affected options and translates callback failures; no rename-only
+wrapper is needed. Agent Smith checks native renderer failures on its existing
+bounded renderer thread, which never calls Lua or Softline directly. The docs
+pager uses the same public renderer and checked status. No new app lifecycle or
+logging configuration is introduced. Source-rock optional-native loading and
+static/shared CMake/pkg-config closure remain required consumer seams.
+
+New deterministic tests cover the fixes through native C and direct/convenience
+Lua, including normal and Linux packed execution. The escaped pipe Lua probe and
+native bounded-emission status probe both failed against the old 0.13.0 SDK.
+These are behavior checks, not assertions that a method merely exists.
+
+The responsible agent reviewed the pin changes, callback cleanup, direct and
+convenience calls, source-rock loading, packed execution and SDK consumers.
+The existing source-rock smoke had retained the old MQTT upload assertion after
+the POST fix; it now checks POST, upload=false and the exact buffered body. No
+MQTT implementation was changed. Installed CMake consumers now render the
+escaped-pipe fixture through public C receiver methods, and pkg-config consumers
+create/destroy an MDF receiver, proving that the declared dependency is usable.
+
+Completed verification:
+
+- `make finalize-slice CTEST='ctest --stop-on-failure'`: lifecycle, tool discovery,
+  resolver and privacy contracts; all 213 debug tests (37 fast and 176 broader).
+- Focused rendering/Smith/example/C failure checks: all five passed. The new C
+  failure test took under 0.01s and combined normal/packed Lua regression about
+  0.2s before the full gate; no sleeps or delay-based faults were added.
+- Native Memcheck of the C bounded-buffer failure probe and Lua regressions:
+  zero errors, zero bytes allocated at exit, including callback failures.
+- `make test-install-tree`: direct and extracted static/shared SDK consumers,
+  CMake/pkg-config linkage, exact exports and pinned-runtime checks passed.
+  Follow-up extracted static/shared checks passed with actual MDF rendering and
+  receiver construction in the strengthened consumers.
+- `scripts/test_lua_rock.sh`: passed after correcting the stale assertion.
+- x86_64 musl release CLI: statically linked; the same rendering regression
+  passed in normal and packed execution.
+- All seven SDK pins and the Lua source pin match the published checksum
+  manifest. GNU SONAME remains `libmdf.so.5`; its glibc symbol requirements match
+  0.13.0. Public declarations and Lua sources agree with the released facade,
+  allowing generated SDK version macros.
+
+ARM and native Darwin execution were not run for this focused upgrade; their
+pins are updated and validated, not runtime-certified. No hosted workflow,
+release, push or deployment was performed. Other dependency versions and the
+SQL facade prerequisite remain unchanged.
+
+## Historical supervisor integration record
+
 Status: recorded integration evidence for code committed as `e20ab55`. Earlier
 iteration results below are historical; the completed verification section is
 the final result for that code, not approval of a later release candidate.

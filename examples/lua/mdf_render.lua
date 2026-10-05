@@ -1,12 +1,14 @@
 local libmdf = require("libmdf")
 
-local html = libmdf.render("# Vectis\n\n**libmdf** Lua example\n", {
+local html = libmdf.render("# Vectis\n\n**libmdf** Lua example\n\n"
+    .. "| value |\n| --- |\n| `left\\|right` |\n", {
   format = "html",
   width = 72,
 })
 
 assert(html:match("Vectis"))
 assert(html:match("libmdf"))
+assert(html:find(">left|right</", 1, true))
 io.write(html)
 
 local chunks = {

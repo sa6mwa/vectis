@@ -27,6 +27,11 @@ String and callback destinations default to escape-free UTF-8 output. Pass
 `output_fd = terminal.libs.libmdf.file_descriptor(io.stdout)` when the output
 will be written to stdout and should follow its terminal status.
 
+The helpers pass wrapping, OSC8 hyperlinks and HTML/deck options through to
+libmdf, including its 0.14.0 link-label and escaped-table-pipe fixes. Persistent
+incremental documents and manual tokens remain available through
+`terminal.libs.libmdf`; they do not need an additional Vectis wrapper.
+
 Unsupported render formats return `nil, err` with Vectis status/source
 metadata. Programmer misuse, such as passing a non-string Markdown value or
 missing stream callbacks, raises a Lua error.

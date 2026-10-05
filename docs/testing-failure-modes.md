@@ -15,9 +15,13 @@ on readiness/effect output with selectors. Deadlines bound unexpected hangs;
 recovery/timer fixtures exercise scheduling without adding fixed test delays.
 Generated fixtures and packed executables stay under the build directory.
 
-The integration candidate `e20ab55` passed all **35** fast tests in **16.05s**,
+The libmdf 0.14.0 upgrade candidate passed **37** fast checks, including two new
+rendering checks, followed by 176 broader tests. The new C test takes under
+0.01s and normal/packed Lua regression about 0.2s locally.
+
+The earlier integration candidate `e20ab55` passed all **35** fast tests in **16.05s**,
 excluding the build, followed by 176 broader checks. The earlier encoder/MCP-only
-23-test measurement is superseded as the current label count. Its construction
+23-test measurement was superseded for that candidate. Its construction
 and cleanup matrix still supplies 1,456 assertions; its HTTP matrix adds 96
 assertions and two uncaught-error exits. Timings are local observations, not
 portable runtime guarantees. See the [seam audit](lua-upgrade-seam-audit.md#completed-independent-review-and-final-verification)
@@ -25,6 +29,9 @@ for exact commands and the separate nonclean full-service Memcheck diagnostic.
 
 ## Coverage
 
+- libmdf fixed emission buffers report `MDF_ERROR_NOMEM` with no output; normal
+  and packed Lua exercise fragmented hyperlink wrapping, escaped table pipes,
+  font deduplication, manual finish, reader/writer failure and output before EOF.
 - All 16 combinations of access logging and Lockd, CAI, and HTTP subsystem
   logging, with invalid constructor options and native configuration failures.
 - Rejected MCP registration before and after callback allocation, after partial
