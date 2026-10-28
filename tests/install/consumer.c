@@ -24,6 +24,8 @@
 #error "libvectis installed C consumer must compile in C89 mode"
 #endif
 
+int vectis_install_useful_facades(void);
+
 int main(void) {
   vectis_app_config config;
   vectis_http_client_config http_config;
@@ -54,6 +56,8 @@ int main(void) {
   lc_collection *collection;
   vectis_digest_result digest;
 
+  if (vectis_install_useful_facades() != 0)
+    return 20;
   memset(&error, 0, sizeof(error));
   memset(&logger, 0, sizeof(logger));
   /* Force the new public adapter and participant into both consumer closures,

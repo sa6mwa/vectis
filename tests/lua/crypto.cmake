@@ -1,0 +1,10 @@
+set(fixtures "${WORK_DIR}/crypto-fixtures")
+file(MAKE_DIRECTORY "${fixtures}")
+execute_process(COMMAND "${CRYPTO_FIXTURE}" "${fixtures}" RESULT_VARIABLE result
+  OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 10)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "Crypto fixture generation failed: ${out}${err}")
+endif()
+set(EXTRA_ENV "VECTIS_CRYPTO_FIXTURES=${fixtures}")
+set(SCRIPT "${VECTIS_SOURCE_DIR}/tests/lua/crypto.lua")
+include("${VECTIS_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")

@@ -3,11 +3,24 @@ local pslog = require("pslog")
 local softline = require("softline")
 local zlib = require("zlib")
 
-local lql_client = assert(lql.new())
+local lql_client <close> = assert(lql.new())
 local capabilities = lql_client:capabilities()
 assert(capabilities.selector_parse == true)
 assert(capabilities.stream_apply_spooled == true)
 assert(lql.path_is_regular_file(arg[0]) == true)
+
+-- The upstream facade owns filtering and scoped selector/client cleanup.
+local selector <close> = assert(lql_client:selector_parse('/status="ready"'))
+local records = '{"id":1,"status":"ready"}\n{"id":2,"status":"pending"}\n'
+local offset = 1
+local filtered, filter_error = lql_client:stream_apply(function(capacity)
+  if offset > #records then return nil end
+  local chunk = records:sub(offset, offset + capacity - 1)
+  offset = offset + #chunk
+  return chunk
+end, selector)
+assert(filtered, filter_error and filter_error.message)
+assert(filtered.records_seen == 2 and filtered.records_matched == 1)
 
 local log_chunks = {}
 local log = assert(pslog.new_json({

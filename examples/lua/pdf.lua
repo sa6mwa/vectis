@@ -1,0 +1,7 @@
+local pdf = require('vectis.pdf')
+local doc <close> = assert(pdf.new({title='Report',author='Vectis'}))
+local page <close> = assert(doc:add_page())
+assert(page:text(36,790,'Application report',{size=20}))
+assert(page:line(36,778,550,778,{color={0,0,1}}))
+assert(page:text(36,752,'Generated through the bundled public PDF API.'))
+assert(doc:save(arg[1] or 'report.pdf'))

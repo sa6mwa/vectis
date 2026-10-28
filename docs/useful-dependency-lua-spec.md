@@ -5,7 +5,7 @@ described below. Review evidence is in `useful-dependency-lua-review.md`.
 This is the implementation
 authority for the new goal; it supersedes exhaustive parity requirements in
 `lua-public-api-completeness-spec.md` and conflicting historical sequencing in
-`sql-database-facades-spec.md`. It does not claim delivered functionality.
+`sql-database-facades-spec.md`. Implementation status is recorded separately in `useful-dependency-lua-progress.md`.
 
 ## Outcome and boundaries
 
@@ -17,9 +17,11 @@ product. Availability of a header or constructor alone is not completion.
 Pinned inputs are cpkt 0.6.0, cpktdb 0.3.1 and cpktmisc 0.2.1, as identified by
 `scripts/dependency-pins.tsv` and the selected installed package manifests.
 Inspect these public headers and package targets, not an adjacent checkout.
-No dependency upgrades, upstream patches or upstream messages are authorized by
-this specification. Existing first-class upstream Lua facades remain unchanged.
-In particular pslog, LQL and MDF await new upstream releases. SSH work stays parked.
+The user additionally authorized the liblql 0.3.0 → 0.4.0 upgrade; its released
+C and Lua facades are consumed unchanged. The upgrade specification and seam
+review are in `liblql-0.4.0-upgrade.md`. No other dependency upgrade, upstream
+patch or upstream message is authorized by this specification. Existing upstream
+Lua facades remain authoritative. SSH work stays parked.
 
 The existing Vectis convenience APIs and managed PostgreSQL XA adapter remain
 supported. New direct bindings do not change their policy or ownership.
@@ -86,6 +88,8 @@ Public C: `vectis/sql.h`, `vectis/sqlite.h`. Lua: `vectis.sql`, `vectis.sqlite`.
 - `db:query(sql, params)` produces an owned incremental cursor;
   `db:exec(sql, params)` rejects row results and returns changes/last-rowid.
 - `db:transaction(fn, opts)` supports DEFERRED, IMMEDIATE and EXCLUSIVE.
+- `db:transaction_diagnostic()` preserves outcome and secondary rollback failure
+  details, including after catching a thrown callback error.
 - `sql.NULL`/`sqlite.NULL` distinguish NULL from empty text/blob;
   `sqlite.blob(bytes)` explicitly selects a BLOB. Rows are dense arrays;
   column metadata is ordered, preserving duplicate names and storage types.
@@ -135,6 +139,38 @@ code. An abandoned cursor, deadline or transport/protocol failure closes its
 owned connection without network drainage in GC. Unsupported COPY/pipelines are
 errors, not successful EOF. Exclude replication, large objects, COPY and plugins.
 
+PostgreSQL interface detail: connection options are `{parameters={keyword=value},
+connect_timeout_ms=5000,io_timeout_ms=30000}` with string keyword/value pairs.
+Native environment/service/passfile inheritance is retained; missing sslmode
+becomes verify-full. `connect_start` returns an owned pending connection;
+`db:poll()` advances it and returns `true` when ready or `false` while pending.
+`db:readiness()` returns `{fd,read,write}` for the next external wait.
+`connect` drives the same state with blocking polling. Per-query `timeout_ms`
+overrides the active blocking I/O budget; zero performs an immediate probe.
+Nonblocking readiness consumers own their external wait/deadline policy; time
+in application code is not charged to the blocking wait budget.
+
+`db:query(sql,params,opts)` / `stmt:query(params,opts)` return cursors.
+`next_ready()` returns `row,'row'`, `nil,'pending'`, `nil,nil` at checked EOF,
+or `nil,error`; `next()` waits for row/EOF/error. Rows are dense text/NULL arrays,
+with `cursor:columns()` available after the first row or terminal result and
+returning `{name,oid,format}` records. `db:exec` drives command completion and
+returns `{command,affected}` with affected as the exact native decimal string.
+`db:prepare(name,sql,{parameter_types={oid,...},timeout_ms=...})` acknowledges
+server preparation before returning a reusable statement view. Closing the
+view releases its client shell; the caller-named server statement belongs to
+the connection until explicit SQL DEALLOCATE or connection close. GC performs
+no hidden network deallocation. Existing `pg.binary(bytes,oid)` remains valid;
+integers bind as exact decimal text and SQL NULL shares the existing identity.
+
+Local transactions accept `isolation='read_committed'|'repeatable_read'|
+'serializable'` and `read_only=false`. Transaction-control statements, including
+previously prepared ones, are rejected inside the owned callback. Active escaped
+cursors invalidate their connection rather than causing network drainage during
+cleanup; transaction outcome is unknown if rollback cannot be acknowledged.
+`app:pg({name=...,parameters=...,connect_timeout_ms=...,io_timeout_ms=...})`
+captures the same copied configuration without opening a connection before start.
+
 ## Transaction and app database ownership
 
 Protect callbacks and check begin, callback, commit and rollback separately.
@@ -167,6 +203,25 @@ chunked readback or a spool. Validate document errors/status after each operatio
 Haru callbacks record native diagnostics and never enter Lua. Exclude forms,
 JavaScript, encryption, embedded files and custom font internals.
 
+PDF interface detail: `doc:font(name,{encoding=...})` selects a standard font;
+`doc:load_font(path,{encoding=...,embed=true})` loads TrueType;
+`doc:load_image(path,{format="png"|"jpeg"})` returns image dimensions and an owned
+view. The document retains all native objects; closing a view releases only its
+shell. Native errors latch until `doc:reset_error()` or close. Reset acknowledges
+the native error and does not roll back partial page output. Text defaults to
+Helvetica, 12 points and black; shape options select RGB color, line width
+(including native hairline zero), fill/stroke. Native float geometry precision
+and selected font encoding apply. Materialized output defaults to a 16 MiB
+facade allocation limit, configurable per call; native Haru buffers remain
+outside that limit. Positive font/PNG/JPEG checks use original tiny fixtures.
+
+`doc:load_image_materialized(bytes,{format=...})` accepts bounded complete
+PNG/JPEG bytes through the public memory loaders. This lets generated PNG data
+feed a PDF without a staging file. Input is borrowed only during the call;
+the document owns the resulting image. The 16 MiB encoded-input ceiling is
+distinct from native decoder memory. Memory-loader lifetime is tested by
+discarding input before PDF serialization.
+
 ## PNG: image interchange
 
 Public C: `vectis/png.h`; Lua: `vectis.png`. Reader/writer receivers support files
@@ -182,6 +237,23 @@ explicit whole-image alternatives, including interlaced input. Row receivers
 reject interlaced input rather than secretly collecting the image. Preserve
 alpha, validate strides/dimensions and report truncated/corrupt input. No palette
 editing, arbitrary chunk callbacks or ICC color-management engine is specified.
+
+PNG interface detail: `png.reader(path_or_read_callback,opts)` and
+`png.writer(path_or_write_callback,image,opts)` construct owned receivers.
+Callbacks use `read(capacity) -> bytes | nil[,error]` (1..capacity bytes) and
+`write(bytes) -> true | nil,error`. A reader's `next_row` returns RGBA8 bytes
+or `nil,nil` after checked completion. `finish` verifies all expected rows;
+close never completes a partially written image or invokes a user callback.
+Writer image fields are width/height, format (`rgba8`, `rgb8`, `gray8`),
+optional text map and physical `{x,y,unit='meter'|'unknown'}`. Reader info includes
+original depth/color type/interlace and RGBA8 row size, available text and physical
+metadata. Limits are `max_width`, `max_height`, `max_row_bytes`; materialized
+operations also accept `max_bytes` (16 MiB default) for complete pixels/output.
+Metadata is bounded to 16 text entries/64 KiB aggregate; unknown chunks are not
+retained. The native bounded ancillary-chunk cache may omit oversized optional
+chunks; selected text/resolution metadata is exposed when available. Materialized
+decode returns the image fields plus packed RGBA8 pixels;
+encode accepts packed pixels matching the declared format, with no padding.
 
 ## Archive: bundles and import/export
 
@@ -228,7 +300,7 @@ codec internals are not added merely because inspected SDK headers expose them.
 
 Keep `curl.perform/json/stream_json` behavior. Add owned easy/session handles for
 connection reuse and a multi receiver for concurrent ordinary transfers. Methods
-accept existing documented options plus bounded Lua reader/writer callbacks and
+accept existing transport/TLS/proxy options plus bounded Lua reader/writer callbacks and
 progress cancellation. Callbacks remain on the owner's invoking state; multi
 advancement is caller-driven, with poll/readiness and copied completion results.
 Do not introduce worker threads or silently register on Kore's event loop.
@@ -240,6 +312,36 @@ transfer state, and expose native error/status on each completion. Share-handle
 global caches and raw socket callbacks are excluded: easy/multi already support
 the specified reuse/concurrency workflow.
 
+The user confirmed on 2026-10-28 that these receivers target ordinary transfers.
+MIME, SMTP, schema mapping and automatic retry remain on existing helpers;
+unsupported receiver options fail explicitly before transfer initiation. This
+supersedes the initial ambiguous phrase "existing documented options". New
+receivers keep buffered/file body sources, bounded callbacks, protocol/method,
+headers and transport/TLS/proxy options. No implicit retry or callback replay is
+added. Each request captures its options/headers; settings reset before reuse,
+while the native connection cache survives until close. Responses retain the
+8 MiB buffered body and 64 KiB header ceilings; callback output has no cumulative
+body ceiling and does not publish `result.body`.
+
+`curl.session()` exposes perform/reset/close. `curl.multi()` exposes
+add/step/poll/completions/close. Add returns a transfer ID; step returns running
+count; poll accepts 0..60000 ms and returns readiness count (zero when queued
+completions need draining). Multi admits at most 64 combined active/queued
+requests. `completions(limit)` copies up to limit results (default 64, 1..64),
+then acknowledges that selected batch. A small limit permits bounded draining
+within the Lua memory budget;
+failed Lua copies leave every completion queued for retry. Individual failures
+remain per transfer. Callback error objects survive in result.callback_error
+and result.error; configuration failures return nil,error. Progress receives
+{download_total,downloaded,upload_total,uploaded}. Callbacks cannot yield.
+File sinks report close failures. Handles and callbacks belong to their creating
+process/thread and calling state; no GC/close user callbacks or network drain.
+`vectis.http.session(defaults)` owns a native session, applies copied defaults,
+merges headers and normalizes HTTP/transport status for request/get/post/put/
+patch/delete/head/options, with explicit reset/close. Callers construct it after
+their process/fork boundary and own its lifetime. Existing stateless HTTP/JSON,
+MIME, SMTP and schema workflows remain available independently.
+
 ## OpenSSL: data encryption and reusable keys
 
 Keep digest/HMAC/cert/sign helpers. Add owned PEM-loaded public/private key
@@ -249,6 +351,24 @@ Authentication failure returns an error without returning unauthenticated
 plaintext. Require explicit nonce input; no implicit key/nonce persistence.
 Bounded plaintext/ciphertext sizes and exact algorithm/key/tag constraints are
 documented and tested against known vectors. Use public EVP APIs.
+
+OpenSSL interface detail: `openssl.load_key(opts)` takes exactly one of the
+existing private/public key or certificate `_pem`/`_path` source fields, plus
+optional `passphrase`. It returns an owned process/thread-confined key with
+`sign(data,opts)`, `verify(data,signature,opts)`, `info()` and `close()`.
+Digest-based signatures keep the existing `algorithm`/`digest` options and
+SHA-256 default; unsupported key/digest combinations report native errors.
+Info reports native type/bits/signature-size and whether a private key was
+loaded. File/PEM input is materialized and bounded to 16 MiB; password callbacks
+copy explicit bytes in C and never prompt or enter Lua. Key generation and
+provider management remain outside the facade.
+
+`openssl.aes_gcm_encrypt_materialized({key,nonce,data,aad=...})` returns
+`{ciphertext,tag}`; `aes_gcm_decrypt_materialized({key,nonce,ciphertext,tag,aad=...})`
+returns authenticated bytes or `nil,error`. Keys are exactly 16/24/32 bytes,
+nonce 12 bytes and tag 16 bytes. Data/ciphertext and AAD each have a 16 MiB
+ceiling. No output is published on authentication failure. Existing digest,
+certificate/sign and random helpers retain their interfaces.
 
 No generic cipher enum mirror, provider lifecycle manager, BIO object graph or
 second TLS stack is specified. Existing curl/app TLS handles those workflows.
@@ -268,6 +388,33 @@ end and text callbacks; copy callback payloads and preserve namespace/attribute
 values. Do not build a DOM behind this API. External entity loading is disabled;
 no XInclude, XSLT, schema compiler, global loader or arbitrary native callbacks.
 
+XML interface detail: `xml.document(bytes,{max_bytes=16777216,max_xpath_nodes=4096})`
+owns a materialized DOM. XPath returns number/boolean/string scalars or ordered
+arrays of element views; non-element node sets are outside this selected view
+domain (use scalar functions or element attribute/text accessors). Namespace
+bindings are an explicit prefix-to-URI map. `node:name()` returns local name,
+namespace URI and prefix. `node:attribute(name,namespace_uri)` returns a string
+or nil for absence. `set_attribute(name,value,{namespace=...,prefix=...})`
+requires a prefix for namespaced attributes and rejects conflicting bindings.
+`append_child(name,{namespace=...,prefix=...,text=...})` returns a new child view;
+omitting namespace inherits the parent element's namespace. Text is literal,
+not entity markup. Root removal is rejected. Each mutation invalidates all prior
+element views, including its receiver; reacquire through root/XPath.
+
+`xml.sax(callbacks,{max_metadata_bytes=16777216})` exposes feed/finish/close.
+Each feed is <=65536 bytes; no cumulative stream-size ceiling or DOM collection
+is added. Start/end callbacks receive a namespace record `{uri,prefix}` when
+applicable; start records also retain namespace declarations. Attributes are
+arrays of `{name,value,namespace,prefix}` records, preserving duplicate local
+names across namespaces. A start event has at most 256 attributes/declarations
+and bounded aggregate copied metadata. Text events are <=65536-byte UTF-8 chunks.
+Callback exceptions and explicit `nil,error` fail the parser; other returns
+are ignored and never imply pause. Finish verifies completeness and is idempotent.
+DTDs/entity declarations are deliberately excluded: ordinary data interchange
+needs predefined entities, not retained declaration state. Reconsider when a
+concrete document workflow needs those declarations or non-element XPath views.
+Use context-specific public resource/error handlers; never replace global loaders.
+
 ## Verification and completion
 
 For every component, supply native public-API tests and Lua normal/packed tests
@@ -284,8 +431,10 @@ close ownership/error/streaming ambiguities, identify genuine upstream blockers,
 and record fixes before implementation. Required contracts blocked by upstream
 remain explicit blockers, not stubs or hidden buffers.
 
-During implementation run focused debug checks serially. After all specified
-surfaces exist, run standard format/tests, affected memory/service tests, Linux
+The user clarified the execution order: implement the entire agreed surface,
+integration, documentation and examples in one pass before starting verification.
+Do not interleave component implementation with test/build cycles. After that
+implementation pass, run standard format/tests, affected memory/service tests, Linux
 packed execution, source-rock checks, static/shared installed consumers and
 dependency/link closure checks. Update the manual, embedded manual, examples,
 coverage matrix and current semantic audit. Review the resulting implementation,
@@ -321,6 +470,12 @@ preserve existing conventions without duplicate aliases solely for C parity.
   Decoders accept exactly one frame/container and reject trailing bytes or a
   second frame; applications wanting concatenation create a new receiver at an
   explicit boundary. `finish` is idempotent after success, errors are latched.
+  `level` omission is distinct from XZ level zero. LZ4 exposes 0 through its
+  native high-compression maximum; negative acceleration selection is outside
+  this useful slice. Lua `stream(algorithm,direction,reader,sink,opts)` connects
+  bounded callbacks; `materialized(algorithm,direction,bytes,opts)` explicitly
+  collects output under `max_bytes` (default 16 MiB). The public C engine has
+  process/finish sink callbacks, invoked only after native codec calls return.
 - PDF page methods are `text(x,y,text,opts)`, `line(x1,y1,x2,y2,opts)`,
   `rectangle(x,y,width,height,opts)` and `image(image,x,y,width,height)`.
   Page sizes default to A4 portrait; explicit positive width/height are points.

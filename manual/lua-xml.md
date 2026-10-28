@@ -2,7 +2,7 @@
 
 Vectis preloads `vectis.xml` in the embedded Lua runtime. The facade exposes
 the libxml2-backed C SDK XML-to-LoneJSON parser and the C SDK LoneJSON-to-XML
-serializer to Lua scripts.
+serializer, owned DOM/XPath editing and incremental SAX input to Lua scripts.
 
 ## Entry Points
 
@@ -36,8 +36,8 @@ LoneJSON borrowed views have no mutation lease. Use the explicitly buffered
 `serialize()` for external records. Assignment misuse raises after cleanup;
 sink failures return structured errors after cleanup.
 
-Parsing builds a mapped record, potentially with spooled fields. It is not an
-incremental XML DOM API. The C SDK also exposes `vectis_xml_lonejson_to_bytes()`
+The mapped parse entry points build a record, potentially with spooled fields.
+The independent document and SAX APIs are described below. The C SDK also exposes `vectis_xml_lonejson_to_bytes()`
 for owned byte output.
 
 ## Options
@@ -97,3 +97,79 @@ local out = assert(xml.serialize({
 }))
 assert(out:find("<invoice>", 1, true))
 ```
+
+## Owned documents and XPath
+
+`xml.document(bytes, opts)` parses a materialized document. Options are
+`max_bytes` (default 16 MiB, at most 2147483647) and `max_xpath_nodes` (4096).
+These bound input and copied materialized results, not every native allocation.
+The document exposes `root()`, `xpath(expression, namespaces)`,
+`serialize_materialized(formatted_boolean)` and `close()`.
+
+XPath namespaces are a prefix-to-URI map, at most 256 entries. Results are Lua
+numbers, booleans, strings, or arrays of element views in document order.
+Non-element node sets are outside this slice: use `string(...)`, `count(...)`,
+or an element's attribute/text accessors. Expressions are at most 1 MiB.
+
+An element view exposes:
+
+- `name()` returns local name, namespace URI and prefix (absent values are nil).
+- `text()` materializes descendant text. `attribute(name, namespace_uri)` copies
+  an attribute, returning nil for absence and `""` for an empty value.
+- `set_text(bytes)` replaces children with literal XML UTF-8 text.
+- `set_attribute(name, value, opts)` writes literal text; opts may contain
+  `namespace` and `prefix`. Namespaced attributes require a prefix. Conflicting
+  or reserved namespace bindings are rejected.
+- `append_child(name, opts)` returns a child view. Options are `namespace`,
+  `prefix` and literal `text`; an omitted namespace inherits the parent's.
+- `remove()` removes an element; removing the document root is rejected.
+- `close()` releases the view without removing the element.
+
+Every mutation invalidates all prior views, including its receiver. Reacquire
+views through `root()` or `xpath()`. A newly appended child is valid until the
+next mutation. Views retain their document owner; explicit document close
+invalidates them. Receivers belong to their creating process and thread.
+Serialization is explicitly materialized, including the native serializer's
+buffer. Runtime failures return `nil, error` with operation, copied diagnostic,
+status and dependency code; invalid Lua argument shapes raise errors.
+
+```lua
+local xml = require('vectis.xml')
+local doc = assert(xml.document('<items><item id="1"/></items>'))
+local item = assert(doc:xpath('/items/item'))[1]
+assert(item:set_text('literal <value>'))
+local bytes = assert(doc:serialize_materialized(true))
+assert(bytes:find('literal &lt;value&gt;', 1, true))
+assert(doc:close())
+```
+
+## Caller-fed SAX input
+
+`xml.sax(callbacks, opts)` returns `feed(bytes)`, `finish()` and `close()`.
+Each feed accepts at most 65536 bytes. Events run synchronously during feed or
+finish; the parser builds no DOM and imposes no cumulative input-size ceiling.
+Native XML token/depth limits still apply. `finish()` checks completeness and
+is idempotent after success. Close invokes no callbacks.
+
+Callbacks are copied at construction; any subset may be supplied:
+
+- `start_element(name, attributes, namespace)` receives an array of
+  `{name, value, namespace, prefix}` attribute records. Namespace records contain
+  `uri`, `prefix`, and a `declarations` array of `{prefix, uri}` records.
+- `end_element(name, namespace)` receives the element's `uri` and `prefix`.
+- `text(bytes)` receives copied UTF-8 chunks of at most 65536 bytes. Event
+  boundaries need not match feed or text-node boundaries.
+
+Callback exceptions and explicit `nil, error` stop and latch the parser;
+subsequent operations return the same callback error object. Other returns
+(including false) are ignored. Receiver reentry/close during a callback fails
+the outer operation even when caught. Callbacks cannot yield. Start events are
+limited to 256 combined attributes/namespace declarations; their copied metadata
+is bounded by `max_metadata_bytes` (default 16 MiB). No full-value collection is
+hidden behind SAX.
+
+Both document and SAX parsing exclude DTD/entity declarations and use
+context-specific external resource rejection; predefined entities work. Schema,
+XInclude, XSLT, external loaders and non-element view graphs are outside this
+useful slice. Reconsider declarations or additional node types when a concrete
+application requires them.

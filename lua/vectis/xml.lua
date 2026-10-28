@@ -42,6 +42,9 @@ function M.write(opts, sink)
   return core.write(opts, sink)
 end
 
+M.document = core.document
+M.sax = core.sax
+
 M.core = core
 
 return M

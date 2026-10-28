@@ -13,6 +13,12 @@ foreach(_vectis_prefix IN LISTS _vectis_bundled_prefixes)
 endforeach()
 find_dependency(CpktCore 0.6.0 CONFIG REQUIRED)
 find_dependency(CpktPostgres CONFIG REQUIRED)
+find_dependency(CpktSqlite CONFIG REQUIRED)
+find_dependency(CpktPdf CONFIG REQUIRED)
+find_dependency(CpktPng CONFIG REQUIRED)
+find_dependency(CpktZstdFacade CONFIG REQUIRED)
+find_dependency(CpktLz4Facade CONFIG REQUIRED)
+find_dependency(CpktLzmaFacade CONFIG REQUIRED)
 find_dependency(Threads REQUIRED)
 find_dependency(OpenSSL CONFIG REQUIRED)
 find_dependency(ZLIB CONFIG REQUIRED)
@@ -97,6 +103,13 @@ list(REMOVE_DUPLICATES _vectis_dependency_link_dirs)
 
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.a")
   set(_vectis_static_links
+    cpkt::pdf
+    cpkt::png
+    cpkt::zstd
+    cpkt::lz4
+    cpkt::lzma
+    cpkt::sqlite
+    cpkt::postgres
     lockdc::postgres_static
     lockdc::static
     cpkt::opcua
@@ -129,6 +142,13 @@ endif()
 
 if(NOT TARGET vectis::shared)
   set(_vectis_shared_links
+    cpkt::pdf_shared
+    cpkt::png_shared
+    cpkt::zstd_shared
+    cpkt::lz4_shared
+    cpkt::lzma_shared
+    cpkt::sqlite_shared
+    cpkt::postgres_shared
     lockdc::postgres_shared
     lockdc::shared
     cpkt::opcua_shared

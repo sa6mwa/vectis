@@ -72,6 +72,11 @@ local modules = {
   "vectis.buffer",
   "vectis.digest",
   "vectis.pg",
+  "vectis.sql",
+  "vectis.sqlite",
+  "vectis.pdf",
+  "vectis.png",
+  "vectis.compression",
   "vectis.storage",
   "vectis.supervisor",
   "vectis.workflow",
@@ -123,7 +128,7 @@ assert(loaded["vectis"].smtp == loaded["vectis.smtp"])
 assert(loaded["vectis"].lockd == loaded["vectis.lockd"])
 assert(loaded["vectis"].dsv == loaded["vectis.dsv"])
 assert(loaded["vectis"].xml == loaded["vectis.xml"])
-for _, name in ipairs({"buffer", "digest", "pg", "storage", "supervisor", "workflow"}) do
+for _, name in ipairs({"buffer", "compression", "digest", "pdf", "png", "pg", "sql", "sqlite", "storage", "supervisor", "workflow"}) do
   assert(loaded["vectis"][name] == loaded["vectis." .. name])
 end
 assert(loaded["vectis"].libs.lockdc_postgres == loaded["lockdc.postgres"])

@@ -95,10 +95,12 @@ if command -v pkg-config >/dev/null 2>&1; then
 #include <vectis/vectis.h>
 #include <libmdf.h>
 
+int vectis_install_useful_facades(void);
 int main(void) {
   vectis_app_config config;
   mdf_options options;
   mdf *renderer;
+  if(vectis_install_useful_facades()!=0)return 20;
   vectis_app_config_init(&config);
   mdf_options_init(&options);
   renderer = NULL;
@@ -114,7 +116,14 @@ EOF
   PKG_CONFIG_PATH="$pkg_config_path${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
     pkg-config --static --cflags --libs vectis >"$pkg_config_build_root/vectis.pc.flags"
   read -r -a pkg_flags <"$pkg_config_build_root/vectis.pc.flags"
-  "$consumer_cc" "${runtime_flags[@]}" "$pkg_config_build_root/consumer.c" \
+  # --static asks pkg-config for private closure but does not force the linker
+  # to choose libvectis.a when a shared sibling is installed.
+  for pkg_flag_index in "${!pkg_flags[@]}"; do
+    if [[ "${pkg_flags[$pkg_flag_index]}" == -lvectis ]]; then
+      pkg_flags[$pkg_flag_index]="$package_root/lib/libvectis.a"
+    fi
+  done
+  "$consumer_cc" "${runtime_flags[@]}" "$pkg_config_build_root/consumer.c" "$repo_root/tests/install/useful_facades.c" \
     -o "$pkg_config_build_root/vectis_pkg_config_consumer" \
     "${pkg_flags[@]}"
   "$pkg_config_build_root/vectis_pkg_config_consumer"

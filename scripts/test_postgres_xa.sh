@@ -4,6 +4,7 @@ umask 077
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 binary=${1:?usage: test_postgres_xa.sh VECTIS}
+test_script=${VECTIS_POSTGRES_TEST_SCRIPT:-"$repo_root/tests/lua/postgres_xa.lua"}
 command -v podman >/dev/null
 [[ $(podman info --format '{{.Host.Security.Rootless}}') == true ]] || {
   echo 'PostgreSQL XA fixture requires rootless Podman' >&2; exit 2;
@@ -33,10 +34,16 @@ trap 'exit 143' TERM
 podman kube play --userns=keep-id:uid=70,gid=70 "$work/postgres.yaml" >"$work/up.log" 2>&1
 # Actual protocol health, not a startup delay or fixed sleep.
 timeout 35 podman wait --condition=healthy "$name-postgres" >"$work/ready.log"
+if [[ -n ${VECTIS_POSTGRES_NATIVE_TEST:-} ]]; then
+  VECTIS_PG_PORT="$port" VECTIS_PG_PASSWORD_FILE="$work/password" "$VECTIS_POSTGRES_NATIVE_TEST"
+fi
+if [[ -n ${VECTIS_POSTGRES_OOM_TEST:-} ]]; then
+  VECTIS_PG_PORT="$port" VECTIS_PG_PASSWORD_FILE="$work/password" "$VECTIS_POSTGRES_OOM_TEST" "$repo_root/tests/lua/pg_connection_oom.lua"
+fi
 VECTIS_PG_PORT="$port" VECTIS_PG_PASSWORD_FILE="$work/password" \
   VECTIS_PG_GC_SCRIPT="$repo_root/tests/lua/postgres_gc.lua" \
-  VECTIS_UPGRADE_TEST_ROOT="$work/store" "$binary" "$repo_root/tests/lua/postgres_xa.lua"
-"$binary" -a pack --script "$repo_root/tests/lua/postgres_xa.lua" --output "$work/packed"
+  VECTIS_UPGRADE_TEST_ROOT="$work/store" "$binary" "$test_script"
+"$binary" -a pack --script "$test_script" --output "$work/packed"
 VECTIS_PG_PORT="$port" VECTIS_PG_PASSWORD_FILE="$work/password" \
   VECTIS_PG_GC_SCRIPT="$repo_root/tests/lua/postgres_gc.lua" \
   VECTIS_UPGRADE_TEST_ROOT="$work/packed-store" "$work/packed"

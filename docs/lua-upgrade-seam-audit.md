@@ -1,5 +1,16 @@
 # Vectis Lua upgrade seam audit
 
+## Useful dependency facade goal, 2026-10-28
+
+The new [reviewed specification](useful-dependency-lua-spec.md) replaces exhaustive
+parity with useful public APIs of dependencies lacking upstream Lua facades.
+[Current implementation evidence](useful-dependency-lua-progress.md) distinguishes
+delivered SQLite/PostgreSQL app ownership, PDF, PNG, selected compression, reusable
+OpenSSL keys/AES-GCM, XML DOM/XPath/SAX and curl sessions/multi from pending
+components. LZO is deferred;
+the selected archive target's transitive LZO linkage is an upstream blocker.
+Existing upstream Lua facades remain unchanged and await their own releases.
+
 ## Upstream facade restoration, 2026-10-28
 
 This section supersedes the local pslog/LQL/MDF implementation claims below.
@@ -722,7 +733,7 @@ MDF `a4c4ac66c2bf67aeb6d19f76e13ea245e34dce291221803dea079db8d7df1eb8`.
 | curl 8.22.0 | Existing public options/upload/download/read/write facade | HTTP/REST/WebDAV/SMTP/MQTT, worker config/logging, HTTP and CAI/DSV streams retained. Public option passthrough provides existing auth mechanisms. No new GSS/SASL context objects are needed to retain curl's current options. Live broker/mail/provider gates remain opt-in. |
 | nghttp2 1.70.0 | HTTP/2 dependency plus new C89 facade | Native curl/Kore protocol closure retained; protocol frames and callback pointer machinery remain C-only until a Vectis-owned HTTP/2 operation requires them. |
 | zlib 1.3.2 | Full existing Lua compression helpers; configured header guard change | Embedded resources/content compression and static/shared closure retained. |
-| libxml2 2.15.4 | Existing XML↔LoneJSON mapping and native writer | Lua parsing materializes mapped values/records, potentially with spooled fields. New Lua `xml.write` genuinely pushes native chunks from private table input; explicit buffered serialization shares its emitter. No DOM stream is claimed. DOM pointer trees intentionally C-only; no new DOM product requirement. |
+| libxml2 2.15.4 | Existing XML↔LoneJSON mapping and native writer | Lua parsing materializes mapped values/records, potentially with spooled fields. New Lua `xml.write` genuinely pushes native chunks from private table input; explicit buffered serialization shares its emitter. No DOM stream is claimed. The useful-facade goal supersedes that earlier exclusion: owned element DOM editing, scalar/element XPath and caller-fed SAX now have native/normal/packed and allocation-failure evidence in the current progress record. |
 | miniaudio 0.11.25 | Existing cpkt audio public receiver facade/Lua | Decoder/encoder/VOX/PTT and managed copied mailbox work retained. Lua decoder callbacks run under public owner reads; device capture remains opt-in. |
 | whisper.cpp 1.9.4 / SUS ABI 0 | Existing catalog/cache/transcriber/segmented methods and global backend logging | Foreign logs copy into bounded owner queue; other Lua callbacks reject foreign entry. Explicit owner log source supports app loops. Per-app backend logger inheritance is excluded until public per-model/context routing exists. Native global continuation severity remains an upstream race before our synchronized sink; independent constructor emitters have no shared serialization. Model inference remains opt-in. |
 | open62541 1.5.8 / OPC UA ABI 0 | Full cpkt client/server facade plus structured logger constructors/setters | Public pslog capability retention, managed ownership lease and app sink before startup, joined teardown/mute, duplicate rejection, callback reentry guards and deferred GC in both whole-VM creation orders. Existing subscriptions/events/async/security/discovery/PubSub graph retained; native pointers/plugins excluded. External event-loop delete contract requires embedder quiescence. |
@@ -1674,3 +1685,9 @@ seconds. Actual CLI callback/coroutine ownership also passes strict Memcheck:
 1611 allocations/frees, zero live bytes/blocks and zero errors. No cross build,
 full suite, release or push ran. The broad implementation remains uncommitted
 on `init`; these records are component evidence only.
+
+## Authorized LQL 0.4.0 follow-up
+
+The current upgrade specification and native/Lua/packaging seam review are in
+`liblql-0.4.0-upgrade.md`. Earlier LQL 0.3.0 findings and counts are historical;
+this consumes the released 0.4.0 facade without the withdrawn local extensions.

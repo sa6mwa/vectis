@@ -42,10 +42,13 @@ There is therefore no current convenience feature gap that justifies retaining
 these provider extensions. Vectis native buffer, digest, storage, PostgreSQL XA,
 zlib and other owned APIs are preserved independently of this removal.
 
-The concrete outstanding issues are failure guarantees, not missing feature
-mirrors. The archived reports describe native owner/adoption leaks under Lua
-OOM in pslog, callback OOM cleanup in LQL, and callback/result-copy cleanup in
-MDF. Their recorded versions and measurements must be respected when proposing
+The archived issues concern failure guarantees, not missing feature mirrors.
+The reports describe native owner/adoption leaks under Lua OOM in pslog,
+callback OOM cleanup in LQL 0.3.0, and callback/result-copy cleanup in MDF.
+The user-authorized LQL 0.4.0 upgrade consumes upstream cleanup fixes unchanged;
+see `liblql-0.4.0-upgrade.md` for refreshed integration evidence. The old LQL
+report and measurements remain historical, and its mixed API-expansion patch
+is not reapplied. Their recorded versions and measurements must be respected when proposing
 upstream fixes. Restoring the released bindings does not inherit the withdrawn
 patches' allocation-failure guarantees. An outer Vectis `pcall` cannot repair
 native resources already abandoned by a Lua unwind inside the upstream binding;
@@ -56,9 +59,11 @@ workaround or additional upstream API is introduced here.
 bytes against the selected SDK sources. `vectis_lua_upstream_facades` exercises
 the released APIs and retained Vectis logging/terminal convenience behavior in
 ordinary and Linux packed execution. These checks prove the restoration scope,
-not resolution of the upstream fault reports or a full migration release gate.
+not resolution of every upstream fault report or a full migration release gate.
+LQL 0.4.0 memory/cleanup evidence and its remaining closer-entry limitation are
+recorded separately in `liblql-0.4.0-upgrade.md`.
 
-Restoration evidence: 19 affected CTest checks passed, including normal/packed
+Historical restoration evidence (before LQL 0.4.0): 19 affected CTest checks passed, including normal/packed
 execution and source-byte verification. Lua-only rock smoke, repository format,
 shell syntax and whitespace checks passed. Five embedded manuals match their
 current source files, and all 117 archived handoff files were reverified.

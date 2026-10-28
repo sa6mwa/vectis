@@ -1,0 +1,18 @@
+local pg=require('vectis.pg.connection.core')
+local db <close> = assert(pg.connect(PG_TEST_OPTIONS))
+assert(db:exec('CREATE TEMP TABLE own_data(value text)',{}))
+assert(db:exec('INSERT INTO own_data VALUES($1)',{'original'}))
+local prepared <close> = assert(db:prepare('reusable','SELECT $1::text,NULL::text',{parameter_types={25}}))
+local cursor <close> = assert(prepared:query({'exact'}))
+local row = assert(cursor:next())
+assert(row[1]=='exact' and row[2]==pg.NULL)
+assert(cursor:columns()[1].oid==25)
+assert(cursor:next()==nil)
+assert(db:transaction(function(connection)
+  assert(connection:exec('INSERT INTO own_data VALUES($1)',{'transaction'}))
+  return 'committed',nil,7
+end))
+local ok,err=db:transaction(function() return nil,{message='rollback requested'} end)
+assert(ok==nil and err.transaction_outcome=='rolled_back')
+assert(db:transaction_diagnostic().transaction_outcome=='rolled_back')
+return true

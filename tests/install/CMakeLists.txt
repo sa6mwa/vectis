@@ -62,7 +62,7 @@ if(VECTIS_CONSUMER_LINK STREQUAL "static" AND UNIX AND NOT APPLE AND CMAKE_DL_LI
   endif()
 endif()
 
-add_executable(vectis_install_consumer consumer.c)
+add_executable(vectis_install_consumer consumer.c useful_facades.c)
 vectis_install_link_target(vectis_install_consumer)
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

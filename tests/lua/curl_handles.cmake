@@ -1,0 +1,28 @@
+file(MAKE_DIRECTORY "${WORK_DIR}")
+set(root "${WORK_DIR}/upgrade-seams-data")
+foreach(mode normal packed)
+  file(REMOVE_RECURSE "${root}")
+  file(MAKE_DIRECTORY "${root}")
+  if(mode STREQUAL "packed")
+    if(APPLE)
+      continue()
+    endif()
+    set(executable "${WORK_DIR}/curl-handles-packed")
+    execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${VECTIS_SOURCE_DIR}/tests/lua/curl_handles.lua" --output "${executable}"
+      RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 10)
+    if(NOT result EQUAL 0)
+      message(FATAL_ERROR "curl pack failed: ${out}${err}")
+    endif()
+    set(arguments)
+  else()
+    set(executable "${VECTIS_BIN}")
+    set(arguments "${VECTIS_SOURCE_DIR}/tests/lua/curl_handles.lua")
+  endif()
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E env "VECTIS_UPGRADE_TEST_ROOT=${root}"
+    "XDG_STATE_HOME=${root}/state" "XDG_CONFIG_HOME=${root}/config"
+    "${CURL_HTTP_FIXTURE}" "${WORK_DIR}" "${executable}" ${arguments}
+    RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 14)
+  if(NOT result EQUAL 0 OR NOT out MATCHES "upgrade seam behavior ok")
+    message(FATAL_ERROR "curl ${mode} behavior failed: ${out}${err}")
+  endif()
+endforeach()

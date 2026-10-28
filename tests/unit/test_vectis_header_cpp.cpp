@@ -2,19 +2,50 @@
 
 #include <vectis/auth.h>
 #include <vectis/buffer.h>
+#include <vectis/compression.h>
+#include <vectis/crypto.h>
+#include <vectis/curl.h>
 #include <vectis/digest.h>
 #include <vectis/gz.h>
+#include <vectis/pdf.h>
 #include <vectis/pg.h>
+#include <vectis/png.h>
 #include <vectis/proxy.h>
+#include <vectis/sqlite.h>
 #include <vectis/storage.h>
 #include <vectis/supervisor.h>
 #include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
+#include <vectis/xml.h>
 #include <vectis/zlib.h>
 #include <vectis/zlib_raw.h>
 
 int main() {
+  vectis_crypto_gcm_result crypto_result = {};
+  vectis_crypto_gcm_result_cleanup(&crypto_result);
+  vectis_pg_config pg_config;
+  vectis_pg_config_init(&pg_config);
+  if (pg_config.connect_timeout_ms != 5000 || pg_config.io_timeout_ms != 30000)
+    return 1;
+  vectis_png_limits png_limits;
+  vectis_png_limits_init(&png_limits);
+  if (png_limits.max_width != 16384 || png_limits.max_row_bytes != 65536)
+    return 1;
+  vectis_compression_config compression_config;
+  vectis_compression_config_init(&compression_config);
+  if (compression_config.max_window_log != 26 ||
+      compression_config.memory_limit != 67108864)
+    return 1;
+  vectis_pdf_page_config pdf_page;
+  vectis_pdf_page_config_init(&pdf_page);
+  if (pdf_page.width < 595 || pdf_page.height < 841)
+    return 1;
+  vectis_sqlite_config sqlite_config;
+  vectis_sqlite_config_init(&sqlite_config);
+  if (std::strcmp(sqlite_config.mode, "readwrite_create") != 0 ||
+      sqlite_config.busy_timeout_ms != 0)
+    return 1;
   vectis_app_config app_config;
   vectis_http_client_config http_config;
   vectis_proxy_route_config proxy_config;

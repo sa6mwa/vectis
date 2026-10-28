@@ -190,6 +190,18 @@ local buffer_core = { CHUNK_BYTES = 65536 }
 buffer_core.new = function() error("native buffer placeholder invoked") end
 buffer_core.from_materialized = function() error("native buffer placeholder invoked") end
 stub("vectis.buffer.core", buffer_core)
+local sqlite_core = {NULL={}}
+stub("vectis.sqlite.core", sqlite_core)
+local pg_core = {NULL=sqlite_core.NULL,from_borrow=function() error('native XA placeholder invoked') end}
+local pg_connection_core = {connect=function() error('native PostgreSQL placeholder invoked') end,connect_start=function() error('native PostgreSQL placeholder invoked') end}
+stub("vectis.pg.core",pg_core)
+stub("vectis.pg.connection.core",pg_connection_core)
+local pdf_core = {}
+stub("vectis.pdf.core", pdf_core)
+local png_core = {}
+stub("vectis.png.core", png_core)
+local compression_core = {new=function() error('native compression placeholder invoked') end}
+stub("vectis.compression.core", compression_core)
 stub("vectis.dsv.core", {
   parse_json = function()
     return '[["a"]]'
@@ -240,6 +252,12 @@ stub("vectis.auth.core", {
 })
 
 local expected_modules = {
+  "vectis.sql",
+  "vectis.sqlite",
+  "vectis.pg",
+  "vectis.pdf",
+  "vectis.png",
+  "vectis.compression",
   "curl",
   "vectis",
   "vectis.auth",
@@ -266,6 +284,18 @@ for _, name in ipairs(expected_modules) do
   assert(type(module) == "table" or type(module) == "string", name)
   loaded[name] = module
 end
+assert(loaded["vectis.sql"].NULL == sqlite_core.NULL)
+assert(loaded["vectis.sqlite"] == sqlite_core)
+assert(loaded["vectis"].sqlite == sqlite_core)
+assert(loaded["vectis.pg"].NULL == sqlite_core.NULL)
+assert(loaded["vectis.pg"].connect == pg_connection_core.connect)
+assert(loaded["vectis.pg"].from_borrow == pg_core.from_borrow)
+assert(loaded["vectis.pdf"] == pdf_core)
+assert(loaded["vectis"].pdf == pdf_core)
+assert(loaded["vectis.png"] == png_core)
+assert(loaded["vectis"].png == png_core)
+assert(loaded["vectis.compression"].new == compression_core.new)
+assert(loaded["vectis"].compression == loaded["vectis.compression"])
 
 local curl = loaded.curl
 local vectis = require("vectis")

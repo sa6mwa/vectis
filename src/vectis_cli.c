@@ -1,12 +1,20 @@
 #include "vectis_cli.h"
 #include "vectis_internal.h"
 #include "vectis_lua_buffer.h"
+#include "vectis_lua_compression.h"
+#include "vectis_lua_crypto.h"
+#include "vectis_lua_curl.h"
 #include "vectis_lua_digest.h"
 #include "vectis_lua_gz.h"
 #include "vectis_lua_lockdc.h"
+#include "vectis_lua_pdf.h"
 #include "vectis_lua_pg.h"
+#include "vectis_lua_pg_connection.h"
+#include "vectis_lua_png.h"
 #include "vectis_lua_pouch.h"
+#include "vectis_lua_sqlite.h"
 #include "vectis_lua_supervisor.h"
+#include "vectis_lua_xml_objects.h"
 #include "vectis_lua_zlib_raw.h"
 #include "vectis_lua_zlib_stream.h"
 
@@ -8713,6 +8721,10 @@ static int vectis_lua_app_owned_call(lua_State *lua) {
 }
 static int vectis_lua_app_owned_idle(lua_State *lua) {
   vectis_lua_app *server = vectis_lua_check_app(lua, 1);
+  vectis_error error;
+  if (server->app != NULL &&
+      vectis_app_sql_check_idle(server->app, &error) != VECTIS_OK)
+    return luaL_error(lua, "%s", error.message);
   if (server->closing)
     return luaL_error(lua, "app lifecycle is not allowed while closing");
   if (server->owned_call_depth != 0u)
@@ -8720,6 +8732,51 @@ static int vectis_lua_app_owned_idle(lua_State *lua) {
         lua,
         "app lifecycle is not allowed inside a workflow or client callback");
   return 0;
+}
+static void vectis_lua_sql_enter(void *context) {
+  ++((vectis_lua_app *)context)->owned_call_depth;
+}
+static void vectis_lua_sql_leave(void *context) {
+  --((vectis_lua_app *)context)->owned_call_depth;
+}
+static int vectis_lua_app_sqlite_unprotected(lua_State *lua) {
+  vectis_lua_app *server;
+  server = vectis_lua_check_app(lua, 1);
+  return vectis_lua_sqlite_declare(lua, vectis_lua_app_app(lua, 1), server,
+                                   vectis_lua_sql_enter, vectis_lua_sql_leave);
+}
+static int vectis_lua_app_pg_unprotected(lua_State *lua) {
+  vectis_lua_app *server = vectis_lua_check_app(lua, 1);
+  return vectis_lua_pg_declare(lua, vectis_lua_app_app(lua, 1), server,
+                               vectis_lua_sql_enter, vectis_lua_sql_leave);
+}
+static int vectis_lua_app_pg(lua_State *lua) {
+  vectis_lua_app *server;
+  int args = lua_gettop(lua), status;
+  (void)vectis_lua_app_owned_idle(lua);
+  server = vectis_lua_check_app(lua, 1);
+  lua_pushcfunction(lua, vectis_lua_app_pg_unprotected);
+  lua_insert(lua, 1);
+  ++server->owned_call_depth;
+  status = lua_pcall(lua, args, LUA_MULTRET, 0);
+  --server->owned_call_depth;
+  if (status != LUA_OK)
+    return lua_error(lua);
+  return lua_gettop(lua);
+}
+static int vectis_lua_app_sqlite(lua_State *lua) {
+  vectis_lua_app *server;
+  int args = lua_gettop(lua), status;
+  (void)vectis_lua_app_owned_idle(lua);
+  server = vectis_lua_check_app(lua, 1);
+  lua_pushcfunction(lua, vectis_lua_app_sqlite_unprotected);
+  lua_insert(lua, 1);
+  ++server->owned_call_depth;
+  status = lua_pcall(lua, args, LUA_MULTRET, 0);
+  --server->owned_call_depth;
+  if (status != LUA_OK)
+    return lua_error(lua);
+  return lua_gettop(lua);
 }
 static int vectis_lua_app_set_pouch_settings(lua_State *lua) {
   lc_pouch_settings settings;
@@ -22726,6 +22783,10 @@ static void vectis_lua_register_app(lua_State *lua) {
     lua_setfield(lua, -2, "_supervisor_storage_defaults");
     lua_pushcfunction(lua, vectis_lua_app_supervisor_pump);
     lua_setfield(lua, -2, "pump");
+    lua_pushcfunction(lua, vectis_lua_app_sqlite);
+    lua_setfield(lua, -2, "sqlite");
+    lua_pushcfunction(lua, vectis_lua_app_pg);
+    lua_setfield(lua, -2, "pg");
     lua_pushcfunction(lua, vectis_lua_app_start);
     lua_setfield(lua, -2, "start");
     lua_pushcfunction(lua, vectis_lua_app_on_fork_exit);
@@ -23024,6 +23085,11 @@ static int luaopen_vectis(lua_State *lua) {
   vectis_lua_set_required_module(lua, "cert", "vectis.cert");
   vectis_lua_set_required_module(lua, "digest", "vectis.digest");
   vectis_lua_set_required_module(lua, "pg", "vectis.pg");
+  vectis_lua_set_required_module(lua, "sql", "vectis.sql");
+  vectis_lua_set_required_module(lua, "sqlite", "vectis.sqlite");
+  vectis_lua_set_required_module(lua, "pdf", "vectis.pdf");
+  vectis_lua_set_required_module(lua, "png", "vectis.png");
+  vectis_lua_set_required_module(lua, "compression", "vectis.compression");
   vectis_lua_set_required_module(lua, "storage", "vectis.storage");
   vectis_lua_set_required_module(lua, "buffer", "vectis.buffer");
   vectis_lua_set_required_module(lua, "cli", "vectis.cli");
@@ -23261,6 +23327,7 @@ static int vectis_luaopen_lonejson_core(void *lua_state) {
 
 static int luaopen_vectis_xml_core(lua_State *lua) {
   lua_newtable(lua);
+  vectis_lua_xml_objects_register(lua);
   lua_pushcfunction(lua, vectis_lua_xml_parse);
   lua_setfield(lua, -2, "parse");
   lua_pushcfunction(lua, vectis_lua_xml_parse_record);
@@ -23282,6 +23349,23 @@ static int vectis_luaopen_vectis_digest_core(void *lua_state) {
 
 static int vectis_luaopen_vectis_pg_core(void *lua_state) {
   return luaopen_vectis_pg_core((lua_State *)lua_state);
+}
+
+static int vectis_luaopen_vectis_sqlite_core(void *lua_state) {
+  return luaopen_vectis_sqlite_core((lua_State *)lua_state);
+}
+static int vectis_luaopen_vectis_pg_connection_core(void *lua_state) {
+  return luaopen_vectis_pg_connection_core((lua_State *)lua_state);
+}
+static int vectis_luaopen_vectis_pdf_core(void *lua_state) {
+  return luaopen_vectis_pdf_core((lua_State *)lua_state);
+}
+static int vectis_luaopen_vectis_png_core(void *lua_state) {
+  return luaopen_vectis_png_core((lua_State *)lua_state);
+}
+
+static int vectis_luaopen_vectis_compression_core(void *lua_state) {
+  return luaopen_vectis_compression_core((lua_State *)lua_state);
 }
 
 static int vectis_luaopen_vectis_buffer_core(void *lua_state) {
@@ -23311,6 +23395,7 @@ static int vectis_luaopen_vectis_dsv_core(void *lua_state) {
 
 static int luaopen_curl_core(lua_State *lua) {
   lua_newtable(lua);
+  vectis_lua_curl_register(lua);
   lua_pushcfunction(lua, vectis_lua_curl_version);
   lua_setfield(lua, -2, "version");
   lua_pushcfunction(lua, vectis_lua_curl_perform);
@@ -24389,15 +24474,17 @@ static int vectis_lua_zlib_version(lua_State *lua) {
 static int vectis_lua_zlib_compile_flags(lua_State *lua) {
   uLong flags;
   flags = zlibCompileFlags();
-  if ((uint64_t)flags <= (uint64_t)LUA_MAXINTEGER) {
-    lua_pushinteger(lua, (lua_Integer)flags);
-  } else {
+#if ULONG_MAX > LUA_MAXINTEGER
+  if ((uint64_t)flags > (uint64_t)LUA_MAXINTEGER) {
     lua_createtable(lua, 0, 2);
     lua_pushinteger(lua, (lua_Integer)((uint64_t)flags >> 32u));
     lua_setfield(lua, -2, "high");
     lua_pushinteger(lua, (lua_Integer)((uint64_t)flags & 0xffffffffu));
     lua_setfield(lua, -2, "low");
+    return 1;
   }
+#endif
+  lua_pushinteger(lua, (lua_Integer)flags);
   return 1;
 }
 
@@ -24504,6 +24591,7 @@ static int luaopen_zlib(lua_State *lua) {
 static int luaopen_openssl(lua_State *lua) {
   lua_newtable(lua);
   vectis_lua_digest_register(lua);
+  vectis_lua_crypto_register(lua);
   lua_pushcfunction(lua, vectis_lua_openssl_version);
   lua_setfield(lua, -2, "version");
   lua_pushcfunction(lua, vectis_lua_openssl_hex_encode);
@@ -24943,8 +25031,50 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
                                               vectis_luaopen_vectis_pg_core);
   if (status != CPKT_LUA_RUNTIME_OK)
     return status;
+  status = cpkt_lua_runtime_register_c_module(
+      runtime, "vectis.sqlite.core", vectis_luaopen_vectis_sqlite_core);
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = vectis_lua_register_resource_module(runtime, "vectis.sqlite",
+                                               "vectis.sqlite");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.sql", "vectis.sql");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.pdf.core",
+                                              vectis_luaopen_vectis_pdf_core);
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.pdf", "vectis.pdf");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.png.core",
+                                              vectis_luaopen_vectis_png_core);
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.png", "vectis.png");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = cpkt_lua_runtime_register_c_module(
+      runtime, "vectis.compression.core",
+      vectis_luaopen_vectis_compression_core);
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = vectis_lua_register_resource_module(runtime, "vectis.compression",
+                                               "vectis.compression");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
   status =
       vectis_lua_register_resource_module(runtime, "vectis.pg", "vectis.pg");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = cpkt_lua_runtime_register_c_module(
+      runtime, "vectis.pg.connection.core",
+      vectis_luaopen_vectis_pg_connection_core);
   if (status != CPKT_LUA_RUNTIME_OK)
     return status;
   status = cpkt_lua_runtime_register_c_module(

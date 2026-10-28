@@ -5,7 +5,7 @@ file(MAKE_DIRECTORY "${WORK_DIR}")
 set(root "${WORK_DIR}/upgrade-seams-data")
 file(REMOVE_RECURSE "${root}")
 file(MAKE_DIRECTORY "${root}")
-set(test_env "VECTIS_UPGRADE_TEST_ROOT=${root}" "XDG_STATE_HOME=${root}/state" "XDG_CONFIG_HOME=${root}/config")
+set(test_env "VECTIS_UPGRADE_TEST_ROOT=${root}" "XDG_STATE_HOME=${root}/state" "XDG_CONFIG_HOME=${root}/config" ${EXTRA_ENV})
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env ${test_env} "${VECTIS_BIN}" "${SCRIPT}"
   RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 10)
 if(NOT result EQUAL 0 OR NOT out MATCHES "upgrade seam behavior ok")

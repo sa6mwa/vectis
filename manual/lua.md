@@ -1,7 +1,22 @@
 # Vectis Lua Surface
 
+Standalone SQLite receivers are available through `vectis.sqlite`; see
+[SQLite Lua receivers](lua-sqlite.md).
+
+[PDF reports](lua-pdf.md) provide owned documents, pages, fonts and images
+through `vectis.pdf`, with file output and explicitly materialized bytes.
+
+[PNG images](lua-png.md) provide row I/O and explicitly materialized interlaced
+decoding through `vectis.png`, including direct PNG-to-PDF composition.
+
+[Zstandard, LZ4-frame and XZ](lua-compression.md) provide bounded codec receivers
+and producer-to-consumer helpers through `vectis.compression`.
+
 App-owned [collections, storage and PostgreSQL XA](lua-storage.md) are available
 through `app:storage`, workflow XA composition and `vectis.pg`.
+
+[Standalone PostgreSQL](lua-postgres.md) adds owned connections, incremental
+rows, prepared reuse, local transactions and copied `app:pg` declarations.
 
 The `vectis` executable embeds the cpkt Lua runtime and preloads both
 dependency-native facades and Vectis-owned workflow helpers. The repository

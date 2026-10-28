@@ -147,3 +147,26 @@ local uploaded = assert(http.upload_file(
 `download_file` sets `download_path`; `upload_file` sets `upload_path`. Table
 form also accepts `path` or `local_path` as aliases when `download_path` or
 `upload_path` is not already present.
+
+## Owned ordinary HTTP sessions
+
+`vectis.http.session(defaults)` owns a reusable curl connection pool. It captures
+copied defaults/headers, merges request headers and applies the existing HTTP
+and transport status normalization. It exposes dot-call `request`, `get`, `post`,
+`put`, `patch`, `delete`, `head` and `options` methods, plus `reset()` and `close()`.
+Request methods accept a URL plus options, or an options table. Reset keeps the
+connection cache. Explicit close is idempotent; a Lua close variable also closes
+its native handle. Create it after the caller's process/fork boundary.
+
+This convenience uses the ordinary-transfer scope in [Lua curl](lua-curl.md).
+JSON/schema, MIME, SMTP and automatic retry remain on their existing helpers.
+Configuration failure returns nil,error; completed transfers return normalized
+results, retaining callback_error identity when callbacks fail.
+
+```lua
+local http = require('vectis.http')
+local api <close> = assert(http.session({timeout_ms=5000, headers={accept='text/plain'}}))
+local result = assert(api.get('https://example.com/'))
+assert(result.ok, result.error and result.error.message)
+print(result.body)
+```

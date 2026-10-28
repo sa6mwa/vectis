@@ -24,8 +24,11 @@ The older declaration counts below remain inventory assistance only.
 
 PostgreSQL checked-result retrieval is available and used by the implemented
 `vectis.pg` managed XA borrow adapter; it is no longer an upstream blocker.
-Standalone PostgreSQL connection/cursor and SQLite convenience receivers remain
-unfinished, as do their full direct Lua bindings. App-owned collections, XA and
+Standalone PostgreSQL connections/cursors and SQLite standalone/app-owned
+receivers are implemented under the
+[useful-facade scope](useful-dependency-lua-spec.md), with scoped evidence in
+[the current progress record](useful-dependency-lua-progress.md).
+App-owned collections, XA and
 receipt dispatch are implemented components, not evidence of full lockdc API
 coverage. Typed gzip printf/vprintf is historical candidate work; it needs a
 concrete application use case before inclusion. The pslog C-parity contract is withdrawn; its omitted native operations
@@ -68,13 +71,13 @@ and do not decide pointer ownership; they are inventory assistance only.
 | Initial group | Declaration/signature entries | Binding investigation |
 | --- | ---: | --- |
 | libvectis | 603 | Receiver/config/callback/free-function mapping pending beyond existing workflows. |
-| OpenSSL native/import plus C89 adapters | 6593 | Crypto helpers and new digests are a subset; object, provider, BIO/SSL and callback families pending. |
+| OpenSSL native/import plus C89 adapters | 6593 historical entries | Digest/HMAC helpers, reusable private/public/certificate keys and materialized authenticated AES-GCM are implemented. Unused provider/BIO/SSL object graphs are outside the current useful-surface scope. |
 | zlib | 88 | Materialized and bounded file helpers; public C89 streaming engine, callback transforms and bounded incremental Lua receivers implemented. Owned gzip FILEs, raw init/copy/end/control operations, retained typed IO, parameter output, native bounds, gzip-header fields and reset/copy lifetimes, bounded back-inflate and independent window locks are tested. Captured Lua allocators, invoking-coroutine/GC teardown and deterministic callback OOM are implemented. All eight caller-buffer transforms, native-width checksum/combine/operator forms and readonly CRC-table receiver mappings have focused C/normal/packed and memory evidence. Typed gz formatting and final semantic/platform/package review remain pending; no full-surface approval. |
-| XML selected families | 970 | Current parse/write/serialize subset; DOM, reader/writer, schemas/XPath and remaining imported families pending. |
-| SQLite C89 | 278 | No shipped Lua database facade yet; reviewed convenience spec remains the authority. |
-| PostgreSQL C89 | 200 historical entries | Public checked retrieval is available in cpktdb 0.3.1 and used by the delivered managed XA SQL adapter. Standalone connection/cursor convenience receivers and complete direct dependency bindings remain unfinished. |
-| PDF C89 | 290 | Document/page/image/annotation and typed ownership mappings pending. |
-| PNG | 256 | Constructors, row/progressive IO, transforms, metadata and error/ownership mappings pending. |
+| XML selected families | 970 | Mapped parse/write/serialize plus owned DOM editing, element/scalar XPath and incremental SAX are delivered. Unused schema/XSLT and other node graphs are outside the useful slice. |
+| SQLite C89 | 278 historical entries | Useful standalone/app-owned open, prepared binding, incremental rows, reset, exec and transactions are implemented; the current useful-surface spec supersedes exhaustive parity. |
+| PostgreSQL C89 | 200 historical entries | Public checked retrieval supports the managed XA adapter and implemented standalone connection/cursor/prepared/local-transaction/app ownership. Native/normal/packed live and allocation evidence covers the useful slice; exhaustive direct API parity is superseded. |
+| PDF C89 | 290 historical entries | Useful report documents, pages, text/geometry, fonts, PNG/JPEG file/memory images and file/materialized output are implemented. Typed ownership and errors have native/normal/packed and allocation-failure evidence; annotations and exhaustive parity are outside the current useful-surface spec. |
+| PNG | 256 historical entries | Useful bounded row I/O and explicitly materialized Adam7 decode/RGB-RGBA-gray8 encode are implemented with metadata, ownership and callback/error evidence. Arbitrary chunks and exhaustive parity are outside current scope. |
 | GSSAPI C89 | 136 | Credential/context/buffer/OID/name domains and cleanup mappings pending. |
 | SASL C89 | 55 | Connection/property/random/interaction mappings pending; plugin family needs its own inventory. |
 | libssh2 C89 | 138 | Existing SSH/SFTP convenience subset; raw native sessions/channels and other families pending. |

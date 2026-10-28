@@ -42,6 +42,11 @@ local dependency_modules = {
 }
 
 local workflow_modules = {
+  pdf = "vectis.pdf",
+  png = "vectis.png",
+  compression = "vectis.compression",
+  sql = "vectis.sql",
+  sqlite = "vectis.sqlite",
   pg = "vectis.pg",
   digest = "vectis.digest",
   buffer = "vectis.buffer",
@@ -77,7 +82,7 @@ local workflow_modules = {
 -- Only exact root absence or a known native core absent from a source-only
 -- rock is optional. Preserve loader exceptions, including table identities.
 local optional_native = {
-  ["vectis.pg"] = { ["vectis.pg.core"] = true },
+  ["vectis.pg"] = { ["vectis.pg.core"] = true, ["vectis.pg.connection.core"] = true },
   lockdc = { ["lockdc.core"] = true }, lonejson = { ["lonejson.core"] = true },
   ["lockdc.postgres"] = { ["lockdc.core"] = true },
   pslog = { ["pslog.core"] = true }, lql = { ["lql.core"] = true },
@@ -88,6 +93,11 @@ local optional_native = {
   ["vectis.dsv"] = { ["vectis.dsv.core"] = true },
   ["vectis.xml"] = { ["vectis.xml.core"] = true },
   ["vectis.digest"] = { ["vectis.digest.core"] = true },
+  ["vectis.sql"] = { ["vectis.sqlite.core"] = true },
+  ["vectis.sqlite"] = { ["vectis.sqlite.core"] = true },
+  ["vectis.pdf"] = { ["vectis.pdf.core"] = true },
+  ["vectis.png"] = { ["vectis.png.core"] = true },
+  ["vectis.compression"] = { ["vectis.compression.core"] = true },
   ["vectis.buffer"] = { ["vectis.buffer.core"] = true },
 }
 local helper_dependencies = {

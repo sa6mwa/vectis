@@ -1,6 +1,13 @@
 # SQLite and PostgreSQL receiver facades
 
-Status: component design under the complete public API facade goal. The
+Historical design: the [reviewed useful dependency scope](useful-dependency-lua-spec.md)
+is now authoritative. SQLite and PostgreSQL standalone/app-owned receivers are
+implemented. See [current evidence](useful-dependency-lua-progress.md),
+[SQLite](../manual/lua-sqlite.md) and [PostgreSQL](../manual/lua-postgres.md). Exhaustive native API parity
+requirements below are superseded, as are statements that the checked-retrieval
+prerequisite or PostgreSQL XA ownership are still unresolved.
+
+Historical status (superseded): component design under the complete public API facade goal. The
 [complete facade specification](lua-public-api-completeness-spec.md) supersedes
 earlier scope exclusions and delivery sequencing here. Its final sequence is
 implementation with focused debug tests, full build, then review with debug-only

@@ -957,10 +957,12 @@ vectis_status vectis_zlib_buffer_transform(int operation, int size_width,
                                            error);
   if (status != VECTIS_OK)
     return status;
+#if SIZE_MAX > ULONG_MAX
   if (!size_width && ((uint64_t)input_size > (uint64_t)ULONG_MAX ||
                       (uint64_t)output_size > (uint64_t)ULONG_MAX))
     return raw_error(error, VECTIS_ERR_INVALID, 0,
                      "buffer capacity outside uLong domain");
+#endif
   a = (uintptr_t)input;
   b = (uintptr_t)output;
   if (input_size && output_size &&

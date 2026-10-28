@@ -76,6 +76,9 @@ function M.stream_json(opts)
   return core.perform(opts)
 end
 
+M.session = core.session
+M.multi = core.multi
+
 M.core = core
 
 return M

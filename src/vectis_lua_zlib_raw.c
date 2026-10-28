@@ -512,8 +512,10 @@ static int header_create_driver(lua_State *L) {
   raw_field(L, 2, "time");
   if (!lua_isnil(L, -1)) {
     value = size_argument(L, -1);
+#if SIZE_MAX > ULONG_MAX
     if ((uint64_t)value > (uint64_t)ULONG_MAX)
       luaL_error(L, "gzip time exceeds uLong");
+#endif
     options.fields.time = (uLong)value;
   }
   lua_pop(L, 1);

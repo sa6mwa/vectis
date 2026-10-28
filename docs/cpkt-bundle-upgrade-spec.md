@@ -1,6 +1,12 @@
 # Independent cpkt bundle and lifecycle migration
 
-Status: reviewed implementation contract, 2026-10-27. This supersedes the
+Status: original migration contract, reviewed 2026-10-27.
+The upstream facade policies and LQL pin in its historical input table are
+superseded by `upstream-lua-facades.md`, `useful-dependency-lua-spec.md` and the
+user-authorized `liblql-0.4.0-upgrade.md`. No withdrawn provider adaptation is
+retained or reintroduced.
+
+Original review: This supersedes the
 monolithic c.pkt.systems dependency layout and the previous hosted Darwin gate.
 Implementation and verification are not yet complete. Preserve the existing
 uncommitted facade/streaming work on the named `init` development branch.

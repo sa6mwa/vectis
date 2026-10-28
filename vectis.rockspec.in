@@ -12,8 +12,8 @@ description = {
 Vectis Lua helpers for applications that run the Vectis facade surface from a
 Lua 5.5 environment. Native dependency modules remain dependency-owned and must
 be provided by the embedding Vectis binary or separately installed facades.
-LQL requires the Vectis-adapted native lql.core contract documented in the manual;
-the stock liblql 0.3.0 binding does not provide the local ownership/OOM repairs.
+LQL uses the released liblql 0.4.0 native facade unchanged, including scoped
+cleanup and protected callback ownership.
 Stateful manual outbox renewal requires liblockdc 0.23.0 or later. Managed
 PostgreSQL XA also requires the matching linked provider and Vectis native core.
   ]],
@@ -38,6 +38,11 @@ build = {
     ["vectis.workflow"] = "lua/vectis/workflow.lua",
     ["vectis.storage"] = "lua/vectis/storage.lua",
     ["vectis.pg"] = "lua/vectis/pg.lua",
+    ["vectis.sql"] = "lua/vectis/sql.lua",
+    ["vectis.sqlite"] = "lua/vectis/sqlite.lua",
+    ["vectis.pdf"] = "lua/vectis/pdf.lua",
+    ["vectis.png"] = "lua/vectis/png.lua",
+    ["vectis.compression"] = "lua/vectis/compression.lua",
     ["vectis.lockd"] = "lua/vectis/lockd.lua",
     ["vectis.log"] = "lua/vectis/log.lua",
     ["vectis.mqtt"] = "lua/vectis/mqtt.lua",

@@ -238,7 +238,10 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Add isolated lanes, quotas/permits, automatic restart policies, shared-runtime leadership and managed cross-process replies under the [remaining specification](docs/supervisor-workflow-spec.md#remaining-implementation-requirements).
 - [ ] Migrate C-owned worker descriptors onto logical scopes while preserving their native service interfaces.
 
-SQLite, PostgreSQL, libharu/PDF and libpng Lua facades remain a separate task.
+SQLite, standalone PostgreSQL, PDF/PNG, Zstd/LZ4-frame/XZ, curl sessions/multi,
+OpenSSL keys/AES-GCM and XML DOM/XPath/SAX are implemented; see
+[the useful-surface evidence](docs/useful-dependency-lua-progress.md). Archive
+awaits a public dependency target without the deferred LZO linkage.
 The proposed remote-execution SSH adapter remains parked; existing SSH/SFTP/SCP
 APIs are implemented.
 

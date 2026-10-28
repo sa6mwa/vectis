@@ -1,4 +1,69 @@
 if(VECTIS_BUILD_TESTS AND VECTIS_BUILD_BINARY)
+  add_test(NAME vectis_lua_lql_upgrade
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/lql-upgrade"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/lql_upgrade.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_lql_upgrade PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_pg_connection_local
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/pg-connection-local"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/pg_connection_local.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_pg_connection_local PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_xml_objects
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/xml-objects"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/xml_objects.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_xml_objects PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  find_program(vectis_curl_test_go NAMES go)
+  if(vectis_curl_test_go)
+    set(curl_http_fixture "${CMAKE_CURRENT_BINARY_DIR}/curl_http_fixture")
+    add_custom_command(OUTPUT "${curl_http_fixture}"
+      COMMAND ${CMAKE_COMMAND} -E env "GOCACHE=${CMAKE_CURRENT_BINARY_DIR}/go-cache"
+        CGO_ENABLED=0 GOTOOLCHAIN=local "${vectis_curl_test_go}" build -trimpath
+        -o "${curl_http_fixture}" "${CMAKE_SOURCE_DIR}/tests/fixtures/curl_http.go"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/fixtures/curl_http.go" VERBATIM)
+    add_custom_target(vectis_curl_http_fixture ALL DEPENDS "${curl_http_fixture}")
+    add_test(NAME vectis_lua_curl_handles COMMAND "${CMAKE_COMMAND}"
+      "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>" "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DCURL_HTTP_FIXTURE=${curl_http_fixture}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/curl-handles"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/curl_handles.cmake")
+    set_tests_properties(vectis_lua_curl_handles PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
+  endif()
+  add_test(NAME vectis_lua_crypto
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/crypto"
+      "-DCRYPTO_FIXTURE=$<TARGET_FILE:vectis_unit_crypto>"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/crypto.cmake")
+  set_tests_properties(vectis_lua_crypto PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 20 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_png
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/png"
+      "-DEXTRA_ENV=VECTIS_PNG_FIXTURES=${CMAKE_SOURCE_DIR}/tests/fixtures/png"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/png.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_png PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_compression
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/compression"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/compression.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_compression PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_pdf
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/pdf"
+      "-DEXTRA_ENV=VECTIS_PDF_FIXTURES=${CMAKE_SOURCE_DIR}/tests/fixtures/pdf"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/pdf.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_pdf PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_sqlite
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/sqlite"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/sqlite.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_sqlite PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_upstream_facades
     COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
       "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/upstream-facades"
@@ -66,6 +131,14 @@ if(VECTIS_BUILD_BINARY)
     endif()
     add_test(NAME vectis_postgres_xa_live COMMAND bash
       "${CMAKE_SOURCE_DIR}/scripts/test_postgres_xa.sh" "$<TARGET_FILE:vectis_bin>")
+    add_test(NAME vectis_postgres_connection_live COMMAND "${CMAKE_COMMAND}" -E env
+      "VECTIS_POSTGRES_TEST_SCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/pg_connection.lua"
+      "VECTIS_POSTGRES_NATIVE_TEST=$<TARGET_FILE:vectis_test_pg_connection_live>"
+      "VECTIS_POSTGRES_OOM_TEST=$<TARGET_FILE:vectis_test_pg_connection_lua_oom>"
+      bash "${CMAKE_SOURCE_DIR}/scripts/test_postgres_xa.sh" "$<TARGET_FILE:vectis_bin>")
+    set_tests_properties(vectis_postgres_connection_live PROPERTIES
+      LABELS "service;postgres;lua;packed" TIMEOUT 90 RUN_SERIAL TRUE
+      ENVIRONMENT "XDG_RUNTIME_DIR=$ENV{XDG_RUNTIME_DIR};XDG_CONFIG_HOME=$ENV{XDG_CONFIG_HOME};XDG_CACHE_HOME=$ENV{XDG_CACHE_HOME}")
     set_tests_properties(vectis_postgres_xa_live PROPERTIES
       LABELS "service;postgres;xa;packed" TIMEOUT 90 RUN_SERIAL TRUE
       # Rootless Podman is a workstation prerequisite. Its runtime/network state
@@ -1118,7 +1191,15 @@ if(VECTIS_BUILD_BINARY)
     vectis_smith_cli_stream
     vectis_opcua_lua_cleanup vectis_sus_lua_lifetime vectis_app_source_lifetime
     vectis_audio_lua_validation)
-  foreach(helper vectis_unit_fork_exit vectis_lua_http_behavior vectis_bench_fixture)
+  foreach(helper vectis_unit_fork_exit vectis_lua_http_behavior vectis_bench_fixture
+      vectis_unit_lql_worker vectis_unit_lql_lua_oom
+      vectis_unit_sqlite vectis_unit_sqlite_failures vectis_unit_sqlite_lua_oom
+      vectis_unit_pdf vectis_unit_pdf_lua_oom vectis_unit_png vectis_unit_png_lua_oom
+      vectis_unit_compression vectis_unit_compression_lua_oom
+      vectis_unit_crypto vectis_unit_crypto_lua_oom
+      vectis_unit_xml_objects vectis_unit_xml_objects_lua_oom
+      vectis_unit_curl vectis_unit_curl_lua_oom vectis_curl_http_fixture
+      vectis_test_pg_connection_live vectis_test_pg_connection_lua_oom)
     if(TARGET ${helper})
       add_dependencies(vectis_failures_fast ${helper})
     endif()

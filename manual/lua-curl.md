@@ -145,3 +145,87 @@ JSON uploads use lonejson's native seek callback for body-preserving redirects
 and its rewind API for configured retries. Replay does not measure or buffer the
 JSON document. One-shot sources cannot be replayed and return a curl rewind
 error; they are not silently materialized to make retries possible.
+
+## Reusable sessions and concurrent ordinary transfers
+
+`curl.session()` owns a native easy handle and exposes `perform(opts)`, `reset()`
+and `close()`. Every perform clears prior transfer settings and results while
+preserving libcurl's connection cache. Reset clears settings/results and retains
+connections; close releases the cache. Handles belong to their creating process
+and thread; construct them after the applicable fork boundary.
+
+These receivers accept ordinary transfer options listed above: URL/protocols,
+method, headers, body, upload, upload_path/body_path, download_path, transport,
+TLS, proxy, authentication and SSH key options. MIME, SMTP, schema mapping and
+automatic retry remain on existing helpers; unsupported receiver options return
+`nil, error` before transfer initiation. No automatic replay is added. Options
+and headers are copied per request. Files are streamed through bounded buffers.
+
+Additional options:
+
+- `read(capacity)` returns 1..capacity bytes, nil for EOF, or `nil, error` for
+  failure. Capacity is at most 65536. Empty or oversized strings fail. A read
+  callback selects upload mode; use `method='POST'` for HTTP POST. Body strings,
+  upload files and read callbacks are mutually exclusive.
+- `write(bytes)` receives chunks of at most 65536 bytes and must return true or
+  `nil, error`. It replaces response-body collection, so `result.body` is absent
+  and `result.streamed` is true. There is no cumulative callback body ceiling.
+  It is mutually exclusive with download_path. Headers retain the 64 KiB limit.
+- `progress(record)` returns true to continue or false to cancel. The record
+  contains download_total, downloaded, upload_total and uploaded byte counts.
+
+Callbacks run synchronously on the invoking Lua state and cannot yield.
+Exceptions and explicit callback failures abort the transfer. The original error
+object is available as result.callback_error and result.error; native/callback
+status also appears in result.failure. Reentry or close during a callback fails
+the transfer even when the callback catches that error. Close/GC never invokes
+user callbacks. File read/write/close errors are observable. One-shot callback
+uploads cannot be replayed for a body-preserving redirect and may report a native
+rewind error; they are never silently collected to enable replay.
+
+`curl.multi()` owns concurrent easy transfers:
+
+- `add(opts)` captures a request and returns its transfer ID.
+- `step()` advances available work without waiting and returns running count.
+- `poll(timeout_ms)` waits for readiness for 0..60000 ms (default zero), returning
+  a readiness count. Queued completions cause an immediate zero return; drain
+  them before waiting. Poll does not invoke Lua callbacks.
+- `completions(limit)` returns up to limit result tables with IDs (default 64;
+  valid range 1..64). Use a small limit to drain buffered results within the
+  Lua memory budget, and continue until the queue is empty. Transport
+  and callback failures are per transfer. Successful copying acknowledges the
+  selected batch; an allocation failure leaves all completions queued for retry.
+- `close()` cancels/releases outstanding requests without invoking Lua callbacks.
+
+At most 64 requests may be active or awaiting completion consumption together.
+The caller owns advancement, deadlines and draining. Vectis creates no worker
+threads and does not register on Kore's event loop; native resolver work is
+governed by the bundled libcurl build.
+
+```lua
+local curl = require('curl')
+local multi = assert(curl.multi())
+local ids = {}
+for _, url in ipairs({'https://example.com/', 'https://example.org/'}) do
+  ids[assert(multi:add({url=url, timeout_ms=5000}))] = url
+end
+repeat
+  local running = assert(multi:step())
+  for _, result in ipairs(assert(multi:completions())) do
+    print(ids[result.id], result.status, result.ok)
+  end
+  if running == 0 then break end
+  assert(multi:poll(100))
+until false
+assert(multi:close())
+```
+
+The C API in `vectis/curl.h` exposes separate session/multi receiver shells.
+A synchronous configuration hook uses supported public libcurl options; bounded
+C read/write/progress hooks must return status rather than longjmp. Configurers
+must only set options and must not replace the engine's callbacks/private/error
+storage. Hook context and option storage remain caller-owned until reset/close
+or completion consumption. Results borrow native-owned data during that period.
+C multi completion(offset) peeks a zero-based queue entry; consume(count)
+acknowledges a successfully copied prefix. This separation preserves results
+when a caller's allocation/copy fails.

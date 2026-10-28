@@ -2,6 +2,7 @@
 #include "vectis_internal.h"
 #include "vectis_opcua_log.h"
 #include "vectis_pouch_crypto.h"
+#include "vectis_sql_lifecycle.h"
 #include "vectis_supervisor_internal.h"
 #include <vectis/proxy.h>
 
@@ -424,6 +425,8 @@ typedef struct vectis_spill_writer {
 } vectis_spill_writer;
 
 typedef struct vectis_app_impl {
+  vectis_sql_app_resource *sql_resources;
+  int sql_declarations_frozen;
   vectis_fork_exit_fn fork_exit;
   void *fork_exit_userdata;
   vectis_supervisor_host *supervisor_host;
@@ -10358,6 +10361,86 @@ static void vectis_consumer_service_detach(vectis_consumer_service_impl *impl) {
   impl->next_owned = NULL;
 }
 
+static void vectis_sql_resources_invalidate(vectis_app_impl *impl, int detach) {
+  vectis_sql_app_resource *entry = impl->sql_resources;
+  while (entry != NULL) {
+    vectis_sql_app_resource *next = entry->next;
+    entry->invalidate(entry->context);
+    if (detach) {
+      entry->app = NULL;
+      entry->next = NULL;
+    }
+    entry = next;
+  }
+  if (detach)
+    impl->sql_resources = NULL;
+}
+
+vectis_status vectis_app_sql_check_idle(vectis_app *app, vectis_error *error) {
+  vectis_sql_app_resource *entry;
+  vectis_status status = VECTIS_OK;
+  vectis_error current;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  for (entry = ((vectis_app_impl *)app->impl)->sql_resources; entry != NULL;
+       entry = entry->next) {
+    vectis_status checked = entry->check_idle(entry->context, &current);
+    if (checked != VECTIS_OK && status == VECTIS_OK) {
+      status = checked;
+      if (error != NULL)
+        *error = current;
+    }
+  }
+  return status;
+}
+vectis_status vectis_sql_app_attach(vectis_app *app,
+                                    vectis_sql_app_resource *resource,
+                                    vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_sql_app_resource *entry;
+  if (app == NULL || app->impl == NULL || resource == NULL ||
+      resource->name == NULL || resource->name[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "app and named SQL declaration are required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (impl->sql_declarations_frozen) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "SQL declarations must precede app startup");
+    return VECTIS_ERR_STATE;
+  }
+  for (entry = impl->sql_resources; entry != NULL; entry = entry->next) {
+    if (strcmp(entry->name, resource->name) == 0) {
+      vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                       "duplicate SQL declaration name");
+      return VECTIS_ERR_CONFLICT;
+    }
+  }
+  resource->next = impl->sql_resources;
+  resource->app = app;
+  impl->sql_resources = resource;
+  return VECTIS_OK;
+}
+void vectis_sql_app_detach(vectis_sql_app_resource *resource) {
+  vectis_sql_app_resource **link;
+  if (resource->app == NULL)
+    return;
+  link = &((vectis_app_impl *)resource->app->impl)->sql_resources;
+  while (*link != NULL && *link != resource)
+    link = &(*link)->next;
+  if (*link == resource)
+    *link = resource->next;
+  resource->app = NULL;
+  resource->next = NULL;
+}
+int vectis_sql_app_running(vectis_app *app) {
+  return app != NULL && app->impl != NULL &&
+         ((vectis_app_impl *)app->impl)->started;
+}
+
 static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   if (impl == NULL) {
     return;
@@ -10439,6 +10522,8 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   if (impl == NULL) {
     return;
   }
+
+  vectis_sql_resources_invalidate(impl, 1);
 
   if (impl->kore_child_control_fd >= 0) {
     (void)close(impl->kore_child_control_fd);
@@ -12042,6 +12127,7 @@ int vectis_internal_fork_exit(vectis_app *app, const char *role) {
   userdata = impl->fork_exit_userdata;
   impl->fork_exit = NULL;
   impl->fork_exit_userdata = NULL;
+  vectis_sql_resources_invalidate(impl, 0);
   if (!handler)
     return 0;
   /* This process only owns its forked copies. A worker exit/respawn must not
@@ -12170,6 +12256,8 @@ void vectis_destroy(vectis_app *app) {
     return;
   }
   impl = (vectis_app_impl *)app->impl;
+  if (impl != NULL && vectis_app_sql_check_idle(app, NULL) != VECTIS_OK)
+    return;
   if (impl != NULL && vectis_supervisor_host_dispatching(impl->supervisor_host))
     return;
   if (impl != NULL && impl->started) {
@@ -12609,6 +12697,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
+  status = vectis_app_sql_check_idle(app, error);
+  if (status != VECTIS_OK)
+    return status;
+  impl->sql_declarations_frozen = 1;
   impl->pouch_settings_frozen = 1;
 
   status = vectis_validate_lockd_startable(impl, error);
@@ -12871,6 +12963,9 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
+  status = vectis_app_sql_check_idle(app, error);
+  if (status != VECTIS_OK)
+    return status;
   if (vectis_supervisor_host_dispatching(impl->supervisor_host)) {
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "app stop is not allowed inside a supervisor callback");
@@ -12900,6 +12995,8 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
     impl->kore_child_reaped = 0;
   }
   (void)pthread_mutex_unlock(&impl->mutex);
+
+  vectis_sql_resources_invalidate(impl, 0);
 
   vectis_error_clear(&local_error);
   status = vectis_app_request_stop_consumer_services(impl, &local_error);
@@ -13033,6 +13130,10 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
+  status = vectis_app_sql_check_idle(app, error);
+  if (status != VECTIS_OK)
+    return status;
+  impl->sql_declarations_frozen = 1;
   impl->pouch_settings_frozen = 1;
 
   status = vectis_validate_lockd_startable(impl, error);
@@ -13105,6 +13206,8 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
   (void)pthread_mutex_unlock(&impl->mutex);
 
   status = vectis_internal_kore_run(&kore_config, error);
+
+  vectis_sql_resources_invalidate(impl, 0);
 
   (void)pthread_mutex_lock(&impl->mutex);
   impl->started = 0;

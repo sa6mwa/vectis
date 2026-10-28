@@ -529,4 +529,31 @@ function M.client(defaults)
   return client
 end
 
+-- An explicitly owned connection pool for ordinary HTTP requests. Native
+-- construction belongs after the caller's process/fork boundary.
+function M.session(defaults)
+  defaults = copy_table(defaults)
+  if defaults.headers ~= nil then defaults.headers = copy_table(defaults.headers) end
+  local handle, err = curl.session()
+  if not handle then return nil, err end
+  local client = {}
+  function client.request(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    default_protocols(opts, "http,https")
+    local result, failure = handle:perform(opts)
+    if not result then return nil, failure end
+    return M.normalize(result)
+  end
+  for _, method in ipairs({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}) do
+    client[method:lower()] = function(first, second)
+      local opts = opts_from(first, second)
+      opts.method = opts.method or method
+      return client.request(opts)
+    end
+  end
+  function client.reset() return handle:reset() end
+  function client.close() return handle:close() end
+  return setmetatable(client, {__close = function() handle:close() end})
+end
+
 return M

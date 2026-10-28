@@ -64,3 +64,12 @@ No implementation proof or full-surface approval is claimed by this review.
 Component implementation reviews must still check exact error/ownership behavior,
 and record any newly discovered public-contract blocker before substituting a
 different behavior.
+
+## Curl scope clarification, 2026-10-28
+
+The initial phrase "existing documented options" included helper-specific MIME,
+SMTP, schema and retry policies beyond ordinary transfer ownership. The user
+explicitly selected ordinary receivers with existing transport/TLS/proxy and
+read/write/progress callbacks, retaining those families on existing helpers.
+The specification now states that boundary and the concrete session/multi,
+buffering, callback, completion-copy and Vectis HTTP ownership contracts.

@@ -1,4 +1,11 @@
 #include <cstring>
+#include <vectis/compression.h>
+#include <vectis/crypto.h>
+#include <vectis/curl.h>
+#include <vectis/pdf.h>
+#include <vectis/png.h>
+#include <vectis/sqlite.h>
+#include <vectis/xml.h>
 
 #include <vectis/buffer.h>
 #include <vectis/digest.h>

@@ -2,7 +2,8 @@
 
 `vectis/storage.h` adds app-configured factories for upstream C89 collection
 and managed XA receiver shells. `vectis/pg.h` adds a parameterized PostgreSQL
-XA borrow adapter with explicitly materialized results and copied diagnostics.
+XA borrow adapter with explicitly materialized results and copied diagnostics,
+and independent PostgreSQL connections/cursors with checked single-row drainage.
 See [storage and PostgreSQL XA](lua-storage.md) for ownership, readiness and
 C/Lua composition rules.
 
@@ -34,6 +35,23 @@ Core conventions:
   future receiver methods can consume a slot without extending the layout.
 
 Major groups:
+
+- Useful dependency receivers: `vectis/sql.h` and `vectis/sqlite.h` provide exact
+  SQL values, statements, transactions and app-owned SQLite declarations;
+  `vectis/pg.h` adds standalone PostgreSQL connections, async single-row cursors,
+  prepared views and app ownership independently of XA borrows. See
+  [SQLite](lua-sqlite.md) and [PostgreSQL](lua-postgres.md).
+- Reports/images/codecs: `vectis/pdf.h` owns PDF documents/pages/fonts/images;
+  `vectis/png.h` provides noninterlaced row flow and explicitly materialized
+  interlaced images; `vectis/compression.h` provides bounded Zstd/LZ4-frame/XZ
+  flow. See [PDF](lua-pdf.md), [PNG](lua-png.md), [compression](lua-compression.md).
+- Transfer/crypto/XML: `vectis/curl.h` owns reusable sessions and caller-driven
+  multi transfers with bounded callbacks; `vectis/crypto.h` owns loaded keys
+  and explicitly materialized authenticated AES-GCM; `vectis/xml.h` owns DOM
+  editing, element/scalar XPath and caller-fed SAX. Their C contracts define
+  borrowed outputs, callback status/ownership and process/thread confinement;
+  bindings copy outputs into Lua under protected calls. See [curl](lua-curl.md),
+  [OpenSSL](lua-openssl.md) and [XML](lua-xml.md).
 
 - Runtime/server: `vectis_app`, `vectis_server_config`,
   `vectis_register_route()`, foreground `vectis_run()`, process-backed

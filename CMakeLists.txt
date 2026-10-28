@@ -294,6 +294,13 @@ set(vectis_lockdc_static_target lockdc::static)
 set(vectis_lockdc_shared_target lockdc::shared)
 
 set(vectis_static_dependency_links
+  cpkt::pdf
+  cpkt::png
+  cpkt::zstd
+  cpkt::lz4
+  cpkt::lzma
+  cpkt::sqlite
+  cpkt::postgres
   lockdc::postgres_static
   cpkt::opcua
   cpkt::sus
@@ -315,6 +322,13 @@ set(vectis_static_dependency_links
   ZLIB::ZLIB
 )
 set(vectis_shared_dependency_links
+  cpkt::pdf_shared
+  cpkt::png_shared
+  cpkt::zstd_shared
+  cpkt::lz4_shared
+  cpkt::lzma_shared
+  cpkt::sqlite_shared
+  cpkt::postgres_shared
   lockdc::postgres_shared
   cpkt::opcua_shared
   cpkt::sus_shared
@@ -337,6 +351,14 @@ set(vectis_shared_dependency_links
 )
 
 set(vectis_public_headers
+  include/vectis/pdf.h
+  include/vectis/curl.h
+  include/vectis/xml.h
+  include/vectis/crypto.h
+  include/vectis/png.h
+  include/vectis/compression.h
+  include/vectis/sql.h
+  include/vectis/sqlite.h
   include/vectis/storage.h
   include/vectis/pg.h
   include/vectis/vectis.h
@@ -355,10 +377,19 @@ set(vectis_public_headers
 )
 
 set(vectis_sources
+  src/vectis_pdf.c
+  src/vectis_curl.c
+  src/vectis_xml.c
+  src/vectis_xml_sax.c
+  src/vectis_crypto.c
+  src/vectis_png.c
+  src/vectis_compression.c
+  src/vectis_sqlite.c
   src/vectis.c
   src/vectis_supervisor.c
   src/vectis_storage_wait.c
   src/vectis_pg.c
+  src/vectis_pg_connection.c
   src/vectis_digest.c
   src/vectis_buffer.c
   src/vectis_zlib.c
@@ -723,6 +754,11 @@ if(VECTIS_BUILD_BINARY)
   )
 
   set(vectis_cli_lua_resources
+    "${CMAKE_SOURCE_DIR}/lua/vectis/pdf.lua|vectis/pdf.lua|vectis.pdf|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/png.lua|vectis/png.lua|vectis.png|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/compression.lua|vectis/compression.lua|vectis.compression|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/sql.lua|vectis/sql.lua|vectis.sql|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/sqlite.lua|vectis/sqlite.lua|vectis.sqlite|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis.lua|vectis.lua|vectis|vectis"
     "${CMAKE_SOURCE_DIR}/lua/curl/init.lua|curl/init.lua|curl|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/auth.lua|vectis/auth.lua|vectis.auth|vectis"
@@ -1061,10 +1097,18 @@ const unsigned char vectis_cli_lua_sources_data[] = {
   vectis_apply_relocatable_paths(vectis_sus_lua)
 
   set(vectis_binary_runner_sources
+    src/vectis_lua_pdf.c
+    src/vectis_lua_curl.c
+    src/vectis_lua_xml_objects.c
+    src/vectis_lua_crypto.c
+    src/vectis_lua_png.c
+    src/vectis_lua_compression.c
+    src/vectis_lua_sqlite.c
     src/vectis_cli.c
     src/vectis_lua_supervisor.c
     src/vectis_lua_digest.c
     src/vectis_lua_pg.c
+    src/vectis_lua_pg_connection.c
     $<TARGET_OBJECTS:vectis_buffer_lua>
     src/vectis_lua_zlib_stream.c
     src/vectis_lua_zlib_raw.c

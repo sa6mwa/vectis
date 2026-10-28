@@ -22,7 +22,9 @@ an option is available or a release is approved.
 | [Service runtime lifecycle](service-runtime-lifecycle-spec.md) | Implemented topology, fork safety, delayed materialization and shutdown; concrete remaining worker extensions. |
 | [Supervisor/workflow specification](supervisor-workflow-spec.md) | Implemented serial scopes, channels and receipt dispatch; separately listed stronger remaining contracts. |
 | [Lua coverage](lua-coverage-matrix.md) | Supported native/convenience surfaces, behavior evidence and deliberate exclusions. |
+| [LQL 0.4.0 upgrade](liblql-0.4.0-upgrade.md) | Released facade, cleanup contracts and integration verification. |
 | [Upstream Lua facade boundary](upstream-lua-facades.md) | Unmodified pslog/LQL/MDF, archived handoffs, preserved Vectis convenience APIs and exact upstream failure-contract gaps. |
+| [Useful dependency Lua specification](useful-dependency-lua-spec.md) | Reviewed scope for dependencies without upstream Lua; [review findings](useful-dependency-lua-review.md) and [implementation progress](useful-dependency-lua-progress.md). |
 | [SUS/audio contract](lua-sus-audio-contract.md) | Implemented receiver/worker surfaces, streaming ownership and opt-in model/device gates. |
 | [CAI/Smith integration](cai-agent-vectis-integration.md) | Implemented host ownership, bounded terminal presentation and durable sessions. |
 | [Packed assets/auth](pack-embedded-filesystem-auth-spec.md) | Implemented Linux pack, WebDAV and ordered native authentication. |
@@ -50,14 +52,15 @@ The [remaining supervisor contracts](supervisor-workflow-spec.md#remaining-imple
 include pull payloads, automatic blocking-handler renewal, kind-filtered intake,
 isolated lanes, quotas/restart policy,
 shared-runtime leadership and managed cross-process replies. Their existence
-does not undo the delivered receipt/wake path. The
-[SQLite/PostgreSQL receiver design](sql-database-facades-spec.md) specifies the
-separately scoped standalone database convenience surfaces. cpktdb 0.3.1
-resolves the checked-retrieval prerequisite; the managed PostgreSQL XA adapter
-is delivered as documented above. PDF and PNG remain unfinished components of
-the [complete public API goal](lua-public-api-completeness-spec.md). The proposed
-SSH remote-execution adapter is parked indefinitely on the
-[future roadmap](../TODO.md#future-roadmap-ssh-remote-execution).
+does not undo the delivered receipt/wake path. The standalone/app-owned SQLite and PostgreSQL receivers, PDF, PNG,
+Zstd/LZ4-frame/XZ, curl sessions/multi, reusable OpenSSL keys/AES-GCM and XML
+DOM/XPath/SAX are implemented under the
+[useful dependency scope](useful-dependency-lua-spec.md); see its
+[implementation and verification evidence](useful-dependency-lua-progress.md).
+The older exhaustive public-API goal and database design are historical.
+Archive remains deferred because the selected public target requires LZO, which
+the user deferred. The proposed SSH remote-execution adapter remains parked on
+the [future roadmap](../TODO.md#future-roadmap-ssh-remote-execution).
 
 ## Historical evidence and superseded plans
 
