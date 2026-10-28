@@ -5,6 +5,9 @@ the `vectis` runner. Vectis preloads it unchanged for applications that need
 the complete upstream logging surface. Use [`vectis.log`](lua-log.md) when the
 narrower Vectis helper defaults are enough.
 
+Vectis consumes this upstream Lua facade unchanged. Deliberately omitted C APIs
+are not added locally; see the [boundary and gap assessment](../docs/upstream-lua-facades.md).
+
 ## Entry Points
 
 - `pslog.new(output_or_opts[, opts])` creates a logger.

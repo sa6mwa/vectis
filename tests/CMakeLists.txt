@@ -1,3 +1,21 @@
+if(VECTIS_BUILD_TESTS AND VECTIS_BUILD_BINARY)
+  add_test(NAME vectis_lua_upstream_facades
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/upstream-facades"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/upstream_facades.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_upstream_facades PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_upstream_sources
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DCOMPILATION_DB=${CMAKE_BINARY_DIR}/compile_commands.json"
+      "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/upstream-sources"
+      "-Dpslog_core=${vectis_pslog_lua_source}" "-Dpslog_module=${vectis_pslog_lua_source_dir}/lua/pslog/init.lua"
+      "-Dlql_core=${vectis_liblql_lua_source}" "-Dlql_module=${vectis_liblql_lua_source_dir}/lua/lql/init.lua"
+      "-Dmdf_core=${vectis_libmdf_lua_source}" "-Dmdf_module=${vectis_libmdf_lua_source_dir}/lua/libmdf.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upstream_sources.cmake")
+  set_tests_properties(vectis_lua_upstream_sources PROPERTIES LABELS "lua;local;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+endif()
+
 if(VECTIS_BUILD_TESTS)
   if(APPLE)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)

@@ -19,6 +19,7 @@ an option is available or a release is approved.
 | [Service runtime lifecycle](service-runtime-lifecycle-spec.md) | Implemented topology, fork safety, delayed materialization and shutdown; concrete remaining worker extensions. |
 | [Supervisor/workflow specification](supervisor-workflow-spec.md) | Implemented serial scopes, channels and receipt dispatch; separately listed stronger remaining contracts. |
 | [Lua coverage](lua-coverage-matrix.md) | Supported native/convenience surfaces, behavior evidence and deliberate exclusions. |
+| [Upstream Lua facade boundary](upstream-lua-facades.md) | Unmodified pslog/LQL/MDF, archived handoffs, preserved Vectis convenience APIs and exact upstream failure-contract gaps. |
 | [SUS/audio contract](lua-sus-audio-contract.md) | Implemented receiver/worker surfaces, streaming ownership and opt-in model/device gates. |
 | [CAI/Smith integration](cai-agent-vectis-integration.md) | Implemented host ownership, bounded terminal presentation and durable sessions. |
 | [Packed assets/auth](pack-embedded-filesystem-auth-spec.md) | Implemented Linux pack, WebDAV and ordered native authentication. |

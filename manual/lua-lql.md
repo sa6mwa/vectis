@@ -4,6 +4,9 @@
 `vectis` runner. It exposes selector, projection, mutation, file filtering, and
 spooled rewrite helpers directly from liblql.
 
+Vectis consumes this upstream Lua facade unchanged; see the
+[boundary and gap assessment](../docs/upstream-lua-facades.md).
+
 ## Entry Points
 
 - `lql.new([opts])` creates a client handle.

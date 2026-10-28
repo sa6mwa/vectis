@@ -19,6 +19,9 @@ local logger = assert(log.new({
 }))
 
 logger:info("logger ready", "component", "lua")
+local scoped = assert(logger:with("operation", "health-check", "attempt", 1))
+scoped:info("scoped logger ready")
+scoped:close()
 
 local _, helper_err = nil, status.error({
   kind = "http",
@@ -38,6 +41,8 @@ local payload = table.concat(chunks)
 assert(payload:find('"msg":"logger ready"', 1, true))
 assert(payload:find('"service":"vectis-logging-example"', 1, true))
 assert(payload:find('"component":"lua"', 1, true))
+assert(payload:find('"operation":"health-check"', 1, true))
+assert(payload:find('"attempt":1', 1, true))
 assert(payload:find('"msg":"request failed"', 1, true))
 assert(payload:find('"status_string":"timeout"', 1, true))
 assert(payload:find('"source":"curl"', 1, true))

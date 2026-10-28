@@ -1,5 +1,61 @@
 # Vectis Lua upgrade seam audit
 
+## Upstream facade restoration, 2026-10-28
+
+This section supersedes the local pslog/LQL/MDF implementation claims below.
+The user clarified that existing upstream Lua facades are authoritative and
+must not be extended locally. The exhaustive API scope is superseded: new
+dependency bindings target useful public APIs with concrete application use cases.
+Vectis-owned convenience APIs and its bindings for libraries without upstream
+Lua facades are a separate boundary and are preserved.
+
+Before removal, all three adaptations were saved under ignored
+`stash/upstream-lua-handoffs-2026-10-28/`, with a draft review/PR per project,
+aggregate upstream-layout patches, exact released baselines, original patches,
+licenses, regression fixtures, manuals, specifications and earlier bug reports.
+The 117 archived files pass SHA-256 verification. Applying the three patches
+with zero fuzz reproduces the last compiled local cores/modules byte-for-byte.
+Optional/withdrawn API additions are distinguished from bugfix candidates; no
+PR has been submitted and `withf` is not an upstream requirement.
+
+Production CMake now selects released SDK binding sources and Lua modules
+directly. Local patch staging, added provider headers and adaptation-only test
+targets are removed. Vectis logging and terminal methods remain intact; terminal
+string rendering uses the upstream `render` name, and the logging example uses
+existing `with`. Native app/service qualification still uses the official C
+interop. Zlib/buffer/digest/storage/PostgreSQL and other owned work is preserved.
+
+See [the current boundary and exact convenience gap assessment](upstream-lua-facades.md).
+No current convenience feature requires the withdrawn mirrors. The concrete
+remaining concerns are the upstream allocation-failure cleanup reports; outer
+convenience wrappers cannot repair abandoned native callback frames. Historical
+local fault-test guarantees must not be attributed to the restored releases.
+
+Restoration verification:
+
+- `cmake --build build/debug --target vectis_bin -j2` passed using released
+  binding source paths; MDF no longer includes Vectis bridge/header directories.
+- The affected CTest selection passed **19/19 in 15.37s**, including actual
+  compile-input/embedded-byte checks, normal/packed facades, Lua smoke, native
+  logger handoff and app cleanup, MDF regressions, and logging/render/pipeline
+  examples. The new source-export check is repeatable with an owned forced export.
+- Lua-only rock smoke passed with diagnostic version 0.0.0 and its entire tree
+  under `build/upstream-facade-removal/rock`; this is not a native module install
+  or a release-package gate.
+- Repository formatting, shell syntax and whitespace checks passed. Five
+  current manuals match their actual embedded bytes. The 117-file handoff
+  checksum manifest was reverified after removal.
+
+Logs are under `build/upstream-facade-removal/`, especially `final-build.log`,
+`final-tests.log`, `lua-rock.log`, `format.log`, `manual-readback.log` and
+`archive-final-verification.log`. Unrelated dirty migration work is preserved;
+the restoration does not claim full migration/platform/service/release approval.
+
+Earlier component test counts and formatted-emission requirements are historical,
+not current feature or release commitments.
+
+
+
 ## Current libmdf 0.14.0 upgrade
 
 The upgrade starts from `ae48963` and changes only libmdf's seven SDK pins, its

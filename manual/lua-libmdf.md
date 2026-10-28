@@ -6,6 +6,9 @@
 [`vectis.terminal`](lua-terminal.md) when the narrower Vectis terminal defaults
 are enough.
 
+Vectis consumes this upstream Lua facade unchanged; see the
+[boundary and gap assessment](../docs/upstream-lua-facades.md).
+
 ## Entry Points
 
 - `libmdf.version` is the linked libmdf version string.
