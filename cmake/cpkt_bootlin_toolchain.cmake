@@ -1,24 +1,20 @@
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES CPKT_LIFECYCLE_SCRIPTS_DIR VECTIS_EXTERNAL_ROOT)
+include("${CMAKE_CURRENT_LIST_DIR}/vectis_owned_paths.cmake")
+vectis_check_toolchain_cache()
+
 function(cpkt_configure_bootlin_toolchain target_id)
   if(NOT VECTIS_TARGET_ID)
     set(VECTIS_TARGET_ID "${target_id}" CACHE STRING "Release target identifier." FORCE)
   elseif(NOT "${VECTIS_TARGET_ID}" STREQUAL "${target_id}")
     message(FATAL_ERROR "VECTIS_TARGET_ID=${VECTIS_TARGET_ID} does not match the selected toolchain target ${target_id}")
   endif()
-  set(cpkt_repo_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
-  set(cpkt_resolver "${cpkt_repo_root}/scripts/cpkt-toolchains.sh")
+  if(NOT CPKT_LIFECYCLE_SCRIPTS_DIR)
+    get_filename_component(CPKT_LIFECYCLE_SCRIPTS_DIR "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../scripts" ABSOLUTE)
+    set(CPKT_LIFECYCLE_SCRIPTS_DIR "${CPKT_LIFECYCLE_SCRIPTS_DIR}" CACHE PATH "Declared lifecycle helper directory")
+  endif()
+  set(cpkt_resolver "${CPKT_LIFECYCLE_SCRIPTS_DIR}/cpkt-toolchains.sh")
   if(NOT EXISTS "${cpkt_resolver}")
     message(FATAL_ERROR "missing Bootlin resolver: ${cpkt_resolver}")
-  endif()
-
-  execute_process(
-    COMMAND "${cpkt_resolver}" ensure "${target_id}"
-    RESULT_VARIABLE cpkt_ensure_result
-    OUTPUT_QUIET
-    ERROR_VARIABLE cpkt_ensure_error
-  )
-  if(NOT cpkt_ensure_result EQUAL 0)
-    message(FATAL_ERROR
-      "unable to provision pinned Bootlin toolchain for ${target_id}: ${cpkt_ensure_error}")
   endif()
 
   execute_process(
@@ -31,9 +27,12 @@ function(cpkt_configure_bootlin_toolchain target_id)
     message(FATAL_ERROR
       "unable to inspect pinned Bootlin toolchain for ${target_id}: ${cpkt_discover_error}")
   endif()
+  if(NOT cpkt_description MATCHES "(^|[\r\n])status=ready([\r\n]|$)")
+    message(FATAL_ERROR "Prepare pinned tools before configuring: ${cpkt_resolver} ensure ${target_id}")
+  endif()
 
   foreach(key cc cxx ld ar ranlib strip nm objcopy objdump addr2line readelf sysroot root)
-    string(REGEX MATCH "(^|\n)${key}=([^\r\n]+)" cpkt_match "${cpkt_description}")
+    string(REGEX MATCH "(^|[\r\n])${key}=([^\r\n]+)" cpkt_match "${cpkt_description}")
     if(NOT cpkt_match)
       message(FATAL_ERROR
         "Bootlin resolver did not report ${key} for ${target_id}")
@@ -54,7 +53,13 @@ function(cpkt_configure_bootlin_toolchain target_id)
   set(CMAKE_READELF "${cpkt_readelf}" CACHE FILEPATH "" FORCE)
   set(cpkt_find_root_path)
   if(DEFINED VECTIS_EXTERNAL_ROOT AND NOT VECTIS_EXTERNAL_ROOT STREQUAL "")
-    list(APPEND cpkt_find_root_path "${VECTIS_EXTERNAL_ROOT}")
+    file(GLOB cpkt_sdk_prefixes LIST_DIRECTORIES TRUE "${VECTIS_EXTERNAL_ROOT}/*")
+    foreach(prefix IN LISTS cpkt_sdk_prefixes)
+      if(EXISTS "${prefix}/lib/cmake")
+        list(APPEND cpkt_find_root_path "${prefix}")
+        list(APPEND CMAKE_PREFIX_PATH "${prefix}")
+      endif()
+    endforeach()
   endif()
   list(APPEND cpkt_find_root_path "${cpkt_sysroot}" "${cpkt_root}")
   set(CMAKE_SYSROOT "${cpkt_sysroot}" CACHE PATH "" FORCE)

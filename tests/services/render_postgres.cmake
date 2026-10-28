@@ -1,0 +1,10 @@
+# Small fixture-data generator. Service sequencing belongs to CTest/Bash.
+foreach(required NAME PORT STATE DEST)
+  if(NOT DEFINED ${required})
+    message(FATAL_ERROR "Missing PostgreSQL fixture ${required}")
+  endif()
+endforeach()
+string(RANDOM LENGTH 40 ALPHABET 0123456789abcdef PASSWORD)
+configure_file("${CMAKE_CURRENT_LIST_DIR}/postgres.yaml.in" "${DEST}/postgres.yaml" @ONLY)
+file(WRITE "${DEST}/password" "${PASSWORD}")
+file(CHMOD "${DEST}/postgres.yaml" "${DEST}/password" PERMISSIONS OWNER_READ OWNER_WRITE)

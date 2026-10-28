@@ -1,5 +1,13 @@
 # Pinned Bootlin runtime for local executables
 
+Dependency preparation keeps cpkt, cpktdb, cpktmisc and other SDKs in separate
+prefixes. `vectis_dependency_cache` exercises real local HTTP acquisition,
+verified hits with zero requests, corruption repair, asset renaming by digest,
+checksum rejection, preserved payload modes and borrowed-cache rejection.
+Toolchain and archive overrides may use this checkout's build/.cache or their
+declared global cpkt caches; configuration and provisioning reject foreign
+checkout paths, including symlinks whose final directory does not yet exist.
+
 Local GNU/Linux x86-64 executables use the configured Bootlin interpreter and
 runtime libraries directly. No Bubblewrap, container, CTest launcher, or duplicate
 test CLI is involved. The current collection is stable-2026.08-1 (glibc 2.44).
@@ -11,7 +19,7 @@ test CLI is involved. The current collection is stable-2026.08-1 (glibc 2.44).
 | Debug CLI, tests, compiled helpers, examples, fuzzers, benchmarks | Pinned Bootlin interpreter and runtime search paths |
 | Linux Release CLI | Statically linked; normal distributable artifact |
 | Shipped libraries and SDK metadata | No local-executable runtime settings |
-| Python, CMake, shell, Valgrind | Host runtime |
+| Go fixtures (CGO disabled), Python data fixtures, CMake, shell, Valgrind | Host runtime |
 
 `cmake/test_runtime.cmake` applies private executable link settings after target
 creation. DT_RPATH covers transitive dependencies as well as direct dependencies.
@@ -48,6 +56,15 @@ Executables packed using debug Vectis remain local development artifacts;
 production packing must use the static release CLI.
 
 ## Verification and limits
+
+Runtime mapping and reconfiguration checks now run as native CMake/CTest
+checks; Python remains limited to declared source/data generation and small
+data fixtures. Kore probes use `tests/run_kore.cmake` for native process
+execution and sanitizer-report capture. There is no PID/process-group broker
+or process-table scanning wrapper. The embedded runtime's control socket
+handles controller death; its compile guard is enabled in the ordinary build.
+The abrupt controller-exit regression passes in 0.28 seconds, without a
+synthetic timeout or retry delay. Earlier wrapper evidence below is historical.
 
 The runtime contract enumerates configured local executable targets, checks their
 ELF interpreters, and traces resolved libraries with inherited `LD_*` settings
@@ -104,13 +121,22 @@ binaries inside multiply nested release archives. Scanner scratch stays under
 
 ## Historical runtime-selection verification
 
+Current split-bundle SDK checks additionally pin `libresolv.so.2` as a direct
+local shared-consumer dependency. Provider RUNPATHs otherwise prevent ancestor
+RPATH lookup and can select the host's older resolver library despite the
+pinned loader/libc. This policy applies only to local shared SDK consumers and
+examples; it is not exported in `libvectis` or provider packages. The mapping
+gate still checks the actual loaded file against the selected Bootlin runtime.
+
 The measurements and dependency-refresh records below describe their dated
 candidates. Their test counts, provisional failures and delivered binary digest
 are historical evidence, not the current suite or release status. The subsequent
 [Lua integration audit](lua-upgrade-seam-audit.md#completed-independent-review-and-final-verification)
 records the 211-check candidate and closure checks. The old Darwin-workflow
-policy conflict was resolved by the adopted-workflow allowlist; native Darwin
-execution and complete service-memory qualification remain separate gates.
+policy conflict was then resolved by an adopted-workflow allowlist. The current
+split-bundle lifecycle supersedes that policy: hosted Darwin is optional
+diagnostics, while release proof uses local osxcross. Native execution is not
+claimed by cross compilation. Current memory evidence is in the active audit.
 The SSH sanitizer finding was not requalified by the targeted source tests.
 
 ## Measurement method
@@ -118,17 +144,18 @@ The SSH sanitizer finding was not requalified by the targeted source tests.
 Measure execution, excluding the build, in a fresh cgroup for each run:
 
 ```sh
-systemd-run --user --wait --pipe --property=MemoryAccounting=yes \
+systemd-run --user --wait --pipe --property=CPUAccounting=yes --property=MemoryAccounting=yes \
   --working-directory="$PWD" --unit=vectis-runtime-measure-1 \
-  python3 scripts/measure_test_runtime.py ctest --preset debug
+  /usr/bin/time -v ctest --preset debug
 ```
 
 Use a new unit name for each run. systemd/cgroup v2 is a measurement dependency,
-not a test execution dependency. The script records monotonic wall time, total
-process-tree user/system CPU, aggregate cgroup memory peak and swap peak. Memory
-includes charged file cache and the small measurement process; it is not the
-largest individual process's RSS. Results describe this workload and machine,
-not a universal fixed overhead.
+not a test execution dependency. Use systemd's final accounting for aggregate
+cgroup CPU and memory peak, and `time` for elapsed time and child user/system CPU.
+Cgroup memory includes charged file cache; `time`'s maximum RSS is a different
+measurement. The historical JSON records below came from the retired Python
+controller and include cgroup swap peak as well. Results describe this workload
+and machine, not a universal fixed overhead.
 
 Baseline logs are retained under `build/runtime-before-*.log`; the direct-link
 results are under `build/runtime-direct-*.log`. Earlier Bubblewrap experiments

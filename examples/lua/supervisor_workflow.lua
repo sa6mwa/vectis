@@ -16,7 +16,7 @@ assert(app:start())
 local result = assert(workflow:transaction(function(tx)
   return tx:append_outbox({operation_id="example", effect_id="print", effect_key="example-print",
     kind="print", destination="stdout", content_type="text/plain",
-    payload_digest=require("openssl").sha256("hello workflow\n")}, "hello workflow\n")
+    payload_digest=require("openssl").sha256_materialized("hello workflow\n")}, "hello workflow\n")
 end))
 assert(#result.outbox_receipts == 1)
 assert(app:pump(0))

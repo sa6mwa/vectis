@@ -1,5 +1,8 @@
 # Vectis Lua Surface
 
+App-owned [collections, storage and PostgreSQL XA](lua-storage.md) are available
+through `app:storage`, workflow XA composition and `vectis.pg`.
+
 The `vectis` executable embeds the cpkt Lua runtime and preloads both
 dependency-native facades and Vectis-owned workflow helpers. The repository
 also carries a pure Lua top-level `vectis` module and standalone LuaRocks
@@ -12,6 +15,14 @@ consumers, certificate workflows, or file-backed transfers.
 
 For shared naming, error, ownership, and payload-shape rules, see the
 [Lua facade conventions](lua-conventions.md).
+`app:on_fork_exit(function(role) ... end)` configures optional cleanup before
+start in forked Kore processes. Roles are `kore_parent` and `kore_worker`.
+It runs after native teardown on that process's Lua owner thread, never in the
+original process or foreground execution. Lifecycle calls are rejected inside
+the callback. An exception, `false`, or `nil, error` makes the child fail;
+`app:stop()` reports a nonzero Kore parent exit. Pass `nil` to clear the user
+callback. This never disables the embedded runtime's automatic child VM
+cleanup. A process killed with SIGKILL cannot run callbacks.
 For SUS/audio callback and ownership details, see [Lua SUS](lua-sus.md) and
 [Lua audio](lua-audio.md).
 For OPC UA callback and concurrency details, see [Lua OPC UA](lua-opcua.md).
@@ -50,6 +61,8 @@ with minimal Vectis opinion:
   [Lua softline](lua-softline.md).
 - `curl`: generic libcurl facade, documented in [Lua curl](lua-curl.md).
 - `openssl`: OpenSSL facade, documented in [Lua OpenSSL](lua-openssl.md).
+- `vectis.digest`: explicit materialized and true streaming libvectis digests,
+  documented in [Lua digest receivers](lua-digest.md).
 - `zlib`: zlib/gzip compression facade, documented in
   [Lua zlib](lua-zlib.md).
 - `opcua`: cpkt OPC UA facade, documented in [Lua OPC UA](lua-opcua.md).
@@ -57,10 +70,15 @@ with minimal Vectis opinion:
   [Lua audio](lua-audio.md).
 - `sus`: cpkt SUS/whisper facade, documented in [Lua SUS](lua-sus.md).
 
-The C SDK artifacts intentionally do not ship the embedded Lua runtime, Lua
-source tree, or Lua package-manager state. Standalone Lua release artifacts are
+The C SDK retains independent upstream SDK payloads, including core's public
+Lua libraries, headers and metadata. It does not ship an initialized Lua VM,
+Vectis's Lua source tree or Lua package-manager state. Standalone Lua artifacts are
 published separately as `vectis-lua-<version>.tar.gz`,
 `vectis-<version>-1.rockspec`, and `vectis-<version>-1.src.rock`.
+
+`vectis.libs.lockdc_postgres` aliases the separately linked official
+`require("lockdc.postgres")` XA provider. `vectis.pg` provides parameterized
+application work on its exact managed branch; these are different roles.
 
 `require("vectis").libs` collects these bundled library facades under one
 namespace for applications that already use the top-level Vectis module:

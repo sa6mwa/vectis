@@ -12,14 +12,6 @@ archive="$dist_dir/$package_name.tar.gz"
 rockspec="$dist_dir/vectis-$version-1.rockspec"
 src_rock="$dist_dir/vectis-$version-1.src.rock"
 
-safe_generated_dir() {
-  path=$1
-  case "$path" in
-    "$repo_root"/build/*|"$repo_root"/dist) ;;
-    *) printf '%s\n' "refusing to clean non-generated path: $path" >&2; exit 2 ;;
-  esac
-}
-
 copy_file() {
   source=$1
   target=$2
@@ -31,8 +23,8 @@ copy_file() {
   cp "$repo_root/$source" "$stage_root/$target"
 }
 
-safe_generated_dir "$work_root"
-safe_generated_dir "$dist_dir"
+"${CMAKE:-cmake}" "-DVECTIS_OWNED_PATHS=$work_root;$dist_dir" \
+  -P "$repo_root/cmake/vectis_owned_paths.cmake"
 
 rm -rf "$work_root"
 mkdir -p "$stage_root" "$dist_dir"
@@ -40,6 +32,8 @@ mkdir -p "$stage_root" "$dist_dir"
 copy_file LICENSE LICENSE
 copy_file README.md README.md
 copy_file vectis.rockspec.in vectis.rockspec.in
+copy_file cmake/vectis_owned_paths.cmake cmake/vectis_owned_paths.cmake
+copy_file scripts/release_version.sh scripts/release_version.sh
 copy_file scripts/build_lua_rock.sh scripts/build_lua_rock.sh
 copy_file scripts/render_release_rockspec.sh scripts/render_release_rockspec.sh
 copy_file scripts/stage_lua_rock_sources.sh scripts/stage_lua_rock_sources.sh

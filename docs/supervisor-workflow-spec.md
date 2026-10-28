@@ -24,7 +24,7 @@ The private VRC1 service-control bus remains private.
 [`supervisor-workflow-audit.md`](supervisor-workflow-audit.md) records behavior
 evidence and limitations. In particular, the `payload_source()` pull interface
 and automatic lease renewal throughout a blocking handler remain blocked:
-liblockdc 0.18.0 exposes push payload streaming and explicit renewal, but neither
+liblockdc 0.23.0 exposes push payload streaming and explicit renewal, but neither
 a public pull source nor a safe automatic-renewal facility for Lua-owned jobs.
 The implementation exposes genuine `write_payload(sink)` streaming and explicit
 `renew(ttl)` instead. These do not satisfy those two stronger requirements.
@@ -37,10 +37,11 @@ claim API. Different workflows retain independent lifecycle control. Release
 approval must account for these limits; this status does not weaken the intended
 contracts below.
 
-Short stateful effect claims support checkpoint read/update/completion. Renewal
-in stateful mode is rejected: the upstream probe reaches deferred completion
-after successful renewal/update and then fails a Pouch version precondition.
-This does not satisfy long stateful handlers. The audit records the reproduction.
+Stateful effect claims support checkpoint read/update and explicit renewal
+before or after writes, including repeated renewal. liblockdc 0.23.0 fixes the
+earlier completion version defect. Normal/packed tests prove complete, retry
+and dead-letter decisions plus the native checkpoint cleanup/retention policy.
+This does not supply automatic renewal during blocked handlers.
 
 Current logical health is state plus copied last-error diagnostics. Independent
 quotas, lane permits, automatic restart/backoff and stronger health policies below
@@ -327,12 +328,12 @@ forwards successful commit receipts. Its callback exposes `tx:append_outbox`
 and upstream participant operations such as `tx:acquire`, with guarded lifetimes.
 An unregistered kind poisons the transaction even when caught by the callback.
 
-Jobs expose genuine push `write_payload(sink)`, explicit stateless `renew(ttl)`,
+Jobs expose genuine push `write_payload(sink)`, explicit `renew(ttl)`,
 scoped state access and typed complete/retry/dead-letter tokens. The selected
 token must be returned; terminalization happens afterward. Handler exceptions
 or absent/incorrect tokens follow upstream retry policy. No callback deadline
-or preemption is supplied. Short stateful completion works; renewal in stateful
-mode is rejected because of the documented upstream completion defect.
+or preemption is supplied. Stateful manual renewal preserves checkpoint
+versions through deferred completion, retry and dead-letter decisions.
 
 Use [Lua supervisors and workflows](../manual/lua-supervisor.md) for runnable
 examples, options and return contracts. Superseded pseudo-APIs such as
@@ -530,9 +531,9 @@ The following requirements remain unchanged and are not supported configuration:
 - A handler-scoped pull `job:payload_source()` that reads storage incrementally,
   with explicit lifetime and errors. Push `write_payload(sink)` is delivered;
   hidden materialization or spooling cannot substitute for a public pull source.
-- Safe native claim renewal while the owner Lua handler is blocked, and correct
-  renewed-stateful checkpoint completion. Explicit stateless renewal does not
-  satisfy this requirement.
+- Safe automatic native claim renewal while the owner Lua handler is blocked.
+  Explicit manual renewal, including stateful renewal, does not satisfy this
+  stronger requirement.
 - Kind-filtered intake so stopping one kind's scope does not pause other kinds
   of the same workflow. Different workflow identities already remain independent.
 - Cross-runtime canonical-configuration checks and Lockd leader leases. Public

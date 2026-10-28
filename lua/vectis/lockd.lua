@@ -188,7 +188,7 @@ function M.load_json(config, req)
   return value, meta_or_err
 end
 
-function M.save_json(config, req, value)
+function M.save_json(config, req, value, options)
   return M.with_client(config, function(client)
     local lease, acquire_err = client:acquire(req)
     if lease == nil then
@@ -196,7 +196,7 @@ function M.save_json(config, req, value)
     end
 
     local ok_update, updated, update_err = pcall(function()
-      return lease:update_json(value)
+      return lease:update_json(value, options)
     end)
     if not ok_update then
       close_handle(lease)

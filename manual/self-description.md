@@ -36,6 +36,22 @@ included. `vectis.kore` and `vectis.version` are included as the standalone
 Lua fallback sources; an embedded Vectis runtime supplies those modules from
 native code.
 
+# Tracing Lua execution
+
+Use `vectis -x script.lua [args]` to print executed source locations to stderr,
+similar to shell tracing. For a packed Linux app, use
+`./packed-app --vectis -x [args]`. Script stdout, arguments and failure status
+are preserved. A plain packed `-x` is passed to the application.
+
+Records look like `+ script.lua:12`. They identify locations, not variable
+values or expanded statements. Coroutine execution, Lua close handlers and
+finalizers are included; native C execution and stripped chunks have no line
+events. Long source identifiers are limited to 160 bytes with an ellipsis
+(file paths retain their suffix), and control bytes become `?`.
+
+The cpkt runtime's public C89 observer owns event delivery and retains its
+instruction-limit policy. Tracing does not expose a Lua hook into that policy.
+
 # Restoring a packed executable
 
 On platforms where packed executables are supported, running `--vectis unpack` on a

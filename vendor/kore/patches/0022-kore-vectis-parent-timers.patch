@@ -13,13 +13,3 @@ index 2c1d5bb..8e430e4 100644
 +
  #if !defined(KORE_NO_HTTP)
  	alog = 0;
-@@ -933,3 +933,9 @@ kore_server_start(void)
- 	kore_platform_proctitle("[parent]");
- 
-+#if defined(KORE_VECTIS_EMBEDDED_RUNTIME)
-+	extern void	vectis_kore_parent_metrics_init(void);
-+
-+	vectis_kore_parent_metrics_init();
-+#endif
-+
- 	if (!kore_worker_init()) {

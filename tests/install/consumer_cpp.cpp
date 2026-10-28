@@ -1,7 +1,14 @@
 #include <cstring>
 
+#include <vectis/buffer.h>
+#include <vectis/digest.h>
+#include <vectis/gz.h>
+#include <vectis/pg.h>
+#include <vectis/storage.h>
 #include <vectis/supervisor.h>
 #include <vectis/vectis.h>
+#include <vectis/zlib.h>
+#include <vectis/zlib_raw.h>
 
 int main() {
   vectis_app_config app_config;
@@ -21,11 +28,8 @@ int main() {
   if (app == 0) {
     return 1;
   }
-  if (app->route_count == 0 ||
-      app->route_count(app) != 0u ||
-      app->logger == 0 ||
-      app->logger(app) == 0 ||
-      app->close == 0) {
+  if (app->route_count == 0 || app->route_count(app) != 0u ||
+      app->logger == 0 || app->logger(app) == 0 || app->close == 0) {
     app->close(app);
     return 2;
   }
@@ -36,12 +40,8 @@ int main() {
   if (vectis_http_client_new(&http_config, &http, &error) != VECTIS_OK) {
     return 3;
   }
-  if (http == 0 ||
-      http->execute == 0 ||
-      http->get == 0 ||
-      http->del == 0 ||
-      http->post_json == 0 ||
-      http->close == 0) {
+  if (http == 0 || http->execute == 0 || http->get == 0 || http->del == 0 ||
+      http->post_json == 0 || http->close == 0) {
     if (http != 0) {
       http->close(http);
     }

@@ -4,6 +4,19 @@ Status: recorded implementation evidence for code committed as `e20ab55`.
 Earlier scoped runs below are historical; final local verification supersedes
 their suite counts. Use the manual for the current API.
 
+Follow-up, 2026-10-28: liblockdc 0.23.0 resolves the historical stateful-renewal
+version defect. Vectis now permits manual renewal with `with_state=true`.
+The direct official-facade probe covers eleven renewal/control/outcome cases
+normal/packed; Vectis's own deferred workflow adapter additionally covers
+repeated renewal with complete, retry and dead-letter. Completion retires its
+private checkpoint; retry/dead-letter preserve it. Automatic renewal while a
+Lua handler is blocked remains undelivered. Current pins and verification are
+in `lua-upgrade-seam-audit.md`; the older identities below are historical.
+
+The historical source-text audit scripts named below were retired during the
+split-bundle migration. Their Make targets now execute actual CTest behavior;
+current semantic coverage review belongs to the responsible agent.
+
 This is a scoped semantic integration review for the serial default, performed
 against the working tree based on `b1fe538013c6f9e6bfceee03cf9ee006b0f6f48a`
 on branch `init`. No new pin changes are included in this implementation.
@@ -179,17 +192,16 @@ under `build/`; self-contained upstream reports are ignored under `stash/`.
 6. **Shutdown of blocking callbacks:** serial callbacks cannot be preempted;
    upstream synchronous client close can join dependency threads. Tests prove
    orderly shutdown, not a hard deadline for arbitrary blocked network handlers.
-7. **Stateful claims plus renewal:** a direct public upstream probe demonstrates
+7. **Stateful claims plus renewal (resolved in 0.23.0):** the historical public upstream probe demonstrated
    successful stateful read/update/completion, but `job:renew(30)` followed by a
    successful checkpoint update fails at completion with `pouch state version precondition
-   failed`. `tests/lua/supervisor_upstream_stateful.lua` reproduces all three
-   cases without timing faults or Vectis wrappers. Short `with_state=true`
+   failed`. `tests/lua/supervisor_upstream_stateful.lua` now verifies the repaired
+   contract without timing faults or Vectis wrappers. `with_state=true`
    handlers support checkpoint read/update/completion and prohibit release/close
-   or access after handler return. Their renewal is rejected until upstream fixes
-   the version contract. Stateless handlers expose manual renewal; no initial
-   renewal or automatic blocked-handler renewal is claimed.
+   or access after handler return. Both stateful and stateless handlers expose
+   manual renewal; no initial renewal or automatic blocked-handler renewal is claimed.
 
-The pull-source, automatic-renewal, and stateful-renewal requirements remain blockers for declaring
+The pull-source and automatic-renewal requirements remain blockers for declaring
 the entire specification complete. Remote Lockd/provider execution, Darwin IPC,
 hardware/live services, and prolonged claim-expiry behavior are not established
 by these local Linux tests. This task does not release or approve a release.

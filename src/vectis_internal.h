@@ -216,6 +216,7 @@ void vectis_internal_metrics_note_body_reject(vectis_app *app, int status);
 void vectis_internal_metrics_note_auth(vectis_app *app,
                                        vectis_auth_action action);
 #define VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE 77u
+int vectis_internal_fork_exit(vectis_app *, const char *role);
 vectis_status vectis_internal_metrics_snapshot_key(const char *storage_owner,
                                                    const char *app_name,
                                                    char *key, size_t key_size,

@@ -228,10 +228,10 @@ if(NOT options_result EQUAL 0)
   message(FATAL_ERROR "curl option rejection failed: ${options_stdout}${options_stderr}")
 endif()
 
-find_program(http_upload_python NAMES python3)
-if(http_upload_python)
-  execute_process(COMMAND "${http_upload_python}"
-                          "${CMAKE_CURRENT_LIST_DIR}/../http_uploads.py" "${VECTIS_BIN}"
+if(UPLOAD_FIXTURE)
+  execute_process(COMMAND "${UPLOAD_FIXTURE}" http-uploads "${VECTIS_BIN}"
+                          "${CMAKE_CURRENT_LIST_DIR}/http_uploads.lua" "${WORK_DIR}/http-uploads"
+                  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../.."
                   RESULT_VARIABLE upload_result
                   OUTPUT_VARIABLE upload_stdout ERROR_VARIABLE upload_stderr
                   TIMEOUT 60)
@@ -239,5 +239,5 @@ if(http_upload_python)
     message(FATAL_ERROR "Lua HTTP upload regression failed: ${upload_stdout}${upload_stderr}")
   endif()
 else()
-  message(STATUS "Lua HTTP upload integration not run: Python3 unavailable")
+  message(STATUS "Lua HTTP upload integration not run: native host fixture unavailable")
 endif()

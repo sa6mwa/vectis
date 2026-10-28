@@ -19,12 +19,12 @@ os.remove(cert_path)
 os.remove(key_path)
 os.remove(bundle_path)
 
-assert(openssl.sha256_hex("abc") ==
+assert(openssl.sha256_materialized_hex("abc") ==
   "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 assert(openssl.hex_decode(openssl.hex_encode("payload")) == "payload")
 assert(openssl.base64_decode(openssl.base64_encode("payload")) == "payload")
 assert(#openssl.random_hex(16) == 32)
-assert(#openssl.hmac_hex("sha256", "key", "message") == 64)
+assert(#openssl.hmac_materialized_hex("sha256", "key", "message") == 64)
 
 assert(vectis.cert.generate_bundle({
   common_name = "localhost",

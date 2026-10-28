@@ -371,9 +371,9 @@ static void assert_lockd_state_update_release_ownership(void) {
   fake.lease.release = lockd_state_update_fake_release;
   fake.lease.close = lockd_state_update_fake_close;
   fake.lease.impl = &fake;
-  status = vectis_lockd_state_update(&fake.client, "state/test", "test", 30L,
-                                     &sample_doc_map, &state,
-                                     lockd_state_update_fails, NULL, &error);
+  status = vectis_lockd_state_update(
+      &fake.client, "state/test", "test", 30L, &sample_doc_map, &state,
+      lockd_state_update_fails, NULL, NULL, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(fake.release_calls == 1);
   assert(fake.close_calls == 0);

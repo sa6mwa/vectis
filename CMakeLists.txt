@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/vectis_owned_paths.cmake")
+vectis_require_owned_path("${CMAKE_BINARY_DIR}" "Vectis build directory")
+
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_TOOLCHAIN_FILE)
   message(FATAL_ERROR
     "Linux builds require a pinned toolchain. Use cmake --preset debug, or set CMAKE_TOOLCHAIN_FILE to a cmake/toolchains/<target>.cmake file; use a fresh build directory when changing compilers.")
@@ -39,6 +42,7 @@ option(VECTIS_BUILD_BINARY "Build the vectis executable." ON)
 option(VECTIS_BUILD_TESTS "Build vectis unit tests." ON)
 option(VECTIS_BUILD_EXAMPLES "Build vectis SDK examples." ON)
 option(VECTIS_BUILD_BENCHMARKS "Build Vectis performance benchmarks." OFF)
+option(VECTIS_TEST_POSTGRES "Enable live rootless Podman Kube PostgreSQL XA tests." OFF)
 option(VECTIS_BUILD_FUZZERS "Build fuzz targets." OFF)
 option(VECTIS_WITH_KORE_RUNTIME "Build the embedded Kore runtime adapter." ON)
 option(VECTIS_ENABLE_COVERAGE "Build with coverage instrumentation." OFF)
@@ -48,9 +52,9 @@ if(NOT DEFINED CPKT_DEPENDENCY_CACHE OR CPKT_DEPENDENCY_CACHE STREQUAL "")
   if(DEFINED ENV{CPKT_DEPENDENCY_CACHE} AND NOT "$ENV{CPKT_DEPENDENCY_CACHE}" STREQUAL "")
     set(CPKT_DEPENDENCY_CACHE "$ENV{CPKT_DEPENDENCY_CACHE}")
   elseif(DEFINED ENV{XDG_CACHE_HOME} AND NOT "$ENV{XDG_CACHE_HOME}" STREQUAL "")
-    set(CPKT_DEPENDENCY_CACHE "$ENV{XDG_CACHE_HOME}/c.pkt.systems/deps")
+    set(CPKT_DEPENDENCY_CACHE "$ENV{XDG_CACHE_HOME}/cpkt/deps")
   elseif(DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "")
-    set(CPKT_DEPENDENCY_CACHE "$ENV{HOME}/.cache/c.pkt.systems/deps")
+    set(CPKT_DEPENDENCY_CACHE "$ENV{HOME}/.cache/cpkt/deps")
   else()
     message(FATAL_ERROR
       "CPKT_DEPENDENCY_CACHE is not set and neither XDG_CACHE_HOME nor HOME is available")
@@ -63,6 +67,7 @@ set(VECTIS_EXTERNAL_ROOT "${CMAKE_SOURCE_DIR}/.cache/deps/host-debug"
     CACHE PATH "Provisioned third-party dependency root.")
 set(VECTIS_DIST_DIR "${CMAKE_BINARY_DIR}/dist"
     CACHE PATH "Distribution output directory.")
+vectis_require_owned_path("${VECTIS_DIST_DIR}" VECTIS_DIST_DIR "${CMAKE_SOURCE_DIR}/dist")
 set(VECTIS_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}"
     CACHE STRING "Release target architecture.")
 set(VECTIS_TARGET_OS "${CMAKE_SYSTEM_NAME}"
@@ -72,26 +77,10 @@ set(VECTIS_TARGET_LIBC ""
 set(VECTIS_TARGET_ID ""
     CACHE STRING "Release target identifier.")
 
-set(VECTIS_EXPECTED_SYSTEM_VERSION "0.11.0")
-set(VECTIS_EXPECTED_LOCKDC_VERSION "0.18.0")
-set(VECTIS_EXPECTED_LONEJSON_VERSION "0.45.0")
-set(VECTIS_EXPECTED_PSLOG_VERSION "0.12.0")
-set(VECTIS_EXPECTED_CAI_VERSION "0.6.0")
-set(VECTIS_EXPECTED_LIBLQL_VERSION "0.3.0")
-set(VECTIS_EXPECTED_LIBMDF_VERSION "0.14.0")
-set(VECTIS_EXPECTED_SOFTLINE_VERSION "0.9.0")
-set(VECTIS_EXPECTED_LUA_VERSION "5.5.1")
-set(VECTIS_EXPECTED_LIBPID0_VERSION "0.5.0")
-set(VECTIS_EXPECTED_LIBPID0_SHA256 "9647a9027e3f5086278cc628b4cfdf853e239a04c202b4f3577691202431c7e1")
-set(VECTIS_EXPECTED_LIBXML2_VERSION "2.15.4")
-set(VECTIS_EXPECTED_MINIAUDIO_VERSION "0.11.25")
-set(VECTIS_EXPECTED_WHISPER_VERSION "v1.9.4")
-set(VECTIS_EXPECTED_OPEN62541_VERSION "1.5.8")
-
+string(TOLOWER "${VECTIS_TARGET_ARCH}" VECTIS_TARGET_ARCH_LOWER)
+string(TOLOWER "${VECTIS_TARGET_OS}" VECTIS_TARGET_OS_LOWER)
+string(TOLOWER "${VECTIS_TARGET_LIBC}" VECTIS_TARGET_LIBC_LOWER)
 if(VECTIS_TARGET_ID STREQUAL "")
-  string(TOLOWER "${VECTIS_TARGET_ARCH}" VECTIS_TARGET_ARCH_LOWER)
-  string(TOLOWER "${VECTIS_TARGET_OS}" VECTIS_TARGET_OS_LOWER)
-  string(TOLOWER "${VECTIS_TARGET_LIBC}" VECTIS_TARGET_LIBC_LOWER)
   if(VECTIS_TARGET_OS_LOWER STREQUAL "darwin")
     set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-apple-darwin")
   elseif(VECTIS_TARGET_OS_LOWER STREQUAL "linux")
@@ -131,199 +120,7 @@ function(vectis_require_dependency_file path)
   endif()
 endfunction()
 
-set(vectis_lockdc_config_dir "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lockdc")
-set(CURL_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/CURL")
-set(OpenSSL_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/OpenSSL")
-set(Libssh2_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/libssh2")
-set(nghttp2_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/nghttp2")
-set(ZLIB_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/zlib")
-set(Lua_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/Lua")
-set(CpktLuaRuntime_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/CpktLuaRuntime")
-set(CpktAudio_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/CpktAudio")
-set(CpktOpcUa_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/CpktOpcUa")
-set(CpktSus_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/CpktSus")
-set(open62541_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/open62541")
-set(whisper_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/whisper")
-set(miniaudio_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/miniaudio")
-set(LibXml2_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/libxml2")
-set(lonejson_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lonejson")
-set(pslog_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/pslog")
-set(cai_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/cai")
-set(liblql_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/liblql")
-set(libmdf_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/libmdf")
-set(softline_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/softline")
-set(vectis_dependency_manifest "${VECTIS_EXTERNAL_ROOT}/manifest.txt")
-if(EXISTS "${vectis_dependency_manifest}")
-  vectis_require_manifest(system_version "${VECTIS_EXPECTED_SYSTEM_VERSION}")
-  vectis_require_manifest(liblockdc_version "${VECTIS_EXPECTED_LOCKDC_VERSION}")
-  vectis_require_manifest(lonejson_version "${VECTIS_EXPECTED_LONEJSON_VERSION}")
-  vectis_require_manifest(pslog_version "${VECTIS_EXPECTED_PSLOG_VERSION}")
-  vectis_require_manifest(cai_version "${VECTIS_EXPECTED_CAI_VERSION}")
-  vectis_require_manifest(liblql_version "${VECTIS_EXPECTED_LIBLQL_VERSION}")
-  vectis_require_manifest(libmdf_version "${VECTIS_EXPECTED_LIBMDF_VERSION}")
-  vectis_require_manifest(softline_version "${VECTIS_EXPECTED_SOFTLINE_VERSION}")
-  vectis_require_manifest(lua_version "${VECTIS_EXPECTED_LUA_VERSION}")
-  vectis_require_manifest(lua_runtime_abi_version "0")
-  vectis_require_manifest(audio_abi_version "0")
-  vectis_require_manifest(sus_abi_version "0")
-  vectis_require_manifest(opcua_abi_version "0")
-  vectis_require_manifest(miniaudio_version "${VECTIS_EXPECTED_MINIAUDIO_VERSION}")
-  vectis_require_manifest(whisper_version "${VECTIS_EXPECTED_WHISPER_VERSION}")
-  vectis_require_manifest(open62541_version "${VECTIS_EXPECTED_OPEN62541_VERSION}")
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    vectis_require_manifest(libpid0_enabled "1")
-    vectis_require_manifest(libpid0_version "${VECTIS_EXPECTED_LIBPID0_VERSION}")
-    vectis_require_manifest(libpid0_sha256 "${VECTIS_EXPECTED_LIBPID0_SHA256}")
-  else()
-    vectis_require_manifest(libpid0_enabled "0")
-  endif()
-  vectis_require_manifest(libxml2_version "${VECTIS_EXPECTED_LIBXML2_VERSION}")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lonejson.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/pslog.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/cai.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/agent_runtime.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/mcp.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/session_store.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/smith.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/tools/terminal.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/auth.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lql/lql.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libmdf.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libmdf/mdf.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/softline/softline.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cpkt/audio.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cpkt/lua_runtime.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cpkt/opcua.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cpkt/sus.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/curl/curl.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/openssl/ssl.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libssh2.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/miniaudio/miniaudio.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/nghttp2/nghttp2.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/open62541/client.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/whisper.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/zlib.h")
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libpid0-${VECTIS_EXPECTED_LIBPID0_VERSION}.h")
-  endif()
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lua.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libxml2/libxml/parser.h")
-  vectis_require_dependency_file("${CURL_DIR}/CURLConfig.cmake")
-  vectis_require_dependency_file("${OpenSSL_DIR}/OpenSSLConfig.cmake")
-  vectis_require_dependency_file("${Libssh2_DIR}/libssh2-config.cmake")
-  vectis_require_dependency_file("${nghttp2_DIR}/nghttp2Config.cmake")
-  vectis_require_dependency_file("${ZLIB_DIR}/ZLIBConfig.cmake")
-  vectis_require_dependency_file("${Lua_DIR}/LuaConfig.cmake")
-  vectis_require_dependency_file("${CpktLuaRuntime_DIR}/CpktLuaRuntimeConfig.cmake")
-  vectis_require_dependency_file("${CpktAudio_DIR}/CpktAudioConfig.cmake")
-  vectis_require_dependency_file("${CpktOpcUa_DIR}/CpktOpcUaConfig.cmake")
-  vectis_require_dependency_file("${CpktSus_DIR}/CpktSusConfig.cmake")
-  vectis_require_dependency_file("${LibXml2_DIR}/libxml2-config.cmake")
-  vectis_require_dependency_file("${open62541_DIR}/open62541Config.cmake")
-  vectis_require_dependency_file("${whisper_DIR}/whisperConfig.cmake")
-  vectis_require_dependency_file("${miniaudio_DIR}/miniaudioConfig.cmake")
-  vectis_require_dependency_file("${liblql_DIR}/liblqlConfig.cmake")
-  vectis_require_dependency_file("${libmdf_DIR}/libmdfConfig.cmake")
-  vectis_require_dependency_file("${softline_DIR}/softlineConfig.cmake")
-  vectis_require_dependency_file("${vectis_lockdc_config_dir}/lockdcConfig.cmake")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/src/lua/lockdc_lua.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/lua/lockdc/init.lua")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/src/lua/lonejson_lua.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/lua/lonejson/init.lua")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/lua/pslog/init.lua")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/lua/src/pslog_lua.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/include/pslog_lua.h")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source/lua/cai_lua.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/liblql-lua-source/lua/lql/init.lua")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/liblql-lua-source/lua/lql_core.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf.lua")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf_core.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/softline-lua-source/lua/softline_lua.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblql.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libmdf.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libsoftline.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpktaudio.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpkt_lua_runtime.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpkt_opcua.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpktsus.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libminiaudio.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libopen62541.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcrypto.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libwhisper.a")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
-  if(APPLE)
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblql.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libmdf.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libsoftline.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpktaudio.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpkt_lua_runtime.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpkt_opcua.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpktsus.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libminiaudio.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libopen62541.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcrypto.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libwhisper.dylib")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.dylib")
-  else()
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblql.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libmdf.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libsoftline.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpktaudio.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpkt_lua_runtime.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpkt_opcua.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpktsus.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libminiaudio.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libopen62541.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcrypto.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libwhisper.so")
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.so")
-  endif()
-else()
-  message(STATUS "vectis dependency manifest not found yet: ${vectis_dependency_manifest}")
-endif()
-
-find_package(lockdc CONFIG REQUIRED PATHS "${vectis_lockdc_config_dir}" NO_DEFAULT_PATH)
-find_package(CURL CONFIG REQUIRED PATHS "${CURL_DIR}" NO_DEFAULT_PATH)
-find_package(OpenSSL CONFIG REQUIRED PATHS "${OpenSSL_DIR}" NO_DEFAULT_PATH)
-find_package(Libssh2 CONFIG REQUIRED PATHS "${Libssh2_DIR}" NO_DEFAULT_PATH)
-find_package(nghttp2 CONFIG REQUIRED PATHS "${nghttp2_DIR}" NO_DEFAULT_PATH)
-find_package(ZLIB CONFIG REQUIRED PATHS "${ZLIB_DIR}" NO_DEFAULT_PATH)
-find_package(CpktLuaRuntime CONFIG REQUIRED PATHS "${CpktLuaRuntime_DIR}" NO_DEFAULT_PATH)
-find_package(CpktAudio CONFIG REQUIRED PATHS "${CpktAudio_DIR}" NO_DEFAULT_PATH)
-find_package(CpktOpcUa CONFIG REQUIRED PATHS "${CpktOpcUa_DIR}" NO_DEFAULT_PATH)
-find_package(CpktSus CONFIG REQUIRED PATHS "${CpktSus_DIR}" NO_DEFAULT_PATH)
-find_package(LibXml2 CONFIG REQUIRED PATHS "${LibXml2_DIR}" NO_DEFAULT_PATH)
-find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
-find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
-find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
-find_package(liblql CONFIG REQUIRED PATHS "${liblql_DIR}" NO_DEFAULT_PATH)
-find_package(libmdf CONFIG REQUIRED PATHS "${libmdf_DIR}" NO_DEFAULT_PATH)
-find_package(softline CONFIG REQUIRED PATHS "${softline_DIR}" NO_DEFAULT_PATH)
+include("${CMAKE_SOURCE_DIR}/cmake/vectis_dependencies.cmake")
 
 if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
   set_property(TARGET cai::cai_static PROPERTY
@@ -409,19 +206,16 @@ function(vectis_configure_c_target target)
   endif()
 endfunction()
 
-set(vectis_external_include_dir "${VECTIS_EXTERNAL_ROOT}/include")
+set(vectis_external_include_dir "${vectis_external_include_dirs}")
 set(vectis_kore_include_dir "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
-if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
-  message(STATUS "vectis external headers not provisioned yet: ${vectis_external_include_dir}/pslog.h")
-endif()
-set(vectis_lockdc_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lockdc-source")
-set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lonejson-source")
-set(vectis_pslog_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source")
-set(vectis_cai_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source")
-set(vectis_liblql_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/liblql-lua-source")
-set(vectis_libmdf_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source")
+set(vectis_lockdc_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/sources/liblockdc")
+set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/sources/lonejson")
+set(vectis_pslog_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/sources/pslog")
+set(vectis_cai_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/sources/cai")
+set(vectis_liblql_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/sources/liblql")
+set(vectis_libmdf_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/sources/libmdf")
 set(vectis_softline_lua_source_dir
-    "${VECTIS_EXTERNAL_ROOT}/share/softline-lua-source")
+    "${VECTIS_EXTERNAL_ROOT}/sources/softline")
 
 # Embed release-matched public documentation and Lua source in the CLI binary.
 # Entries use source_path|display_path|module|origin and are intentionally
@@ -455,15 +249,16 @@ function(vectis_generate_cli_resource_header output_path symbol output_include)
          "${vectis_cli_resource_offset} + ${vectis_cli_resource_size}")
   endforeach()
 
-  file(WRITE "${vectis_cli_resource_inputs}"
-    "set(VECTIS_BYTE_ARRAY_INPUTS\n")
+  set(vectis_cli_resource_input_content "set(VECTIS_BYTE_ARRAY_INPUTS\n")
   foreach(vectis_cli_resource_source_path IN LISTS vectis_cli_resource_sources)
     file(TO_CMAKE_PATH "${vectis_cli_resource_source_path}"
          vectis_cli_resource_source_path)
-    file(APPEND "${vectis_cli_resource_inputs}"
+    string(APPEND vectis_cli_resource_input_content
       "  \"${vectis_cli_resource_source_path}\"\n")
   endforeach()
-  file(APPEND "${vectis_cli_resource_inputs}" ")\n")
+  string(APPEND vectis_cli_resource_input_content ")\n")
+  file(CONFIGURE OUTPUT "${vectis_cli_resource_inputs}"
+    CONTENT "${vectis_cli_resource_input_content}" @ONLY)
 
   add_custom_command(
     OUTPUT "${vectis_cli_resource_include}"
@@ -473,6 +268,10 @@ function(vectis_generate_cli_resource_header output_path symbol output_include)
             -P "${CMAKE_SOURCE_DIR}/cmake/vectis_generate_byte_array.cmake"
     DEPENDS ${vectis_cli_resource_sources}
             "${vectis_cli_resource_inputs}"
+            # Metadata includes byte sizes, offsets and digests. An SDK upgrade
+            # may replace sources with older archive mtimes at the same paths.
+            # Its changed metadata must invalidate the matching byte blob too.
+            "${output_path}"
             "${CMAKE_SOURCE_DIR}/cmake/vectis_generate_byte_array.cmake"
     VERBATIM
   )
@@ -495,6 +294,7 @@ set(vectis_lockdc_static_target lockdc::static)
 set(vectis_lockdc_shared_target lockdc::shared)
 
 set(vectis_static_dependency_links
+  lockdc::postgres_static
   cpkt::opcua
   cpkt::sus
   cpkt::audio
@@ -515,6 +315,7 @@ set(vectis_static_dependency_links
   ZLIB::ZLIB
 )
 set(vectis_shared_dependency_links
+  lockdc::postgres_shared
   cpkt::opcua_shared
   cpkt::sus_shared
   cpkt::audio_shared
@@ -536,6 +337,8 @@ set(vectis_shared_dependency_links
 )
 
 set(vectis_public_headers
+  include/vectis/storage.h
+  include/vectis/pg.h
   include/vectis/vectis.h
   include/vectis/proxy.h
   include/vectis/auth.h
@@ -543,12 +346,24 @@ set(vectis_public_headers
   include/vectis/totp_qr.h
   include/vectis/webdav.h
   include/vectis/supervisor.h
+  include/vectis/digest.h
+  include/vectis/buffer.h
+  include/vectis/zlib.h
+  include/vectis/zlib_raw.h
+  include/vectis/gz.h
   "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
 )
 
 set(vectis_sources
   src/vectis.c
   src/vectis_supervisor.c
+  src/vectis_storage_wait.c
+  src/vectis_pg.c
+  src/vectis_digest.c
+  src/vectis_buffer.c
+  src/vectis_zlib.c
+  src/vectis_zlib_raw.c
+  src/vectis_gz.c
   src/vectis_acme_state.c
   src/vectis_auth.c
   src/vectis_embedded_fs.c
@@ -572,32 +387,31 @@ if(VECTIS_WITH_KORE_RUNTIME)
   endif()
   set(vectis_kore_generated_dir "${CMAKE_BINARY_DIR}/kore-generated")
   file(MAKE_DIRECTORY "${vectis_kore_generated_dir}")
-  file(WRITE "${vectis_kore_generated_dir}/version.c"
-    "const char *kore_version = \"vectis-embedded\";\n"
-    "const char *kore_build_date = \"${CMAKE_PROJECT_VERSION}\";\n"
-  )
-  file(WRITE "${vectis_kore_generated_dir}/assets.c"
-    "#include <sys/types.h>\n"
-    "u_int8_t asset_builtin_kore_conf[] = {0};\n"
-    "u_int32_t asset_len_builtin_kore_conf = 0;\n"
-  )
+  file(CONFIGURE OUTPUT "${vectis_kore_generated_dir}/version.c" CONTENT
+    "const char *kore_version = \"vectis-embedded\";\nconst char *kore_build_date = \"@CMAKE_PROJECT_VERSION@\";\n" @ONLY)
+  file(CONFIGURE OUTPUT "${vectis_kore_generated_dir}/assets.c" CONTENT
+    "#include <sys/types.h>\nu_int8_t asset_builtin_kore_conf[] = {0};\nu_int32_t asset_len_builtin_kore_conf = 0;\n" @ONLY)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+      "${vectis_kore_root}/misc/linux-platform.sh")
     execute_process(
       COMMAND "${CMAKE_COMMAND}" -E env "TARGET_PLATFORM=${VECTIS_TARGET_ARCH}"
               "${vectis_kore_root}/misc/linux-platform.sh"
       WORKING_DIRECTORY "${vectis_kore_root}"
-      OUTPUT_FILE "${vectis_kore_generated_dir}/platform.h"
+      OUTPUT_VARIABLE vectis_kore_platform_content
       RESULT_VARIABLE vectis_kore_platform_result
     )
     if(NOT vectis_kore_platform_result EQUAL 0)
       message(FATAL_ERROR "failed to generate Kore Linux platform header")
     endif()
+    file(CONFIGURE OUTPUT "${vectis_kore_generated_dir}/platform.h"
+      CONTENT "${vectis_kore_platform_content}" @ONLY)
     set(vectis_kore_platform_sources
       "${vectis_kore_root}/src/linux.c"
       "${vectis_kore_root}/src/seccomp.c"
     )
   else()
-    file(WRITE "${vectis_kore_generated_dir}/platform.h" "")
+    file(CONFIGURE OUTPUT "${vectis_kore_generated_dir}/platform.h" CONTENT "" @ONLY)
     set(vectis_kore_platform_sources "${vectis_kore_root}/src/bsd.c")
   endif()
   set(vectis_kore_sources
@@ -651,6 +465,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
     KORE_USE_LONEJSON
     KORE_USE_PSLOG
     KORE_VECTIS_STATIC_RUNTIME
+    KORE_VECTIS_EMBEDDED_RUNTIME
     KORE_VECTIS_AUTOBLOCK_HOOKS
     KORE_VECTIS_ACME_STATE_HOOK
     KORE_VECTIS_DIRECT_TLS
@@ -745,8 +560,26 @@ configure_file(
   @ONLY
 )
 
+# Public headers get their own normal C89 compile commands, including clangd's
+# ordinary header discovery. No editor-only dependency or generated-header lane.
+set(vectis_compilable_public_headers ${vectis_public_headers})
+# The version header contains macros only; validate it through a real C TU.
+list(FILTER vectis_compilable_public_headers EXCLUDE REGEX "/generated/")
+set_source_files_properties(${vectis_compilable_public_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/generated/version_header_check.c"
+  CONTENT "#include <vectis/vectis_version.h>\ntypedef char vectis_version_header_check;\n")
+add_library(vectis_public_header_checks OBJECT ${vectis_compilable_public_headers}
+  "${CMAKE_BINARY_DIR}/generated/version_header_check.c")
+target_include_directories(vectis_public_header_checks PRIVATE
+  "${CMAKE_SOURCE_DIR}/include" "${CMAKE_BINARY_DIR}/generated/include")
+target_link_libraries(vectis_public_header_checks PRIVATE vectis_external_headers)
+vectis_configure_c89_target(vectis_public_header_checks)
+set_source_files_properties(${vectis_sources} ${vectis_public_headers}
+  PROPERTIES OBJECT_DEPENDS "${vectis_dependency_manifest}")
+
 if(VECTIS_BUILD_STATIC)
-  add_library(vectis_static STATIC ${vectis_sources} ${vectis_public_headers})
+  add_library(vectis_static STATIC ${vectis_sources})
+  add_dependencies(vectis_static vectis_public_header_checks)
   add_library(vectis::vectis_static ALIAS vectis_static)
   target_include_directories(vectis_static
     PUBLIC
@@ -757,7 +590,7 @@ if(VECTIS_BUILD_STATIC)
   )
   target_link_directories(vectis_static
     PUBLIC
-      "${VECTIS_EXTERNAL_ROOT}/lib"
+      ${vectis_external_library_dirs}
   )
   target_link_libraries(vectis_static
     PUBLIC
@@ -779,7 +612,8 @@ if(VECTIS_BUILD_STATIC)
 endif()
 
 if(VECTIS_BUILD_SHARED)
-  add_library(vectis_shared SHARED ${vectis_sources} ${vectis_public_headers})
+  add_library(vectis_shared SHARED ${vectis_sources})
+  add_dependencies(vectis_shared vectis_public_header_checks)
   add_library(vectis::vectis_shared ALIAS vectis_shared)
   target_include_directories(vectis_shared
     PUBLIC
@@ -790,7 +624,7 @@ if(VECTIS_BUILD_SHARED)
   )
   target_link_directories(vectis_shared
     PUBLIC
-      "${VECTIS_EXTERNAL_ROOT}/lib"
+      ${vectis_external_library_dirs}
   )
   target_link_libraries(vectis_shared
     PUBLIC
@@ -807,17 +641,32 @@ if(VECTIS_BUILD_SHARED)
     SOVERSION 0
   )
   if(APPLE)
+    set(vectis_loader_origin "@loader_path")
+  else()
+    set(vectis_loader_origin "$ORIGIN")
+  endif()
+  set(vectis_installed_rpaths "${vectis_loader_origin}")
+  foreach(prefix IN LISTS vectis_dependency_prefixes)
+    if(IS_DIRECTORY "${prefix}/lib")
+      get_filename_component(name "${prefix}" NAME)
+      list(APPEND vectis_installed_rpaths "${vectis_loader_origin}/../deps/${name}/lib")
+    endif()
+  endforeach()
+  set_target_properties(vectis_shared PROPERTIES INSTALL_RPATH "${vectis_installed_rpaths}")
+  if(APPLE)
     set_target_properties(vectis_shared PROPERTIES
       MACOSX_RPATH ON
       BUILD_WITH_INSTALL_NAME_DIR ON
       BUILD_WITH_INSTALL_RPATH TRUE
       INSTALL_NAME_DIR "@rpath"
-      INSTALL_RPATH "@loader_path"
     )
     target_link_options(vectis_shared PRIVATE
       "-Wl,-exported_symbols_list,${vectis_export_policy_dir}/vectis.exports")
   elseif(UNIX)
     target_link_options(vectis_shared PRIVATE
+      # Provider-owned peers retain their payloads. Relative RPATH also
+      # resolves their transitive dependencies after SDK relocation.
+      "LINKER:--disable-new-dtags"
       "LINKER:--version-script=${vectis_export_policy_dir}/vectis.map")
   endif()
   if(VECTIS_BUILD_FUZZERS)
@@ -854,6 +703,10 @@ elseif(VECTIS_BUILD_SHARED)
 endif()
 
 if(VECTIS_BUILD_BINARY)
+  set(vectis_libmdf_lua_source "${vectis_libmdf_lua_source_dir}/lua/libmdf_core.c")
+  set(vectis_libmdf_lua_module "${vectis_libmdf_lua_source_dir}/lua/libmdf.lua")
+  set(vectis_pslog_lua_source "${vectis_pslog_lua_source_dir}/lua/src/pslog_lua.c")
+  set(vectis_pslog_lua_init "${vectis_pslog_lua_source_dir}/lua/pslog/init.lua")
   file(GLOB_RECURSE vectis_cli_doc_files CONFIGURE_DEPENDS
        RELATIVE "${CMAKE_SOURCE_DIR}/manual" "${CMAKE_SOURCE_DIR}/manual/*.md")
   set(vectis_cli_doc_resources
@@ -881,6 +734,8 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/vectis/kore.lua|vectis/kore.lua|vectis.kore|vectis standalone fallback"
     "${CMAKE_SOURCE_DIR}/lua/vectis/supervisor.lua|vectis/supervisor.lua|vectis.supervisor|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/workflow.lua|vectis/workflow.lua|vectis.workflow|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/storage.lua|vectis/storage.lua|vectis.storage|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/pg.lua|vectis/pg.lua|vectis.pg|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/lockd.lua|vectis/lockd.lua|vectis.lockd|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/log.lua|vectis/log.lua|vectis.log|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/mqtt.lua|vectis/mqtt.lua|vectis.mqtt|vectis"
@@ -891,12 +746,14 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/vectis/version.lua|vectis/version.lua|vectis.version|vectis standalone fallback"
     "${CMAKE_SOURCE_DIR}/lua/vectis/webdav.lua|vectis/webdav.lua|vectis.webdav|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/xml.lua|vectis/xml.lua|vectis.xml|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/digest.lua|vectis/digest.lua|vectis.digest|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/buffer.lua|vectis/buffer.lua|vectis.buffer|vectis"
     "${vectis_lockdc_lua_source_dir}/lua/lockdc/init.lua|lockdc/init.lua|lockdc|liblockdc"
     "${vectis_lonejson_lua_source_dir}/lua/lonejson/init.lua|lonejson/upstream.lua|lonejson.upstream|lonejson"
     "${CMAKE_SOURCE_DIR}/lua/lonejson/init.lua|lonejson/init.lua|lonejson|vectis compatibility facade"
-    "${vectis_pslog_lua_source_dir}/lua/pslog/init.lua|pslog/init.lua|pslog|pslog"
+    "${vectis_pslog_lua_init}|pslog/init.lua|pslog|pslog"
     "${vectis_liblql_lua_source_dir}/lua/lql/init.lua|lql/init.lua|lql|liblql"
-    "${vectis_libmdf_lua_source_dir}/lua/libmdf.lua|libmdf.lua|libmdf|libmdf"
+    "${vectis_libmdf_lua_module}|libmdf.lua|libmdf|libmdf"
   )
   vectis_generate_cli_resource_header(
     "${CMAKE_BINARY_DIR}/generated/include/vectis_cli_lua_sources.h"
@@ -930,11 +787,8 @@ const unsigned char vectis_cli_lua_sources_data[] = {
     "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_lua.c")
   set(vectis_lonejson_lua_source
     "${vectis_lonejson_lua_source_dir}/src/lua/lonejson_lua.c")
-  set(vectis_pslog_lua_source
-    "${vectis_pslog_lua_source_dir}/lua/src/pslog_lua.c")
   set(vectis_cai_lua_source "${vectis_cai_lua_source_dir}/lua/cai_lua.c")
   set(vectis_liblql_lua_source "${vectis_liblql_lua_source_dir}/lua/lql_core.c")
-  set(vectis_libmdf_lua_source "${vectis_libmdf_lua_source_dir}/lua/libmdf_core.c")
   set(vectis_softline_lua_source
     "${vectis_softline_lua_source_dir}/lua/softline_lua.c")
   set(vectis_opcua_lua_source "${CMAKE_SOURCE_DIR}/src/vectis_opcua_lua.c")
@@ -955,7 +809,12 @@ const unsigned char vectis_cli_lua_sources_data[] = {
   set_source_files_properties(${vectis_embedded_lua_c_sources} PROPERTIES
     OBJECT_DEPENDS "${vectis_dependency_manifest}"
   )
-  add_library(vectis_lockdc_lua OBJECT "${vectis_lockdc_lua_source}")
+  add_library(vectis_lockdc_lua OBJECT "${vectis_lockdc_lua_source}"
+    "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_collections_lua.c"
+    "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_xa_lua.c"
+    "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_xa_resource_lua.c"
+    "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_xa_provider_lua.c"
+    "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_postgres_lua.c")
   target_include_directories(vectis_lockdc_lua PRIVATE
     "${vectis_external_include_dir}"
     "${vectis_lockdc_lua_source_dir}/src"
@@ -1062,7 +921,7 @@ const unsigned char vectis_cli_lua_sources_data[] = {
 
   add_library(vectis_liblql_lua OBJECT "${vectis_liblql_lua_source}")
   target_include_directories(vectis_liblql_lua PRIVATE
-    "${VECTIS_EXTERNAL_ROOT}/include")
+    ${vectis_external_include_dirs})
   target_compile_definitions(vectis_liblql_lua PRIVATE
     LUA_COMPAT_5_4=1)
   set_target_properties(vectis_liblql_lua PROPERTIES
@@ -1086,6 +945,14 @@ const unsigned char vectis_cli_lua_sources_data[] = {
     POSITION_INDEPENDENT_CODE ON
   )
   vectis_apply_relocatable_paths(vectis_libmdf_lua)
+
+  add_library(vectis_buffer_lua OBJECT src/vectis_lua_buffer.c)
+  target_include_directories(vectis_buffer_lua PRIVATE
+    "${vectis_external_include_dir}" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_BINARY_DIR}/generated/include" "${CMAKE_SOURCE_DIR}/src")
+  vectis_configure_c89_target(vectis_buffer_lua)
+  set_target_properties(vectis_buffer_lua PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  vectis_apply_relocatable_paths(vectis_buffer_lua)
 
   add_library(vectis_softline_lua OBJECT "${vectis_softline_lua_source}")
   target_include_directories(vectis_softline_lua PRIVATE
@@ -1196,6 +1063,13 @@ const unsigned char vectis_cli_lua_sources_data[] = {
   set(vectis_binary_runner_sources
     src/vectis_cli.c
     src/vectis_lua_supervisor.c
+    src/vectis_lua_digest.c
+    src/vectis_lua_pg.c
+    $<TARGET_OBJECTS:vectis_buffer_lua>
+    src/vectis_lua_zlib_stream.c
+    src/vectis_lua_zlib_raw.c
+    src/vectis_lua_gz.c
+    src/vectis_lua_pouch.c
     src/vectis_lua_lockdc.c
     src/vectis_cli_proxy_lua.c
     src/vectis_smith_cli.c
@@ -1212,6 +1086,7 @@ const unsigned char vectis_cli_lua_sources_data[] = {
     $<TARGET_OBJECTS:vectis_sus_lua>
   )
   add_executable(vectis_bin ${vectis_binary_runner_sources})
+  target_include_directories(vectis_bin PRIVATE "${vectis_lockdc_lua_source_dir}/src/lua")
   target_include_directories(vectis_bin PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated/include"

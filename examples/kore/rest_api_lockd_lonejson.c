@@ -101,7 +101,7 @@ static vectis_status save_order(vectis_app *app, vectis_request *request,
                                       error);
   }
   status = vectis_lockd_state_save(lockd, key, "orders-api", 30L,
-                                   &order_request_map, &input, error);
+                                   &order_request_map, &input, NULL, error);
   if (status != VECTIS_OK) {
     return vectis_response_error_json(
         response, 503, "order_save_failed", "failed to save order state",

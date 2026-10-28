@@ -124,7 +124,7 @@ static vectis_status get_state(vectis_app *app, vectis_request *request,
   }
 
   status = vectis_lockd_state_save(lockd, key, "vectis-kore-lockd-example", 30L,
-                                   &state_response_map, &state, error);
+                                   &state_response_map, &state, NULL, error);
   if (status == VECTIS_OK) {
     status = vectis_lockd_state_load(lockd, key, "vectis-kore-lockd-example",
                                      30L, &state_response_map, &loaded, error);

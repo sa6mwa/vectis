@@ -4,6 +4,15 @@ include(CMakeFindDependencyMacro)
 
 # Dependencies can overwrite PACKAGE_PREFIX_DIR with CMake before 3.30.
 set(_vectis_package_prefix "${PACKAGE_PREFIX_DIR}")
+file(GLOB _vectis_bundled_prefixes LIST_DIRECTORIES TRUE "${PACKAGE_PREFIX_DIR}/deps/*")
+foreach(_vectis_prefix IN LISTS _vectis_bundled_prefixes)
+  if(EXISTS "${_vectis_prefix}/lib/cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "${_vectis_prefix}")
+    list(PREPEND CMAKE_FIND_ROOT_PATH "${_vectis_prefix}")
+  endif()
+endforeach()
+find_dependency(CpktCore 0.6.0 CONFIG REQUIRED)
+find_dependency(CpktPostgres CONFIG REQUIRED)
 find_dependency(Threads REQUIRED)
 find_dependency(OpenSSL CONFIG REQUIRED)
 find_dependency(ZLIB CONFIG REQUIRED)
@@ -22,6 +31,7 @@ find_package(cai CONFIG REQUIRED)
 find_package(libmdf CONFIG REQUIRED)
 find_package(softline CONFIG REQUIRED)
 find_package(lockdc CONFIG REQUIRED)
+find_dependency(lockdc_postgres 0.23.0 CONFIG REQUIRED COMPONENTS static shared)
 set(PACKAGE_PREFIX_DIR "${_vectis_package_prefix}")
 unset(_vectis_package_prefix)
 
@@ -87,6 +97,7 @@ list(REMOVE_DUPLICATES _vectis_dependency_link_dirs)
 
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.a")
   set(_vectis_static_links
+    lockdc::postgres_static
     lockdc::static
     cpkt::opcua
     cpkt::sus
@@ -118,6 +129,7 @@ endif()
 
 if(NOT TARGET vectis::shared)
   set(_vectis_shared_links
+    lockdc::postgres_shared
     lockdc::shared
     cpkt::opcua_shared
     cpkt::sus_shared

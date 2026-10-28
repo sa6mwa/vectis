@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.24)
+# Native process execution owns cancellation. Kore already observes its parent
+# control socket closing and shuts down; no polling supervisor/PID broker.
+if(NOT DEFINED EXECUTABLE OR NOT DEFINED TIMEOUT_SECONDS OR NOT DEFINED EXPECTED_EXIT)
+  message(FATAL_ERROR "Kore test needs executable, timeout and expected exit")
+endif()
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef suffix)
+set(work "${CMAKE_CURRENT_BINARY_DIR}/kore-test-${suffix}")
+file(MAKE_DIRECTORY "${work}")
+set(ENV{ASAN_OPTIONS} "$ENV{ASAN_OPTIONS}:log_path=${work}/asan")
+set(ENV{UBSAN_OPTIONS} "$ENV{UBSAN_OPTIONS}:log_path=${work}/ubsan")
+execute_process(COMMAND "${EXECUTABLE}" WORKING_DIRECTORY "${work}"
+  RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT "${TIMEOUT_SECONDS}")
+file(GLOB reports "${work}/asan.*" "${work}/ubsan.*")
+foreach(report IN LISTS reports)
+  file(READ "${report}" text)
+  string(APPEND err "\nforked Kore worker sanitizer report: ${report}\n${text}")
+endforeach()
+file(REMOVE_RECURSE "${work}")
+if(NOT "${result}" STREQUAL "${EXPECTED_EXIT}" OR reports)
+  message(FATAL_ERROR "Kore test returned ${result}, expected ${EXPECTED_EXIT}\n${out}${err}")
+endif()
+message("${out}${err}")

@@ -17,13 +17,15 @@ if(VECTIS_BUILD_TESTS AND VECTIS_BUILD_BINARY)
 endif()
 
 if(VECTIS_BUILD_TESTS)
-  if(APPLE)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    add_test(NAME vectis_unit_forked_kore_darwin_supervisor
-      COMMAND "${Python3_EXECUTABLE}" -B
-        "${CMAKE_SOURCE_DIR}/scripts/test_forked_kore_test_darwin.py")
-    set_tests_properties(vectis_unit_forked_kore_darwin_supervisor PROPERTIES
-      LABELS "unit;local;lifecycle" TIMEOUT 15)
+  add_test(NAME vectis_clean_ownership
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/clean-ownership" -P "${CMAKE_SOURCE_DIR}/tests/clean.cmake")
+  set_tests_properties(vectis_clean_ownership PROPERTIES LABELS "unit;local;lifecycle;failure-fast" TIMEOUT 5)
+  if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME vectis_dependency_cache
+      COMMAND bash "${CMAKE_SOURCE_DIR}/tests/dependency_cache.sh")
+    set_tests_properties(vectis_dependency_cache PROPERTIES
+      LABELS "unit;local;lifecycle;failure-fast" TIMEOUT 20 RUN_SERIAL TRUE)
   endif()
   add_test(NAME vectis_byte_array_generator
     COMMAND "${CMAKE_COMMAND}"
@@ -35,7 +37,6 @@ if(VECTIS_BUILD_TESTS)
     TIMEOUT 30)
   if(VECTIS_TARGET_ID STREQUAL "x86_64-linux-gnu" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux"
       AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(vectis_runtime_probe helpers/vectis_runtime_probe.c)
     vectis_configure_c89_target(vectis_runtime_probe)
     target_compile_options(vectis_runtime_probe PRIVATE -Wall -Wextra -Werror -Wpedantic)
@@ -47,7 +48,111 @@ if(VECTIS_BUILD_FUZZERS)
   add_subdirectory(fuzz)
 endif()
 
+if(NOT VECTIS_BUILD_TESTS)
+  return()
+endif()
+
 if(VECTIS_BUILD_BINARY)
+  add_test(NAME vectis_cli_source_integrity COMMAND "${CMAKE_COMMAND}"
+    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/source-integrity"
+    -P "${CMAKE_SOURCE_DIR}/tests/lua/source_integrity.cmake")
+  set_tests_properties(vectis_cli_source_integrity PROPERTIES LABELS "cli;local;failure-fast" TIMEOUT 5)
+  if(VECTIS_TEST_POSTGRES)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+       NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR
+       NOT VECTIS_TARGET_ARCH STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
+      message(FATAL_ERROR "Live PostgreSQL tests require a native Linux configuration")
+    endif()
+    add_test(NAME vectis_postgres_xa_live COMMAND bash
+      "${CMAKE_SOURCE_DIR}/scripts/test_postgres_xa.sh" "$<TARGET_FILE:vectis_bin>")
+    set_tests_properties(vectis_postgres_xa_live PROPERTIES
+      LABELS "service;postgres;xa;packed" TIMEOUT 90 RUN_SERIAL TRUE
+      # Rootless Podman is a workstation prerequisite. Its runtime/network state
+      # must use the host session, while database/test payloads remain owned.
+      ENVIRONMENT "XDG_RUNTIME_DIR=$ENV{XDG_RUNTIME_DIR};XDG_CONFIG_HOME=$ENV{XDG_CONFIG_HOME};XDG_CACHE_HOME=$ENV{XDG_CACHE_HOME}")
+  endif()
+  add_test(NAME vectis_lua_storage
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/storage"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/storage.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_storage PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_softline_upgrade
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/softline-upgrade"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/softline_upgrade.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_softline_upgrade PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_zlib_raw
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/zlib-raw"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/zlib_raw.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_zlib_raw PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_zlib_raw_io
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/zlib-raw-io"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/zlib_raw_io.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_zlib_raw_io PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_zlib_headers
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/zlib-headers"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/zlib_headers.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_zlib_headers PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_zlib_back
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/zlib-back"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/zlib_back.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_zlib_back PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_zlib_allocator
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/zlib-allocator"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/zlib_allocator.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_zlib_allocator PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_zlib_buffers
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/zlib-buffers"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/zlib_buffers.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_zlib_buffers PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_buffer
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/buffer"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/buffer.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_buffer PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_gz
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/gz"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/gz.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_gz PROPERTIES LABELS "lua;local;packed" TIMEOUT 30 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_zlib_streaming
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/zlib-streaming"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/zlib_streaming.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_zlib_streaming PROPERTIES
+    LABELS "lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_pouch_typed_settings
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/pouch-typed-settings"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/pouch_typed_settings.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_pouch_typed_settings PROPERTIES
+    LABELS "lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_digest_streaming
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/digest-streaming"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/digest_streaming.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_digest_streaming PROPERTIES
+    LABELS "lua;local;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_queue_seams
     COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
       "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/queue-seams"
@@ -96,17 +201,61 @@ set_target_properties(vectis_ws_client PROPERTIES
 )
 
 if(TARGET vectis_bin)
-  if(VECTIS_WITH_KORE_RUNTIME AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(VECTIS_WITH_KORE_RUNTIME AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux"
+      AND VECTIS_TARGET_ARCH STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
+    include("${CMAKE_SOURCE_DIR}/cmake/vectis_bench_fixture.cmake")
+    vectis_add_bench_fixture(proxy_bench)
     add_test(NAME vectis_proxy_stream_smoke_http
-      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/bench/proxy.py"
-        --vectis "$<TARGET_FILE:vectis_bin>" --smoke)
+      COMMAND "${proxy_bench}" benchmark --vectis "$<TARGET_FILE:vectis_bin>"
+        --root "${CMAKE_BINARY_DIR}/bench/proxy" --smoke)
     add_test(NAME vectis_proxy_stream_smoke_tls
-      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/bench/proxy.py"
-        --vectis "$<TARGET_FILE:vectis_bin>" --smoke --tls)
+      COMMAND "${proxy_bench}" benchmark --vectis "$<TARGET_FILE:vectis_bin>"
+        --root "${CMAKE_BINARY_DIR}/bench/proxy" --smoke --tls)
+    add_test(NAME vectis_proxy_stream_smoke_h2
+      COMMAND "${proxy_bench}" benchmark --vectis "$<TARGET_FILE:vectis_bin>"
+        --root "${CMAKE_BINARY_DIR}/bench/proxy" --smoke --http2)
     set_tests_properties(vectis_proxy_stream_smoke_http
-      vectis_proxy_stream_smoke_tls PROPERTIES
+      vectis_proxy_stream_smoke_tls vectis_proxy_stream_smoke_h2 PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
       LABELS "proxy;smoke;local;integration" TIMEOUT 25 RUN_SERIAL TRUE)
+    add_test(NAME vectis_metrics_recovery_fast
+      COMMAND "${proxy_bench}" metrics-recovery --binary "$<TARGET_FILE:vectis_bin>"
+        --script "${CMAKE_SOURCE_DIR}/tests/lua/metrics_startup.lua"
+        --root "${CMAKE_BINARY_DIR}/bench/metrics-recovery-fast" --updates 16)
+    set_tests_properties(vectis_metrics_recovery_fast PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" LABELS "local;integration;metrics;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
+    # One native producer shares identical expensive recovery evidence between
+    # CTest, perf-gate and service e2e. It is not a per-test scheduler.
+    set(metrics_recovery_args)
+    set(metrics_recovery_test vectis_metrics_recovery_performance)
+    set(metrics_recovery_label performance)
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" metrics_configuration)
+    if(VECTIS_ENABLE_COVERAGE OR
+       "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${metrics_configuration}}" MATCHES "fsanitize=")
+      # Instrumentation retains the full workload/readiness/cleanup assertions.
+      # Its CPU measurement is not the normal build's performance contract.
+      set(metrics_recovery_args --cpu-seconds 0)
+      set(metrics_recovery_test vectis_metrics_recovery_instrumented)
+      set(metrics_recovery_label instrumentation)
+    endif()
+    set(metrics_recovery_stamp "${CMAKE_BINARY_DIR}/test-results/metrics-recovery.passed")
+    add_custom_command(OUTPUT "${metrics_recovery_stamp}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/test-results"
+      COMMAND "${CMAKE_COMMAND}" -E rm -f "${metrics_recovery_stamp}"
+      COMMAND "${proxy_bench}" metrics-recovery --binary "$<TARGET_FILE:vectis_bin>"
+        --script "${CMAKE_SOURCE_DIR}/tests/lua/metrics_startup.lua"
+        --root "${CMAKE_BINARY_DIR}/bench/metrics-recovery" ${metrics_recovery_args}
+      COMMAND "${CMAKE_COMMAND}" -E touch "${metrics_recovery_stamp}"
+      DEPENDS vectis_bin vectis_bench_fixture "${proxy_bench}" "${CMAKE_SOURCE_DIR}/tests/lua/metrics_startup.lua"
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" VERBATIM)
+    add_custom_target(vectis_metrics_recovery_gate DEPENDS "${metrics_recovery_stamp}")
+    add_test(NAME ${metrics_recovery_test}
+      COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target vectis_metrics_recovery_gate)
+    set_tests_properties(${metrics_recovery_test} PROPERTIES
+      LABELS "local;integration;metrics;${metrics_recovery_label}" TIMEOUT 300 RUN_SERIAL TRUE
+      # This test invokes CMake's declared producer, not just a product child.
+      # Preserve configure-time host prerequisite/cache discovery on regeneration.
+      ENVIRONMENT "XDG_CACHE_HOME=$ENV{XDG_CACHE_HOME};XDG_CONFIG_HOME=$ENV{XDG_CONFIG_HOME};XDG_STATE_HOME=$ENV{XDG_STATE_HOME};XDG_RUNTIME_DIR=$ENV{XDG_RUNTIME_DIR}")
   endif()
   find_program(VECTIS_HOST_LUA NAMES lua5.5 lua)
 
@@ -132,8 +281,7 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_opcua_lua_cleanup PROPERTIES
     LABELS "unit;lua;local;failure-fast" TIMEOUT 30)
   target_include_directories(vectis_opcua_lua_e2e PRIVATE
-    "${vectis_pslog_lua_source_dir}/include"
-    "${VECTIS_EXTERNAL_ROOT}/include")
+    "${vectis_pslog_lua_source_dir}/include")
   target_compile_definitions(vectis_opcua_lua_e2e PRIVATE
     _POSIX_C_SOURCE=200809L)
   target_link_libraries(vectis_opcua_lua_e2e PRIVATE
@@ -218,8 +366,7 @@ if(TARGET vectis_bin)
     unit/test_vectis_smith_cli_stream.c)
   target_include_directories(vectis_smith_cli_stream PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_SOURCE_DIR}/src"
-    "${VECTIS_EXTERNAL_ROOT}/include")
+    "${CMAKE_SOURCE_DIR}/src")
   target_compile_definitions(vectis_smith_cli_stream PRIVATE
     _POSIX_C_SOURCE=200809L)
   target_link_libraries(vectis_smith_cli_stream PRIVATE
@@ -291,12 +438,11 @@ if(TARGET vectis_bin)
         LABELS "unit;lua;local;failure-fast" TIMEOUT 5)
     endforeach()
     if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
-      find_package(Python3 REQUIRED COMPONENTS Interpreter)
       add_test(NAME vectis_lua_mcp_failure_modes
-        COMMAND "${Python3_EXECUTABLE}" -B
-          "${CMAKE_SOURCE_DIR}/tests/lua/failure_modes.py"
-          --binary "$<TARGET_FILE:vectis_bin>"
-          --work-dir "${CMAKE_CURRENT_BINARY_DIR}/failure-modes")
+        COMMAND "${CMAKE_COMMAND}" "-DHTTP_TEST=$<TARGET_FILE:vectis_lua_http_behavior>"
+          "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+          "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/failure-modes"
+          -P "${CMAKE_SOURCE_DIR}/tests/lua/mcp_failures.cmake")
       set_tests_properties(vectis_lua_mcp_failure_modes PROPERTIES
         LABELS "integration;lua;local;failure-fast" TIMEOUT 20 RUN_SERIAL TRUE)
     endif()
@@ -337,6 +483,7 @@ if(TARGET vectis_bin)
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   "-DUPLOAD_FIXTURE=${proxy_bench}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/curl.cmake")
   set_tests_properties(vectis_lua_curl PROPERTIES
     LABELS "lua;smoke;local"
@@ -365,11 +512,14 @@ if(TARGET vectis_bin)
     LABELS "lua;smoke;local;integration"
     TIMEOUT 45)
   add_test(NAME vectis_lua_websocket
-           COMMAND bash
-                   "${CMAKE_SOURCE_DIR}/tests/lua/server_websocket.sh"
-                   "$<TARGET_FILE:vectis_bin>"
-                   "$<TARGET_FILE:vectis_pick_port>"
-                   "$<TARGET_FILE:vectis_ws_client>")
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DHTTP_TEST=$<TARGET_FILE:vectis_lua_http_behavior>"
+                   "-DWS_CLIENT=$<TARGET_FILE:vectis_ws_client>"
+                   "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/server_websocket.lua"
+                   "-DMODE=websocket-enabled"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/lua-websocket"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/http_behavior.cmake")
   set_tests_properties(vectis_lua_websocket PROPERTIES
     LABELS "lua;smoke;local;integration"
     TIMEOUT 30)
@@ -402,21 +552,37 @@ if(TARGET vectis_bin)
     LABELS "lua;smoke;local"
     TIMEOUT 30)
   if((CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin") AND VECTIS_WITH_KORE_RUNTIME)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_executable(vectis_lua_http_behavior helpers/lua_http_behavior.c)
+    target_link_libraries(vectis_lua_http_behavior PRIVATE ${vectis_test_link_target})
+    vectis_configure_c89_target(vectis_lua_http_behavior)
     add_test(NAME vectis_lua_app_source_lifetime
-      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tests/lua/app_source_lifetime.py"
-        --vectis "$<TARGET_FILE:vectis_bin>"
-        --script "${CMAKE_SOURCE_DIR}/tests/lua/app_source_lifetime.lua"
-        --work "${CMAKE_CURRENT_BINARY_DIR}/app-source-lifetime")
+      COMMAND "${CMAKE_COMMAND}" "-DHTTP_TEST=$<TARGET_FILE:vectis_lua_http_behavior>"
+        "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>" "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/app_source_lifetime.lua"
+        -DMODE=source "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/app-source-lifetime"
+        -P "${CMAKE_SOURCE_DIR}/tests/lua/http_behavior.cmake")
     set_tests_properties(vectis_lua_app_source_lifetime PROPERTIES
       LABELS "lua;local;integration;packed;failure-fast" TIMEOUT 45 RUN_SERIAL TRUE)
+    add_test(NAME vectis_lua_fork_exit_failure
+      COMMAND "${CMAKE_COMMAND}" "-DHTTP_TEST=$<TARGET_FILE:vectis_lua_http_behavior>"
+        "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>" "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/fork_exit_failure.lua"
+        -DMODE=fork-failure "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/fork-exit-failure"
+        -P "${CMAKE_SOURCE_DIR}/tests/lua/http_behavior.cmake")
+    set_tests_properties(vectis_lua_fork_exit_failure PROPERTIES
+      LABELS "lua;local;integration;packed;failure-fast" TIMEOUT 45 RUN_SERIAL TRUE)
     add_test(NAME vectis_lua_supervisor_route
-      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_route.py"
-        --vectis "$<TARGET_FILE:vectis_bin>"
-        --script "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_route.lua"
-        --work "${CMAKE_CURRENT_BINARY_DIR}/supervisor-route")
+      COMMAND "${CMAKE_COMMAND}" "-DHTTP_TEST=$<TARGET_FILE:vectis_lua_http_behavior>"
+        "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>" "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/supervisor_route.lua"
+        -DMODE=workflow-direct "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/supervisor-route"
+        -P "${CMAKE_SOURCE_DIR}/tests/lua/http_behavior.cmake")
     set_tests_properties(vectis_lua_supervisor_route PROPERTIES
       LABELS "lua;local;integration;packed" TIMEOUT 45 RUN_SERIAL TRUE)
+    add_test(NAME vectis_lua_xa_worker_wake
+      COMMAND "${CMAKE_COMMAND}" "-DHTTP_TEST=$<TARGET_FILE:vectis_lua_http_behavior>"
+        "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>" "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/supervisor_route.lua"
+        -DMODE=workflow-xa "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/xa-worker-wake"
+        -P "${CMAKE_SOURCE_DIR}/tests/lua/http_behavior.cmake")
+    set_tests_properties(vectis_lua_xa_worker_wake PROPERTIES
+      LABELS "lua;local;integration;packed;failure-fast" TIMEOUT 30 RUN_SERIAL TRUE)
   endif()
   add_test(NAME vectis_lua_supervisor_workflow
     COMMAND "${CMAKE_COMMAND}"
@@ -443,7 +609,7 @@ if(TARGET vectis_bin)
       "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/supervisor_upstream_stateful.lua"
       -P "${CMAKE_SOURCE_DIR}/tests/lua/supervisor_workflow.cmake")
   set_tests_properties(vectis_lua_supervisor_upstream_stateful PROPERTIES
-    LABELS "lua;local;integration;packed;upstream-contract" TIMEOUT 60 RUN_SERIAL TRUE)
+    LABELS "lua;local;integration;packed;upstream-contract;failure-fast" TIMEOUT 60 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_dsv
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -469,12 +635,6 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_browser_sessions PROPERTIES
     LABELS "lua;local;integration"
     TIMEOUT 30)
-  add_test(NAME vectis_lua_facade_behavior_coverage
-           COMMAND bash
-                   "${CMAKE_SOURCE_DIR}/scripts/test_lua_facade_behavior_coverage.sh")
-  set_tests_properties(vectis_lua_facade_behavior_coverage PROPERTIES
-    LABELS "lua;local"
-    TIMEOUT 10)
   add_test(NAME vectis_lua_lockd_helpers
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -501,13 +661,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_http PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(vectis_mqtt_wire helpers/mqtt_wire.c)
+  vectis_configure_c89_target(vectis_mqtt_wire)
   add_test(NAME vectis_lua_mqtt
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
-                   "-DPYTHON=${Python3_EXECUTABLE}"
+                   "-DMQTT_WIRE=$<TARGET_FILE:vectis_mqtt_wire>"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/mqtt.cmake")
   set_tests_properties(vectis_lua_mqtt PROPERTIES
     LABELS "lua;smoke;local"
@@ -554,7 +715,6 @@ if(TARGET vectis_bin)
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/ssh_sftp.cmake")
   set_tests_properties(vectis_lua_ssh_sftp PROPERTIES
     LABELS "lua;smoke;local"
-    ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan/libssh2.supp"
     TIMEOUT 30)
   add_test(NAME vectis_lua_audio_sus
            COMMAND "${CMAKE_COMMAND}"
@@ -627,6 +787,20 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_cli_admin_credentials PROPERTIES
     LABELS "cli;local"
     TIMEOUT 30)
+  add_test(NAME vectis_cli_trace COMMAND "${CMAKE_COMMAND}"
+    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/trace"
+    -P "${CMAKE_SOURCE_DIR}/tests/lua/trace.cmake")
+  set_tests_properties(vectis_cli_trace PROPERTIES
+    LABELS "cli;lua;local;failure-fast" TIMEOUT 5)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME vectis_cli_trace_packed COMMAND "${CMAKE_COMMAND}"
+      "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>" -DPACKED=ON
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/trace-packed"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/trace.cmake")
+    set_tests_properties(vectis_cli_trace_packed PROPERTIES
+      LABELS "cli;lua;local;packed;failure-fast" TIMEOUT 5)
+  endif()
   add_test(NAME vectis_example_lua_mdf_render
            COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/mdf_render.lua")
   set_tests_properties(vectis_example_lua_mdf_render PROPERTIES
@@ -937,9 +1111,18 @@ if(VECTIS_BUILD_BINARY)
   set_tests_properties(vectis_app_source_lifetime PROPERTIES
     LABELS "unit;lua;local;failure-fast" TIMEOUT 15)
   add_custom_target(vectis_failures_fast DEPENDS vectis_bin vectis_unit_supervisor
-    vectis_unit_mdf_failure
+    vectis_unit_lua_trace_observer vectis_unit_pg vectis_unit_storage
+    vectis_unit_pg_lua_gc vectis_unit_digest vectis_unit_buffer
+    vectis_unit_zlib_stream vectis_unit_zlib_raw vectis_unit_zlib_back
+    vectis_unit_zlib_raw_lua_oom vectis_unit_mdf_failure
+    vectis_smith_cli_stream
     vectis_opcua_lua_cleanup vectis_sus_lua_lifetime vectis_app_source_lifetime
     vectis_audio_lua_validation)
+  foreach(helper vectis_unit_fork_exit vectis_lua_http_behavior vectis_bench_fixture)
+    if(TARGET ${helper})
+      add_dependencies(vectis_failures_fast ${helper})
+    endif()
+  endforeach()
 endif()
 
 if(VECTIS_BUILD_BINARY)

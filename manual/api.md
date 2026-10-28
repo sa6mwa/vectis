@@ -1,5 +1,11 @@
 # Vectis API Surface
 
+`vectis/storage.h` adds app-configured factories for upstream C89 collection
+and managed XA receiver shells. `vectis/pg.h` adds a parameterized PostgreSQL
+XA borrow adapter with explicitly materialized results and copied diagnostics.
+See [storage and PostgreSQL XA](lua-storage.md) for ownership, readiness and
+C/Lua composition rules.
+
 Vectis has two product-facing API surfaces:
 
 - the C SDK in `include/vectis/vectis.h` and the public extension headers,
@@ -32,6 +38,12 @@ Major groups:
 - Runtime/server: `vectis_app`, `vectis_server_config`,
   `vectis_register_route()`, foreground `vectis_run()`, process-backed
   `vectis_start()`, `vectis_stop()`, and `vectis_restart()`.
+  `vectis_app_set_fork_exit_handler()` installs an optional owner-thread cleanup
+  callback before start. It runs after native teardown in each forked Kore
+  parent/worker, with role `kore_parent` or `kore_worker`, never in the original
+  app process. The callback may destroy its process's app copy; it must not
+  start new work. Failure exits that process unsuccessfully; stopping reports
+  a nonzero Kore parent exit. A killed worker cannot run cleanup callbacks.
 - Supervisors and IPC: `vectis/supervisor.h` declares app-owned logical scopes,
   owner-thread dispatch, timers, copied bounded frames, coalesced signals,
   readiness FDs and lifecycle diagnostics. The app receiver ABI is unchanged;
@@ -128,6 +140,8 @@ Lua docs:
 - [Lua mailbox](lua-mailbox.md)
 - [Lua MQTT](lua-mqtt.md)
 - [Lua OpenSSL](lua-openssl.md)
+- [Lua digest receivers](lua-digest.md)
+- [Lua byte buffers and spans](lua-buffer.md)
 - [Lua OPC UA](lua-opcua.md)
 - [Lua app](lua-app.md)
 - [Lua LoneJSON](lua-lonejson.md)

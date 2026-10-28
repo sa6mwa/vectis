@@ -3716,7 +3716,7 @@ ssh_password=$(cat "$repo_root/build/devenv/credentials/ssh_password")
 install_ssh_public_key
 provision_ssh_known_hosts
 make -C "$repo_root" build-debug
-python3 "$repo_root/tests/metrics_startup.py" --binary "$repo_root/build/debug/vectis"
+cmake --build "$repo_root/build/debug" --target vectis_metrics_recovery_gate
 run_remote_metrics_lockd_e2e
 
 cd "$work_dir"

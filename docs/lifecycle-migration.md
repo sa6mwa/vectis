@@ -5,6 +5,13 @@ pending tasks. Current commands are indexed by `make help`; current dependency
 pins are in [the README](../README.md#dependency-baseline). Version numbers in
 individual migration rows identify the original cutover, not today's baseline.
 
+The split-bundle migration retires the old source-text service/facade audits.
+`make test-service-runtime-lifecycle` now executes runtime, fork-exit and Lua
+cleanup behavior through CTest; `make test-lua-facade-matrix` executes the Lua
+smoke, facade and installed preload contracts. `make test-lua-facade-behavior`
+runs the actual Lua-labeled suite. These are regression checks, not substitutes
+for the mandatory semantic integration/coverage review by the responsible agent.
+
 | Old command or behavior | Lifecycle surface | Behavior preserved | Verification added | Status |
 | --- | --- | --- | --- | --- |
 | Hard-coded CMake/project and CLI version `0.0.0` | `scripts/release_version.sh`, generated `vectis_version.h`, `make print-release-version` | Git worktrees resolve by exact lightweight `vX.Y.Z` tag first, then explicit `VECTIS_VERSION_OVERRIDE`, then `0.0.0`; root `/VERSION` is ignored in git and only source archives consume injected `VERSION` | `scripts/test_lifecycle_contracts.sh` | Implemented |

@@ -1,9 +1,11 @@
 #include "vectis_lua_lockdc.h"
 #include <lauxlib.h>
 #include <lc/lc.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vectis/storage.h>
 #include <vectis/supervisor.h>
 
 typedef struct open_scope {
@@ -202,9 +204,41 @@ static int build_endpoint(lua_State *lua) {
   lc_error_cleanup(&error);
   return 1;
 }
+static int wait_blocking(lua_State *lua) {
+  lc_xa_wait wait;
+  lua_Integer value;
+  vectis_error error;
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  lua_getfield(lua, 1, "fd");
+  if (!lua_isinteger(lua, -1))
+    return luaL_error(lua, "XA fd must be an integer");
+  value = lua_tointeger(lua, -1);
+  if (value < INT_MIN || value > INT_MAX)
+    return luaL_error(lua, "XA fd outside int range");
+  wait.fd = (int)value;
+  lua_pop(lua, 1);
+  lua_getfield(lua, 1, "events");
+  if (!lua_isinteger(lua, -1))
+    return luaL_error(lua, "XA events must be an integer");
+  value = lua_tointeger(lua, -1);
+  if (value < 0 || value > 3)
+    return luaL_error(lua, "invalid XA events");
+  wait.events = (unsigned)value;
+  lua_pop(lua, 1);
+  lua_getfield(lua, 1, "deadline_ms");
+  if (!lua_isinteger(lua, -1))
+    return luaL_error(lua, "XA deadline must be an integer");
+  wait.deadline_ms = (int64_t)lua_tointeger(lua, -1);
+  lua_pop(lua, 1);
+  if (vectis_storage_wait_blocking(&wait, &error) != VECTIS_OK)
+    return luaL_error(lua, "%s", error.message);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
 int luaopen_vectis_lockd_core(lua_State *lua) {
   static const luaL_Reg methods[] = {{"pouch_endpoint_build", build_endpoint},
                                      {"pouch_endpoint_has_option", has_option},
+                                     {"wait_blocking", wait_blocking},
                                      {NULL, NULL}};
   luaL_newlib(lua, methods);
   return 1;

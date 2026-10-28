@@ -7,7 +7,8 @@ deps_root=${1:-"$repo_root/.cache/deps/host-debug"}
 source_repo="$repo_root/vendor/kore/upstream"
 patch_dir="$repo_root/vendor/kore/patches"
 series_file="$patch_dir/series"
-tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/vectis-kore-verify.XXXXXX")
+mkdir -p "$repo_root/build/kore-verification"
+tmpdir=$(mktemp -d "$repo_root/build/kore-verification/run.XXXXXXXX")
 
 cleanup() {
   rm -rf "$tmpdir"
@@ -35,7 +36,8 @@ if [ ! -f "$series_file" ]; then
   exit 1
 fi
 
-if [ ! -d "$deps_root/include" ] || [ ! -d "$deps_root/lib" ]; then
+if [ ! -d "$deps_root/cpkt/include" ] || [ ! -d "$deps_root/pslog/lib" ] ||
+   [ ! -d "$deps_root/lonejson/lib" ]; then
   echo "dependency root '$deps_root' is incomplete; run 'make deps-debug' or pass a valid deps root" >&2
   exit 1
 fi
@@ -85,9 +87,5 @@ require_grep 'CFLAGS+=-DKORE_USE_LONEJSON' "$tmpdir/upstream/Makefile" \
 require_grep 'LDFLAGS+=-L$(LONEJSON_PATH)/lib -llonejson' "$tmpdir/upstream/Makefile" \
   "Kore Makefile does not link liblonejson when LONEJSON=1"
 
-make -C "$tmpdir/upstream" \
-  PSLOG=1 \
-  LONEJSON=1 \
-  CURL=1 \
-  ACME=1 \
-  KORE_BUNDLE_ROOT="$deps_root"
+bash "$script_dir/build-kore.sh" "$deps_root" "$tmpdir/upstream"
+"$tmpdir/upstream/kore" -v

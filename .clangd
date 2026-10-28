@@ -1,26 +1,13 @@
 CompileFlags:
   CompilationDatabase: build/debug
-  Remove:
-    - -std=*
   Add:
     - -D_POSIX_C_SOURCE=200809L
-    - -std=c89
     - -Wall
     - -Wextra
     - -Wpedantic
     - -Wno-long-long
 Documentation:
   CommentFormat: Markdown
----
-If:
-  PathMatch: include/vectis/.*
-CompileFlags:
-  # Header inference can select a generated source with no SDK include paths.
-  # These paths are relative to the build/debug compile-command directory.
-  Add:
-    - -I../../include
-    - -I../../.cache/deps/host-debug/include
-    - -I../../.cache/deps/host-debug/include/libxml2
 ---
 If:
   PathMatch: src/vectis_kore_bridge.c
@@ -32,6 +19,6 @@ CompileFlags:
     - -Wno-pedantic
 ---
 If:
-  PathMatch: (dist|build|\\.cache)/.*
+  PathMatch: (dist|build|\.cache)/.*
 Index:
   Background: Skip

@@ -183,7 +183,7 @@ static vectis_status save_content_state(lc_client *client, const char *id,
   (void)snprintf(doc.id, sizeof(doc.id), "%s", id);
   (void)snprintf(doc.content, sizeof(doc.content), "%s", content);
   return vectis_lockd_state_save(client, key, "vectis-e2e-kore-producer", 30L,
-                                 &workflow_content_map, &doc, error);
+                                 &workflow_content_map, &doc, NULL, error);
 }
 
 static vectis_status save_counter_state(lc_client *client, const char *id,
@@ -203,7 +203,7 @@ static vectis_status save_counter_state(lc_client *client, const char *id,
   (void)snprintf(doc.id, sizeof(doc.id), "%s", id);
   doc.counter = counter;
   return vectis_lockd_state_save(client, key, owner, 30L, &workflow_counter_map,
-                                 &doc, error);
+                                 &doc, NULL, error);
 }
 
 static vectis_status load_content_state(lc_client *client, const char *id,
@@ -281,9 +281,9 @@ static vectis_status update_counter_state(lc_client *client, const char *id,
   if (status != VECTIS_OK) {
     return status;
   }
-  status =
-      vectis_lockd_state_update(client, key, owner, 30L, &workflow_counter_map,
-                                &doc, update_counter_value, &update, error);
+  status = vectis_lockd_state_update(
+      client, key, owner, 30L, &workflow_counter_map, &doc,
+      update_counter_value, &update, NULL, error);
   if (status == VECTIS_OK && matched != NULL) {
     *matched = update.matched;
   }

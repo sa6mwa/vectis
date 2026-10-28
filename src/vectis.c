@@ -53,6 +53,7 @@
 #include <unistd.h>
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
+#include <vectis/storage.h>
 #include <vectis/webdav.h>
 
 #if defined(__APPLE__)
@@ -423,6 +424,8 @@ typedef struct vectis_spill_writer {
 } vectis_spill_writer;
 
 typedef struct vectis_app_impl {
+  vectis_fork_exit_fn fork_exit;
+  void *fork_exit_userdata;
   vectis_supervisor_host *supervisor_host;
   pthread_mutex_t mutex;
   pthread_cond_t service_cond;
@@ -531,6 +534,10 @@ typedef struct vectis_app_impl {
   vectis_metrics_state *metrics;
   struct lc_client *lockd_client;
   lc_pouch_settings shared_pouch_settings;
+  lc_pouch_settings declared_pouch_settings;
+  char *pouch_setting_strings[5];
+  lc_pouch_settings explicit_pouch_policy;
+  int pouch_settings_frozen;
   pid_t lockd_client_pid;
   vectis_auth_cleanup_entry *auth_cleanup_entries;
   struct vectis_consumer_receiver_entry *consumer_receivers;
@@ -10400,6 +10407,11 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   free(impl->pouch_crypto_key);
   free(impl->pouch_crypto_key_file);
   free(impl->pouch_compression);
+  free(impl->pouch_setting_strings[0u]);
+  free(impl->pouch_setting_strings[1u]);
+  free(impl->pouch_setting_strings[2u]);
+  free(impl->pouch_setting_strings[3u]);
+  free(impl->pouch_setting_strings[4u]);
   free(impl->cai_api_key);
   free(impl->cai_api_key_env);
   free(impl->cai_base_url);
@@ -10881,6 +10893,31 @@ static int vectis_pouch_endpoints_share_root(const char *left,
   return left_size == right_size && memcmp(left, right, left_size) == 0;
 }
 
+static void vectis_pouch_flat_fields(const vectis_app_impl *impl,
+                                     lc_client_config *config) {
+  const lc_pouch_settings *settings;
+  uint64_t mask;
+  settings = &impl->declared_pouch_settings;
+  mask = settings->set_mask;
+  config->pouch_crypto_key = (mask & LC_POUCH_SETTING_CRYPTO_KEY) != 0
+                                 ? settings->crypto_key
+                                 : impl->pouch_crypto_key;
+  config->pouch_crypto_key_file = (mask & LC_POUCH_SETTING_CRYPTO_KEY_FILE) != 0
+                                      ? settings->crypto_key_file
+                                      : impl->pouch_crypto_key_file;
+  config->pouch_crypto_generate_key_file =
+      (mask & LC_POUCH_SETTING_CRYPTO_GENERATE_KEY_FILE) != 0
+          ? settings->crypto_generate_key_file
+          : impl->pouch_crypto_generate_key_file;
+  config->pouch_crypto_generate_key_file_set =
+      (mask & LC_POUCH_SETTING_CRYPTO_GENERATE_KEY_FILE) != 0
+          ? 1
+          : impl->pouch_crypto_generate_key_file_set;
+  config->pouch_compression = (mask & LC_POUCH_SETTING_COMPRESSION) != 0
+                                  ? settings->compression
+                                  : impl->pouch_compression;
+}
+
 static vectis_status vectis_configure_pouch_client(lc_client_config *config,
                                                    const char *endpoint,
                                                    const vectis_app_impl *impl,
@@ -10897,13 +10934,7 @@ static vectis_status vectis_configure_pouch_client(lc_client_config *config,
     return VECTIS_OK;
   }
   if (impl != NULL) {
-    config->pouch_crypto_key = impl->pouch_crypto_key;
-    config->pouch_crypto_key_file = impl->pouch_crypto_key_file;
-    config->pouch_crypto_generate_key_file =
-        impl->pouch_crypto_generate_key_file;
-    config->pouch_crypto_generate_key_file_set =
-        impl->pouch_crypto_generate_key_file_set;
-    config->pouch_compression = impl->pouch_compression;
+    vectis_pouch_flat_fields(impl, config);
   }
   environment_key = getenv(VECTIS_POUCH_CRYPTO_KEY_ENV);
   if (environment_key != NULL) {
@@ -10976,6 +11007,7 @@ static void vectis_lockd_client_config_from_app(const vectis_app_impl *impl,
   if (impl != NULL && endpoint_count == 1u &&
       vectis_endpoint_is_pouch(endpoints[0])) {
     lc_error_init(&endpoint_error);
+    config->pouch_settings = &impl->explicit_pouch_policy;
     if (lc_pouch_endpoint_has_option(endpoints[0], "single_writer",
                                      &explicit_writer,
                                      &endpoint_error) == LC_OK &&
@@ -10999,13 +11031,7 @@ static void vectis_lockd_client_config_from_app(const vectis_app_impl *impl,
           ? NULL
           : (impl->lockd_logger != NULL ? impl->lockd_logger : impl->logger);
   if (impl != NULL) {
-    config->pouch_crypto_key = impl->pouch_crypto_key;
-    config->pouch_crypto_key_file = impl->pouch_crypto_key_file;
-    config->pouch_crypto_generate_key_file =
-        impl->pouch_crypto_generate_key_file;
-    config->pouch_crypto_generate_key_file_set =
-        impl->pouch_crypto_generate_key_file_set;
-    config->pouch_compression = impl->pouch_compression;
+    vectis_pouch_flat_fields(impl, config);
   }
 }
 
@@ -11860,6 +11886,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->wait = vectis_app_wait;
   app->route = vectis_register_route;
   app->proxy_route = vectis_register_proxy_route;
+  app->set_pouch_settings = vectis_app_set_pouch_settings;
   app->json_route = vectis_register_json_route;
   app->json_typed_route = vectis_register_json_typed_route;
   app->xml_route = vectis_register_xml_route;
@@ -11979,6 +12006,160 @@ vectis_status vectis_app_workflow_storage_defaults(
     free(value);
   }
   return VECTIS_OK;
+}
+
+vectis_status vectis_app_set_fork_exit_handler(vectis_app *app,
+                                               vectis_fork_exit_fn handler,
+                                               void *userdata,
+                                               vectis_error *error) {
+  vectis_app_impl *impl;
+  if (!app || !app->impl) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "fork exit handler requires an app");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (impl->started) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "configure fork exit handler before app start");
+    return VECTIS_ERR_STATE;
+  }
+  impl->fork_exit = handler;
+  impl->fork_exit_userdata = handler ? userdata : NULL;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+int vectis_internal_fork_exit(vectis_app *app, const char *role) {
+  vectis_app_impl *impl;
+  vectis_fork_exit_fn handler;
+  void *userdata;
+  vectis_error error;
+  vectis_status status;
+  if (!app || !app->impl)
+    return 0;
+  impl = (vectis_app_impl *)app->impl;
+  handler = impl->fork_exit;
+  userdata = impl->fork_exit_userdata;
+  impl->fork_exit = NULL;
+  impl->fork_exit_userdata = NULL;
+  if (!handler)
+    return 0;
+  /* This process only owns its forked copies. A worker exit/respawn must not
+   * clear the original app's shared readiness or delete its ACME directory. */
+  impl->started = 0;
+  vectis_app_ready_state_free(impl->kore_app_ready);
+  impl->kore_app_ready = NULL;
+  impl->acme_state_dir_owned = 0;
+  vectis_error_clear(&error);
+  status = handler(app, role, userdata, &error);
+  /* handler may have reclaimed app; no app access after this point. */
+  if (status != VECTIS_OK) {
+    fprintf(stderr, "Vectis fork exit cleanup failed: %s\n", error.message);
+    return 1;
+  }
+  return 0;
+}
+
+static lc_client *vectis_storage_client(vectis_app *app, vectis_error *error) {
+  lc_client *client;
+  if (app == NULL || app->impl == NULL ||
+      !((vectis_app_impl *)app->impl)->started) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "storage requires a started app");
+    return NULL;
+  }
+  client = vectis_lockd_client(app);
+  if (client == NULL)
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to open app storage client");
+  return client;
+}
+static vectis_status vectis_storage_result(int code, lc_error *native,
+                                           vectis_error *error) {
+  vectis_status status = VECTIS_OK;
+  if (code != LC_OK)
+    status = vectis_set_lockdc_error(error, code, native,
+                                     "app storage operation failed");
+  else
+    vectis_error_clear(error);
+  lc_error_cleanup(native);
+  return status;
+}
+static vectis_status vectis_app_collection_open_kind(
+    vectis_app *app, const lc_collection_config *config, lc_collection **out,
+    int create, vectis_error *error) {
+  lc_client *client;
+  lc_error native;
+  int code;
+  if (out != NULL)
+    *out = NULL;
+  if (out == NULL || config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "collection config and output are required");
+    return VECTIS_ERR_INVALID;
+  }
+  client = vectis_storage_client(app, error);
+  if (client == NULL)
+    return VECTIS_ERR_STATE;
+  lc_error_init(&native);
+  code = create ? lc_client_create_collection(client, config, out, &native)
+                : lc_client_open_collection(client, config, out, &native);
+  return vectis_storage_result(code, &native, error);
+}
+vectis_status vectis_app_create_collection(vectis_app *app,
+                                           const lc_collection_config *config,
+                                           lc_collection **out,
+                                           vectis_error *error) {
+  return vectis_app_collection_open_kind(app, config, out, 1, error);
+}
+vectis_status vectis_app_open_collection(vectis_app *app,
+                                         const lc_collection_config *config,
+                                         lc_collection **out,
+                                         vectis_error *error) {
+  return vectis_app_collection_open_kind(app, config, out, 0, error);
+}
+vectis_status vectis_app_list_collections(vectis_app *app, const char *ns,
+                                          lc_collection_visit_fn visitor,
+                                          void *context, vectis_error *error) {
+  lc_client *client = vectis_storage_client(app, error);
+  lc_error native;
+  int code;
+  if (client == NULL)
+    return VECTIS_ERR_STATE;
+  lc_error_init(&native);
+  code = lc_client_list_collections(client, ns, visitor, context, &native);
+  return vectis_storage_result(code, &native, error);
+}
+vectis_status vectis_app_collection_capabilities(
+    vectis_app *app, lc_collection_capabilities *out, vectis_error *error) {
+  lc_client *client = vectis_storage_client(app, error);
+  lc_error native;
+  int code;
+  if (client == NULL)
+    return VECTIS_ERR_STATE;
+  lc_error_init(&native);
+  code = lc_client_collection_capabilities(client, out, &native);
+  return vectis_storage_result(code, &native, error);
+}
+vectis_status
+vectis_app_xa_coordinator_open(vectis_app *app,
+                               const lc_xa_coordinator_config *config,
+                               lc_xa_coordinator **out, vectis_error *error) {
+  lc_client *client;
+  lc_error native;
+  int code;
+  if (out != NULL)
+    *out = NULL;
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XA coordinator output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  client = vectis_storage_client(app, error);
+  if (client == NULL)
+    return VECTIS_ERR_STATE;
+  lc_error_init(&native);
+  code = lc_xa_coordinator_open(client, config, out, &native);
+  return vectis_storage_result(code, &native, error);
 }
 
 void vectis_destroy(vectis_app *app) {
@@ -12265,6 +12446,18 @@ static int vectis_signal_kore_runtime(pid_t child_pid, int signum) {
   return -1;
 }
 
+static vectis_status vectis_kore_exit_status(int wait_status,
+                                             vectis_error *error) {
+  if (WIFEXITED(wait_status) && WEXITSTATUS(wait_status) != 0) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "Kore runtime exited with status %d",
+                      WEXITSTATUS(wait_status));
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 long shutdown_grace_ms,
                                                 vectis_error *error) {
@@ -12291,8 +12484,7 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
       waited = waitpid(child_pid, &wait_status, WNOHANG);
       if (waited == child_pid) {
         vectis_close_fd_if_open(&control_fd);
-        vectis_error_clear(error);
-        return VECTIS_OK;
+        return vectis_kore_exit_status(wait_status, error);
       }
       if (waited < 0) {
         if (errno == EINTR) {
@@ -12341,8 +12533,7 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
     waited = waitpid(child_pid, &wait_status, WNOHANG);
     if (waited == child_pid) {
       vectis_close_fd_if_open(&control_fd);
-      vectis_error_clear(error);
-      return VECTIS_OK;
+      return vectis_kore_exit_status(wait_status, error);
     }
     if (waited < 0) {
       if (errno == EINTR) {
@@ -12418,6 +12609,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
+  impl->pouch_settings_frozen = 1;
 
   status = vectis_validate_lockd_startable(impl, error);
   if (status != VECTIS_OK) {
@@ -12518,6 +12710,8 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       vectis_close_fd_if_open(&control_fds[0]);
       impl->started = 1;
       status = vectis_internal_kore_run(&kore_config, NULL);
+      if (vectis_internal_fork_exit(app, "kore_parent") != 0)
+        status = VECTIS_ERR_STATE;
       _exit(status == VECTIS_OK ? 0 : 1);
     }
     if (setpgid(pid, pid) != 0 && errno != EACCES) {
@@ -12809,6 +13003,7 @@ vectis_status vectis_start(vectis_app *app, vectis_error *error) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
   }
+  ((vectis_app_impl *)app->impl)->pouch_settings_frozen = 1;
   return vectis_app_start_impl(app, error);
 }
 
@@ -12838,6 +13033,7 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
+  impl->pouch_settings_frozen = 1;
 
   status = vectis_validate_lockd_startable(impl, error);
   if (status != VECTIS_OK) {
@@ -15913,7 +16109,7 @@ static vectis_status vectis_auth_workflow_create(
           : VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   status = vectis_lockd_state_save_in_namespace(
       client, vectis_auth_workflow_namespace(data), key, "vectis-auth-workflow",
-      30L, &vectis_auth_workflow_record_map, &record, error);
+      30L, &vectis_auth_workflow_record_map, &record, NULL, error);
   if (status == VECTIS_OK) {
     status = vectis_auth_workflow_load(app, data, workflow_id, &record, error);
   }
@@ -18664,7 +18860,7 @@ static vectis_status vectis_auth_workflow_update(
   return vectis_lockd_state_update_in_namespace(
       client, vectis_auth_workflow_namespace(data), key, "vectis-auth-workflow",
       30L, &vectis_auth_workflow_record_map, &record,
-      vectis_auth_workflow_update_callback, context, error);
+      vectis_auth_workflow_update_callback, context, NULL, error);
 }
 
 static vectis_status vectis_auth_workflow_token(char out[7],
@@ -36477,11 +36673,11 @@ vectis_status vectis_lockd_state_load(struct lc_client *client, const char *key,
                                               ttl_seconds, map, out, error);
 }
 
-vectis_status
-vectis_lockd_state_save_in_namespace(struct lc_client *client, const char *ns,
-                                     const char *key, const char *owner,
-                                     long ttl_seconds, const lonejson_map *map,
-                                     const void *value, vectis_error *error) {
+vectis_status vectis_lockd_state_save_in_namespace(
+    struct lc_client *client, const char *ns, const char *key,
+    const char *owner, long ttl_seconds, const lonejson_map *map,
+    const void *value, const struct lc_update_opts *options,
+    vectis_error *error) {
   struct lc_lease *lease;
   lc_release_req release;
   lc_error lcerr;
@@ -36501,7 +36697,7 @@ vectis_lockd_state_save_in_namespace(struct lc_client *client, const char *ns,
   }
   lc_release_req_init(&release);
   lc_error_init(&lcerr);
-  rc = lease->save(lease, map, value, &lcerr);
+  rc = lease->save(lease, map, value, options, &lcerr);
   if (rc == LC_OK) {
     rc = lease->release(lease, &release, &lcerr);
   }
@@ -36520,15 +36716,18 @@ vectis_lockd_state_save_in_namespace(struct lc_client *client, const char *ns,
 vectis_status vectis_lockd_state_save(struct lc_client *client, const char *key,
                                       const char *owner, long ttl_seconds,
                                       const lonejson_map *map,
-                                      const void *value, vectis_error *error) {
-  return vectis_lockd_state_save_in_namespace(client, NULL, key, owner,
-                                              ttl_seconds, map, value, error);
+                                      const void *value,
+                                      const struct lc_update_opts *options,
+                                      vectis_error *error) {
+  return vectis_lockd_state_save_in_namespace(
+      client, NULL, key, owner, ttl_seconds, map, value, options, error);
 }
 
 vectis_status vectis_lockd_state_update_in_namespace(
     struct lc_client *client, const char *ns, const char *key,
     const char *owner, long ttl_seconds, const lonejson_map *map, void *state,
-    vectis_lockd_state_update_fn update, void *userdata, vectis_error *error) {
+    vectis_lockd_state_update_fn update, void *userdata,
+    const struct lc_update_opts *options, vectis_error *error) {
   struct lc_lease *lease;
   lc_release_req release;
   lc_get_res get_response;
@@ -36564,7 +36763,7 @@ vectis_status vectis_lockd_state_update_in_namespace(
       return status;
     }
     if (save) {
-      rc = lease->save(lease, map, state, &lcerr);
+      rc = lease->save(lease, map, state, options, &lcerr);
     }
   }
   if (rc == LC_OK) {
@@ -36582,15 +36781,14 @@ vectis_status vectis_lockd_state_update_in_namespace(
   return VECTIS_OK;
 }
 
-vectis_status vectis_lockd_state_update(struct lc_client *client,
-                                        const char *key, const char *owner,
-                                        long ttl_seconds,
-                                        const lonejson_map *map, void *state,
-                                        vectis_lockd_state_update_fn update,
-                                        void *userdata, vectis_error *error) {
+vectis_status vectis_lockd_state_update(
+    struct lc_client *client, const char *key, const char *owner,
+    long ttl_seconds, const lonejson_map *map, void *state,
+    vectis_lockd_state_update_fn update, void *userdata,
+    const struct lc_update_opts *options, vectis_error *error) {
   return vectis_lockd_state_update_in_namespace(client, NULL, key, owner,
                                                 ttl_seconds, map, state, update,
-                                                userdata, error);
+                                                userdata, options, error);
 }
 
 vectis_request *vectis_internal_request_new(vectis_error *error) {
@@ -45715,6 +45913,124 @@ vectis_status vectis_app_configure_workflow_client(vectis_app *app,
   config->logger = impl->lockd_logger_disabled  ? NULL
                    : impl->lockd_logger != NULL ? impl->lockd_logger
                                                 : impl->logger;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_pouch_settings_strings_free(char **strings) {
+  size_t i;
+  for (i = 0u; i < 5u; ++i)
+    free(strings[i]);
+}
+
+vectis_status
+vectis_app_set_pouch_settings(vectis_app *app,
+                              const struct lc_pouch_settings *settings,
+                              vectis_error *error) {
+  vectis_app_impl *impl;
+  lc_pouch_settings captured;
+  uint64_t mask;
+  char *owned[5];
+  memset(owned, 0, sizeof(owned));
+  if (app == NULL || app->impl == NULL || settings == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "app and Pouch settings are required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = app->impl;
+  if (impl->started || impl->pouch_settings_frozen ||
+      impl->lockd_client != NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "Pouch settings must be captured before startup or client "
+                     "materialization");
+    return VECTIS_ERR_STATE;
+  }
+  mask = settings->set_mask;
+  if ((mask & ~((LC_POUCH_SETTING_COMPRESSION << 1u) - 1u)) != 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "unknown Pouch setting mask");
+    return VECTIS_ERR_INVALID;
+  }
+#define VECTIS_POUCH_BOOL(bit, field)                                          \
+  if ((mask & (bit)) != 0u && settings->field != 0 && settings->field != 1) {  \
+    vectis_set_error(error, VECTIS_ERR_INVALID,                                \
+                     #field " must be zero or one");                           \
+    return VECTIS_ERR_INVALID;                                                 \
+  }
+  VECTIS_POUCH_BOOL(LC_POUCH_SETTING_SINGLE_WRITER, single_writer)
+  VECTIS_POUCH_BOOL(LC_POUCH_SETTING_DURABLE_SYNC, durable_sync)
+  VECTIS_POUCH_BOOL(LC_POUCH_SETTING_BACKGROUND_COMPACTION,
+                    background_compaction_enabled)
+  VECTIS_POUCH_BOOL(LC_POUCH_SETTING_DISABLE_COMPACTION_THROTTLING,
+                    compaction_throttling_disabled)
+  VECTIS_POUCH_BOOL(LC_POUCH_SETTING_QUEUE_WATCH, queue_watch)
+  VECTIS_POUCH_BOOL(LC_POUCH_SETTING_QUERY_INDEXING, query_indexing_enabled)
+  VECTIS_POUCH_BOOL(LC_POUCH_SETTING_CRYPTO_GENERATE_KEY_FILE,
+                    crypto_generate_key_file)
+#undef VECTIS_POUCH_BOOL
+  captured = *settings;
+  captured.query_engine = captured.query_fallback_engine = NULL;
+  captured.crypto_key = captured.crypto_key_file = captured.compression = NULL;
+#define VECTIS_POUCH_STRING(bit, field, slot)                                  \
+  if ((mask & (bit)) != 0u) {                                                  \
+    if (settings->field == NULL || settings->field[0] == '\0') {               \
+      vectis_pouch_settings_strings_free(owned);                               \
+      vectis_set_error(error, VECTIS_ERR_INVALID, #field " must be nonempty"); \
+      return VECTIS_ERR_INVALID;                                               \
+    }                                                                          \
+    owned[slot] = vectis_strdup(settings->field);                              \
+    captured.field = owned[slot];                                              \
+    if (captured.field == NULL) {                                              \
+      vectis_pouch_settings_strings_free(owned);                               \
+      vectis_set_error(error, VECTIS_ERR_NOMEM,                                \
+                       "Pouch settings allocation failed");                    \
+      return VECTIS_ERR_NOMEM;                                                 \
+    }                                                                          \
+  }
+  VECTIS_POUCH_STRING(LC_POUCH_SETTING_QUERY_ENGINE, query_engine, 0u)
+  VECTIS_POUCH_STRING(LC_POUCH_SETTING_QUERY_FALLBACK_ENGINE,
+                      query_fallback_engine, 1u)
+  VECTIS_POUCH_STRING(LC_POUCH_SETTING_CRYPTO_KEY, crypto_key, 2u)
+  VECTIS_POUCH_STRING(LC_POUCH_SETTING_CRYPTO_KEY_FILE, crypto_key_file, 3u)
+  VECTIS_POUCH_STRING(LC_POUCH_SETTING_COMPRESSION, compression, 4u)
+#undef VECTIS_POUCH_STRING
+  if ((captured.query_engine != NULL &&
+       strcmp(captured.query_engine, "index") != 0 &&
+       strcmp(captured.query_engine, "scan") != 0) ||
+      (captured.query_fallback_engine != NULL &&
+       strcmp(captured.query_fallback_engine, "index") != 0 &&
+       strcmp(captured.query_fallback_engine, "scan") != 0) ||
+      (captured.compression != NULL &&
+       strcmp(captured.compression, "none") != 0 &&
+       strcmp(captured.compression, "zlib") != 0)) {
+    vectis_pouch_settings_strings_free(owned);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "unsupported Pouch engine or compression");
+    return VECTIS_ERR_INVALID;
+  }
+  if (mask != 0u && (impl->unix_socket_path != NULL ||
+                     (impl->endpoint_count != 0u &&
+                      (impl->endpoint_count != 1u ||
+                       !vectis_endpoint_is_pouch(impl->endpoints[0]))))) {
+    vectis_pouch_settings_strings_free(owned);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Pouch settings require one local Pouch endpoint");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_pouch_settings_strings_free(impl->pouch_setting_strings);
+  memcpy(impl->pouch_setting_strings, owned, sizeof(owned));
+  impl->declared_pouch_settings = captured;
+  impl->explicit_pouch_policy = captured;
+  /* Retain the native per-field precedence through dedicated fields; these
+   * four fields also permit Vectis's explicit environment encryption override.
+   */
+  impl->explicit_pouch_policy.set_mask &= ~(
+      LC_POUCH_SETTING_CRYPTO_KEY | LC_POUCH_SETTING_CRYPTO_KEY_FILE |
+      LC_POUCH_SETTING_CRYPTO_GENERATE_KEY_FILE | LC_POUCH_SETTING_COMPRESSION);
+  impl->shared_pouch_settings = impl->explicit_pouch_policy;
+  if ((mask & LC_POUCH_SETTING_SINGLE_WRITER) == 0u) {
+    impl->shared_pouch_settings.set_mask |= LC_POUCH_SETTING_SINGLE_WRITER;
+    impl->shared_pouch_settings.single_writer = 0;
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }

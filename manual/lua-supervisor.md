@@ -1,5 +1,17 @@
 # Lua supervisors and workflows
 
+Managed SQL/outbox composition is available through
+`workflow:xa_transaction(coordinator, callback)`, with the same automatic
+bounded receipt wake path. See [storage and PostgreSQL XA](lua-storage.md).
+
+Workflow declarations also forward native `completed_retention_seconds`,
+`completed_max_count`, `inbox_retention_seconds`, `inbox_max_count`,
+`command_retention_seconds` and `command_max_count`. Each retention duration
+defaults independently to 30 days; `-1` disables its reclamation and count cap.
+Zero/nil/false count caps are unbounded. Expiry or a positive count cap ends
+deduplication/status availability for the reclaimed identity. These controls
+are Pouch-only and must agree across users of a namespace.
+
 `require("vectis.supervisor")` and `require("vectis.workflow")` compose the
 native `vectis.app` userdata. The same tables are available as
 `require("vectis").supervisor` and `.workflow`. Direct `lockdc` access remains available.
@@ -140,7 +152,7 @@ local result = assert(workflow:transaction(function(tx)
   return tx:append_outbox({
     operation_id="order-42", effect_id="receipt", effect_key="order-42-mail",
     kind="mail", destination="local", content_type="text/plain",
-    payload_digest=require("openssl").sha256("hello"),
+    payload_digest=require("openssl").sha256_materialized("hello"),
   }, "hello")
 end))
 assert(#result.outbox_receipts == 1)
@@ -205,7 +217,7 @@ assert(app:route({path="/effects", method="POST", body="buffered",
     local result, err = workflow:transaction(function(tx)
       return tx:append_outbox({operation_id=id, effect_id="print", effect_key=id,
         kind="print", destination="stdout", content_type="text/plain",
-        payload_digest=openssl.sha256(id)}, id)
+        payload_digest=openssl.sha256_materialized(id)}, id)
     end)
     if not result then return {status=500, body=lockdc.encode_json(err)} end
     return {status=202, content_type="application/json",
@@ -276,22 +288,24 @@ shorthand. Terminalization occurs only after callback
 return. Exceptions, absent outcomes, and returning another value become retries
 through upstream pump policy. Duplicate durable effects do not run twice after
 completion. Job payload and renewal methods become invalid after the handler;
-`job:state()` returns nil in stateless mode. `with_state=true` supports short
+`job:state()` returns nil in stateless mode. `with_state=true` supports
 checkpoint read/update/completion; its borrowed checkpoint cannot be released,
-closed or used after handler return. Renewal in stateful mode is explicitly
-rejected because upstream deferred completion fails its state version
-precondition after successful renewal and checkpoint update. See the audit and
-executable upstream-contract probe.
+closed or used after handler return. Manual renewal works before and after
+checkpoint writes, including repeated renewal, with liblockdc 0.23.0.
+Complete/retry/dead-letter decisions preserve the upstream version/fencing
+contract. Retry and dead-letter retain the checkpoint for a later delivery or
+replay; successful completion retires that private sidecar. Store durable
+business results separately or use the native completion evidence fields.
 
 `job:write_payload(sink)` is genuine push streaming from upstream storage;
 the facade does not buffer or spool the full payload. `job:renew(ttl_seconds)`
-is explicit for stateless handlers. No initial renewal is injected.
+is explicit for both stateless and stateful handlers. No initial renewal is injected.
 **No `job:payload_source()` pull API or automatic renewal throughout blocking
 handlers is delivered.** Those require additional public upstream facilities;
 see the [implementation audit](../docs/supervisor-workflow-audit.md).
 Until automatic renewal is available, keep handlers within the claim interval
-and explicitly renew stateless claims between bounded operations. Stateful
-handlers must finish within their initial claim interval.
+and explicitly renew claims between bounded operations. Manual renewal does
+not cover an arbitrarily blocked operation.
 
 Stopping a kind's scope pauses intake for its whole workflow, since the public
 dispatcher cannot filter claims by kind. Other workflow identities continue.

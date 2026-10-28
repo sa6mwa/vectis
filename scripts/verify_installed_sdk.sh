@@ -30,6 +30,17 @@ if [ -n "$extra_prefix" ]; then
   cmake_prefix_path="$cmake_prefix_path;$extra_prefix"
 fi
 runtime_library_path="$package_root/lib"
+pkg_config_path="$package_root/lib/pkgconfig"
+for dependency_parent in "$package_root/deps" "${extra_prefix:-$package_root}/deps" "$extra_prefix"; do
+  [[ -n "$dependency_parent" && -d "$dependency_parent" ]] || continue
+  for dependency_prefix in "$dependency_parent"/*; do
+    if [[ -d "$dependency_prefix/lib" ]]; then
+      cmake_prefix_path="$cmake_prefix_path;$dependency_prefix"
+      runtime_library_path="$runtime_library_path:$dependency_prefix/lib"
+      pkg_config_path="$pkg_config_path:$dependency_prefix/lib/pkgconfig"
+    fi
+  done
+done
 if [ -n "$extra_prefix" ]; then
   runtime_library_path="$runtime_library_path:$extra_prefix/lib"
 fi
@@ -98,9 +109,9 @@ int main(void) {
   return config.tls.port == 8443u ? 0 : 1;
 }
 EOF
-  PKG_CONFIG_PATH="$package_root/lib/pkgconfig${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
+  PKG_CONFIG_PATH="$pkg_config_path${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
     pkg-config --exists vectis
-  PKG_CONFIG_PATH="$package_root/lib/pkgconfig${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
+  PKG_CONFIG_PATH="$pkg_config_path${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
     pkg-config --static --cflags --libs vectis >"$pkg_config_build_root/vectis.pc.flags"
   read -r -a pkg_flags <"$pkg_config_build_root/vectis.pc.flags"
   "$consumer_cc" "${runtime_flags[@]}" "$pkg_config_build_root/consumer.c" \
@@ -110,7 +121,8 @@ EOF
   extra_runtime_binaries+=("$pkg_config_build_root/vectis_pkg_config_consumer")
 fi
 if [ "$(uname -s)" = Linux ]; then
-  python3 "$script_dir/test_runtime_contract.py" --sdk "$build_root" "${extra_runtime_binaries[@]}"
+  extra_runtime_list=$(IFS=';'; printf '%s' "${extra_runtime_binaries[*]}")
+  "$cmake_bin" -DBUILD="$build_root" -DSDK=ON "-DEXTRA_BINARIES=$extra_runtime_list" -P "$script_dir/test_runtime_contract.cmake"
 fi
 
 if [ "$link_mode" = "shared" ]; then
@@ -134,6 +146,25 @@ else
   fi
 fi
 
+if [ "$(uname -s)" = Linux ] && [ "$link_mode" = shared ] && [ -z "$extra_prefix" ]; then
+  # A consumer's broad development RPATH must not mask missing relative peer
+  # paths in the shipped library. Give this probe only libvectis and libc;
+  # rpath-link resolves link-time peers without adding runtime search paths.
+  closure_flags=("-I$package_root/include")
+  for dependency_prefix in "$package_root/deps"/*; do
+    [ ! -d "$dependency_prefix/include" ] || closure_flags+=("-I$dependency_prefix/include")
+    [ ! -d "$dependency_prefix/lib" ] || closure_flags+=("-Wl,-rpath-link,$dependency_prefix/lib")
+  done
+  "$consumer_cc" -std=c89 -pedantic-errors -Wno-long-long "${closure_flags[@]}" \
+    "$repo_root/tests/install/relocation.c" -L"$package_root/lib" -lvectis \
+    -Wl,--no-as-needed -lresolv -Wl,--as-needed \
+    "-Wl,--dynamic-linker=$consumer_sysroot/lib/ld-linux-x86-64.so.2" \
+    -Wl,--disable-new-dtags \
+    "-Wl,-rpath,$consumer_sysroot/lib:$consumer_sysroot/usr/lib:$consumer_sysroot/../lib64:$package_root/lib" \
+    -o "$build_root/vectis_relative_closure"
+  "$build_root/vectis_relative_closure"
+fi
+
 if [ -f "$package_root/share/doc/vectis/examples/CMakeLists.txt" ]; then
   "$cmake_bin" \
     "${toolchain_args[@]}" \
@@ -143,6 +174,6 @@ if [ -f "$package_root/share/doc/vectis/examples/CMakeLists.txt" ]; then
     -DVECTIS_EXAMPLE_LINK="$link_mode"
   "$cmake_bin" --build "$examples_build_root"
   if [ "$(uname -s)" = Linux ]; then
-    python3 "$script_dir/test_runtime_contract.py" --sdk "$examples_build_root"
+    "$cmake_bin" -DBUILD="$examples_build_root" -DSDK=ON -P "$script_dir/test_runtime_contract.cmake"
   fi
 fi

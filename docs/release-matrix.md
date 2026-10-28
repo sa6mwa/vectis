@@ -1,35 +1,32 @@
-# Local Release Matrix
+# Local release matrix
 
-`make release-matrix` is the local lifecycle surface for the full GNU and musl
-release matrix. It builds the supported Linux GNU/musl SDK and binary artifacts,
-creates the source archive and Lua release artifacts, generates the checksum
-manifest, and runs `verify-release-matrix` with:
+`make release-matrix` prepares Linux GNU/musl SDK and binary archives for
+x86_64, aarch64 and armhf, source/Lua artifacts, checksums and artifact
+verification. Use `make help` for narrower preparation targets. Preparation is
+incremental; CMake owns matching build prerequisites. Changing toolchains or
+migrating an old cache requires a fresh owned build directory.
 
-```sh
-VECTIS_REQUIRE_LINUX_RELEASE_MATRIX=1 make release-matrix
-```
+The verifier extracts checksum-listed artifacts, checks static Linux CLI
+payloads and target metadata, compiles downstream consumers, and checks privacy,
+exports and relocatability. Static/shared consumer checks also cover the
+separate PostgreSQL XA provider and app storage factories. Dependency SDKs stay
+in independent `deps/<name>` prefixes with their own validation inventories.
 
-The verifier extracts every checksum-listed artifact, checks static `vectis`
-executable payloads, validates ELF target metadata, builds downstream SDK
-consumers for each Linux target, and runs release privacy and relocatability
-checks.
+`make release` first requires the actual default branch, a clean signed commit
+and its exact lightweight release tag. It then owns the one full clean boundary
+and local release pipeline. Preparation commands do not authorize release,
+tagging or publication. The responsible agent must separately record the
+semantic integration review required by `AGENTS.md`.
 
-Vectis uses the pkt.systems local lifecycle model. The release matrix is run
-locally through Make and the repository must not define remote workflow
-automation for it.
+Darwin release build/link, Mach-O, SDK and smoke-bundle proof uses local prepared
+osxcross through `make release-darwin-smoke-bundle`. The aggregate package
+command currently includes Darwin when that prerequisite is available; an
+explicit Darwin request fails if it is missing. A skipped Darwin build is no
+Darwin release proof. Linux and Darwin runtime evidence remain distinct.
 
-
-The already declared native Darwin verification lane is
-`.github/workflows/darwin-kqueue.yml` in `sa6mwa/vectis` (`origin`). It targets
-`darwin-debug` / arm64 Apple Darwin on the workflow's `macos-26` runner and checks
-native kqueue HTTP, SSE, WebSocket/WSS and shutdown behavior, plus native
-supervisor FD ownership and fast Lua supervisor/workflow/OPC UA lifetimes
-with serialized builds/tests. Linux packed cases remain conditional. Preserve this
-required platform evidence; Linux or cross-build results do not substitute for
-it. This workflow verifies the native platform and does not run or publish the
-local release matrix. The lifecycle allowlist permits only this adopted file.
-
-No additional repository automation is adopted. Running the hosted lane requires
-applicable publication/trigger authority; this audit task authorizes no push,
-dispatch or release. Native Darwin execution remains an unrun platform gate in
-this local Linux verification record.
+`.github/workflows/darwin-kqueue.yml` is an optional native diagnostic lane for
+kqueue, HTTP/SSE/WebSocket/WSS, shutdown and Lua lifetimes. It uses manual
+dispatch only. Hosted runs and their diagnostic artifacts are never required
+release gates or release artifacts. A local osxcross build proves build/link
+and package behavior; it does not claim native macOS runtime execution.
+Dispatching, pushing or publishing requires the user's authorization.

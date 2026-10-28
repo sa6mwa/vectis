@@ -59,6 +59,7 @@ void kore_parent_configure(int argc, char **argv);
 void kore_parent_teardown(void);
 void kore_worker_teardown(void);
 void vectis_kore_parent_timers(void);
+int vectis_kore_worker_exit(void);
 
 #if defined(KORE_VECTIS_STATIC_RUNTIME)
 const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[] = {
@@ -123,6 +124,12 @@ void kore_worker_teardown(void) {
   if (vectis_kore_worker_teardown_probe != NULL) {
     vectis_kore_worker_teardown_probe();
   }
+}
+
+int vectis_kore_worker_exit(void) {
+  vectis_app *app = vectis_kore_current.app;
+  vectis_kore_current.app = NULL;
+  return vectis_internal_fork_exit(app, "kore_worker");
 }
 
 void vectis_kore_set_prebody_probe(int (*probe)(struct http_request *,

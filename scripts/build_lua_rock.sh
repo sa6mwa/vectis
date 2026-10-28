@@ -20,6 +20,9 @@ case "$#" in
   *) usage ;;
 esac
 
+"${CMAKE:-cmake}" "-DVECTIS_OWNED_PATHS=$build_root;$tree" \
+  -P "$repo_root/cmake/vectis_owned_paths.cmake"
+
 command -v "$luarocks" >/dev/null 2>&1 || {
   printf '%s\n' "luarocks is required for make lua-rock" >&2
   exit 2

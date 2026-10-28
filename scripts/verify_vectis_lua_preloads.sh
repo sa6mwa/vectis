@@ -69,6 +69,13 @@ local modules = {
   "vectis.dsv",
   "vectis.xml.core",
   "vectis.xml",
+  "vectis.buffer",
+  "vectis.digest",
+  "vectis.pg",
+  "vectis.storage",
+  "vectis.supervisor",
+  "vectis.workflow",
+  "lockdc.postgres",
   "cai",
   "lql.core",
   "lql",
@@ -116,6 +123,10 @@ assert(loaded["vectis"].smtp == loaded["vectis.smtp"])
 assert(loaded["vectis"].lockd == loaded["vectis.lockd"])
 assert(loaded["vectis"].dsv == loaded["vectis.dsv"])
 assert(loaded["vectis"].xml == loaded["vectis.xml"])
+for _, name in ipairs({"buffer", "digest", "pg", "storage", "supervisor", "workflow"}) do
+  assert(loaded["vectis"][name] == loaded["vectis." .. name])
+end
+assert(loaded["vectis"].libs.lockdc_postgres == loaded["lockdc.postgres"])
 assert(type(loaded["vectis"].libs) == "table")
 for _, name in ipairs({
   "lockdc",
@@ -164,9 +175,16 @@ assert(type(loaded["vectis.cli"].new) == "function")
 assert(type(loaded["vectis.terminal"].markdown) == "function")
 assert(type(loaded["vectis.smtp"].send) == "function")
 assert(type(loaded["curl"].perform) == "function")
-assert(type(loaded["openssl"].sha256_hex) == "function")
-assert(type(loaded["zlib"].deflate) == "function")
-assert(loaded["zlib"].inflate(loaded["zlib"].deflate("preload")) == "preload")
+assert(loaded["openssl"].sha256_hex == nil)
+assert(loaded["openssl"].sha256_materialized_hex("abc") ==
+       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+local chunks = {"a", "bc"}
+assert(loaded["openssl"].sha256_stream_hex(function()
+  return table.remove(chunks, 1)
+end) == loaded["openssl"].sha256_materialized_hex("abc"))
+assert(loaded["zlib"].deflate == nil and loaded["zlib"].inflate == nil)
+assert(loaded["zlib"].inflate_materialized(
+  loaded["zlib"].deflate_materialized("preload")) == "preload")
 assert(type(loaded["opcua"].client) == "function")
 assert(type(loaded["audio"].can_decode) == "function")
 assert(type(loaded["sus"].model_catalog_count) == "function")

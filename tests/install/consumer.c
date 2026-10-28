@@ -5,6 +5,7 @@
 #include <curl/curl.h>
 #include <kore/kore.h>
 #include <lc/lc.h>
+#include <lc/postgres.h>
 #include <libmdf.h>
 #include <libssh2.h>
 #include <libxml/parser.h>
@@ -12,7 +13,10 @@
 #include <openssl/ssl.h>
 #include <pslog.h>
 #include <softline/softline.h>
+#include <vectis/digest.h>
+#include <vectis/pg.h>
 #include <vectis/proxy.h>
+#include <vectis/storage.h>
 #include <vectis/supervisor.h>
 #include <vectis/vectis.h>
 
@@ -46,9 +50,31 @@ int main(void) {
   mdf_status markdown_status;
   char *rendered;
   int markdown_ok;
+  vectis_pg *pg;
+  lc_collection *collection;
+  vectis_digest_result digest;
 
   memset(&error, 0, sizeof(error));
   memset(&logger, 0, sizeof(logger));
+  /* Force the new public adapter and participant into both consumer closures,
+   * rather than proving only that their headers can be included. */
+  pg = NULL;
+  collection = NULL;
+  if (lc_postgres_driver() == NULL ||
+      vectis_pg_from_borrow(NULL, &pg, &error) != VECTIS_ERR_INVALID ||
+      pg != NULL ||
+      vectis_app_create_collection(NULL, NULL, &collection, &error) !=
+          VECTIS_ERR_INVALID ||
+      collection != NULL) {
+    return 14;
+  }
+  if (vectis_digest_materialized("sha256", "abc", 3u, &digest, &error) !=
+          VECTIS_OK ||
+      digest.bytes != 3u || digest.size != 32u || digest.data[0] != 0xbau ||
+      digest.data[31] != 0xadu) {
+    return 15;
+  }
+  vectis_error_clear(&error);
 
   mdf_options_init(&markdown_options);
   markdown = NULL;

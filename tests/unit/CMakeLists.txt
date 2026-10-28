@@ -18,17 +18,10 @@ function(vectis_add_unit_test target_name)
     if(target_name STREQUAL "vectis_unit_kore_proxy_curl_loop_shared")
       set(kore_test_deadline 30)
     endif()
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-      add_test(NAME ${target_name} COMMAND bash
-        "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        ${kore_test_deadline} 0 $<TARGET_FILE:${target_name}>)
-    elseif(APPLE)
-      add_test(NAME ${target_name} COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test_darwin.py"
-        ${kore_test_deadline} 0 $<TARGET_FILE:${target_name}>)
-    else()
-      add_test(NAME ${target_name} COMMAND ${target_name})
-    endif()
+    add_test(NAME ${target_name} COMMAND "${CMAKE_COMMAND}"
+      "-DEXECUTABLE=$<TARGET_FILE:${target_name}>"
+      "-DTIMEOUT_SECONDS=${kore_test_deadline}" -DEXPECTED_EXIT=0
+      -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
   else()
     add_test(NAME ${target_name} COMMAND ${target_name})
   endif()
@@ -68,7 +61,68 @@ function(vectis_add_cpp_header_test target_name)
 endfunction()
 
 vectis_add_unit_test(vectis_unit_supervisor test_vectis_supervisor.c)
+vectis_add_unit_test(vectis_unit_lua_trace_observer test_lua_trace_observer.c)
+target_link_libraries(vectis_unit_lua_trace_observer PRIVATE cpkt::lua_runtime)
+set_tests_properties(vectis_unit_lua_trace_observer PROPERTIES
+  LABELS "unit;local;failure-fast" TIMEOUT 5)
+if(VECTIS_WITH_KORE_RUNTIME AND UNIX)
+  vectis_add_unit_test(vectis_unit_fork_exit test_vectis_fork_exit.c)
+  set_tests_properties(vectis_unit_fork_exit PROPERTIES LABELS "unit;local;failure-fast;lifecycle" TIMEOUT 10 RUN_SERIAL TRUE)
+  add_test(NAME vectis_unit_fork_exit_failure COMMAND vectis_unit_fork_exit failure)
+  set_tests_properties(vectis_unit_fork_exit_failure PROPERTIES LABELS "unit;local;failure-fast;lifecycle" TIMEOUT 10 RUN_SERIAL TRUE)
+  add_test(NAME vectis_unit_fork_exit_crash COMMAND vectis_unit_fork_exit crash)
+  set_tests_properties(vectis_unit_fork_exit_crash PROPERTIES LABELS "unit;local;failure-fast;lifecycle" TIMEOUT 10 RUN_SERIAL TRUE)
+  add_test(NAME vectis_unit_fork_exit_respawn COMMAND vectis_unit_fork_exit respawn)
+  set_tests_properties(vectis_unit_fork_exit_respawn PROPERTIES LABELS "unit;local;failure-fast;lifecycle" TIMEOUT 10 RUN_SERIAL TRUE)
+endif()
+vectis_add_unit_test(vectis_unit_pg test_vectis_pg.c)
+target_compile_definitions(vectis_unit_pg PRIVATE _POSIX_C_SOURCE=200809L)
+set_tests_properties(vectis_unit_pg PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 5)
+add_executable(vectis_unit_storage test_vectis_storage.c)
+target_link_libraries(vectis_unit_storage PRIVATE ${vectis_test_link_target})
+vectis_configure_c89_target(vectis_unit_storage)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(vectis_unit_storage PRIVATE -UNDEBUG)
+endif()
+add_test(NAME vectis_storage_c_behavior COMMAND "${CMAKE_COMMAND}"
+  "-DPROBE=$<TARGET_FILE:vectis_unit_storage>"
+  "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/storage-data"
+  -P "${CMAKE_SOURCE_DIR}/tests/storage.cmake")
+set_tests_properties(vectis_storage_c_behavior PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 6)
+if(VECTIS_BUILD_BINARY)
+  add_executable(vectis_unit_pg_lua_gc test_pg_lua_gc.c "${CMAKE_SOURCE_DIR}/src/vectis_lua_pg.c")
+  target_include_directories(vectis_unit_pg_lua_gc PRIVATE "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/include" "${vectis_lockdc_lua_source_dir}/src/lua")
+  target_link_libraries(vectis_unit_pg_lua_gc PRIVATE vectis_external_headers ${vectis_test_link_target} cpkt::lua_runtime)
+  vectis_configure_c89_target(vectis_unit_pg_lua_gc)
+  target_compile_options(vectis_unit_pg_lua_gc PRIVATE -UNDEBUG)
+  add_test(NAME vectis_unit_pg_lua_gc COMMAND vectis_unit_pg_lua_gc "${CMAKE_SOURCE_DIR}/tests/lua/postgres_gc.lua")
+  set_tests_properties(vectis_unit_pg_lua_gc PROPERTIES LABELS "unit;local;lua;failure-fast" TIMEOUT 5)
+endif()
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
+vectis_add_unit_test(vectis_unit_digest test_vectis_digest.c)
+vectis_add_unit_test(vectis_unit_buffer test_vectis_buffer.c)
+set_tests_properties(vectis_unit_buffer PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 5)
+vectis_add_unit_test(vectis_unit_zlib_stream test_vectis_zlib_stream.c
+  "${CMAKE_SOURCE_DIR}/src/vectis_lua_zlib_stream.c")
+vectis_add_unit_test(vectis_unit_zlib_raw test_vectis_zlib_raw.c)
+target_link_libraries(vectis_unit_zlib_raw PRIVATE ZLIB::ZLIB)
+set_tests_properties(vectis_unit_zlib_raw PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 5)
+vectis_add_unit_test(vectis_unit_zlib_back test_vectis_zlib_back.c)
+target_link_libraries(vectis_unit_zlib_back PRIVATE ZLIB::ZLIB)
+set_tests_properties(vectis_unit_zlib_back PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 5)
+vectis_add_unit_test(vectis_unit_zlib_raw_lua_oom test_zlib_raw_lua_oom.c
+  "${CMAKE_SOURCE_DIR}/src/vectis_lua_zlib_raw.c"
+  "${CMAKE_SOURCE_DIR}/src/vectis_lua_buffer.c")
+target_link_libraries(vectis_unit_zlib_raw_lua_oom PRIVATE ZLIB::ZLIB cpkt::lua_runtime)
+set_tests_properties(vectis_unit_zlib_raw_lua_oom PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 5)
+target_link_libraries(vectis_unit_zlib_stream PRIVATE ZLIB::ZLIB cpkt::lua_runtime)
+set_tests_properties(vectis_unit_zlib_stream PROPERTIES
+  LABELS "unit;local;failure-fast" TIMEOUT 5)
+target_compile_definitions(vectis_unit_digest PRIVATE
+  VECTIS_DIGEST_TEST_ROOT="${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(vectis_unit_digest PROPERTIES
+  LABELS "unit;local;failure-fast" TIMEOUT 5)
 vectis_add_unit_test(vectis_unit_mdf_failure test_vectis_mdf_failure.c)
 target_link_libraries(vectis_unit_mdf_failure PRIVATE libmdf::mdf_static)
 set_tests_properties(vectis_unit_mdf_failure PROPERTIES
@@ -88,7 +142,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME vectis_unit_forked_kore_sanitizer
       COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_forked_kore_sanitizer.sh"
-        "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh")
+        "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_forked_kore_sanitizer PROPERTIES
       LABELS "unit;local" TIMEOUT 15)
   endif()
@@ -137,34 +191,39 @@ if(VECTIS_WITH_KORE_RUNTIME)
       test_kore_proxy_ws_admission_memory_live.c)
     add_test(NAME vectis_unit_kore_proxy_ws_admission_memory_filled
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WS_FILLED_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_ws_admission_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_ws_admission_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_ws_admission_memory_filled
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_ws_admission_memory_bidirectional
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WS_BIDIRECTIONAL=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_ws_admission_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_ws_admission_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_ws_admission_memory_bidirectional
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_h2_memory_large
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_h2_memory_large PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_h2_mtls_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_H2_MTLS=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_h2_mtls_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_h2_max_config_memory_live
       COMMAND ${CMAKE_COMMAND} -E env
         VECTIS_PROXY_H2_MTLS_LARGE_IDENTITY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_h2_max_config_memory_live
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_idle_cache_memory_live
@@ -172,15 +231,17 @@ if(VECTIS_WITH_KORE_RUNTIME)
         VECTIS_PROXY_H2_MTLS_LARGE_IDENTITY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
         VECTIS_PROXY_H2_IDLE_CACHE_MEMORY=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        20 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=20 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_idle_cache_memory_live
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_h2_upload_memory_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_H2_UPLOAD_MEMORY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_h2_upload_memory_live
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_h2_duplex_memory_live
@@ -188,22 +249,25 @@ if(VECTIS_WITH_KORE_RUNTIME)
         VECTIS_PROXY_H2_DUPLEX_MEMORY=1
         VECTIS_PROXY_H2_MTLS_LARGE_IDENTITY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        20 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=20 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_h2_duplex_memory_live
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_mixed_upload_memory_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_MIXED_UPLOAD_MEMORY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_mixed_upload_memory_live
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_mixed_transfer_memory_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_MIXED_TRANSFER_MEMORY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_mixed_transfer_memory_live
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_mixed_max_config_memory_live
@@ -211,15 +275,17 @@ if(VECTIS_WITH_KORE_RUNTIME)
         VECTIS_PROXY_MIXED_TRANSFER_MEMORY=1
         VECTIS_PROXY_H2_MTLS_LARGE_IDENTITY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        20 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=20 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_mixed_max_config_memory_live
       PROPERTIES LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_mixed_memory_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_MIXED_MEMORY=1
         VECTIS_PROXY_H2_LARGE_BUFFER=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_h2_memory_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_mixed_memory_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
     vectis_add_unit_test(vectis_unit_kore_proxy_unwritten_live
@@ -268,37 +334,42 @@ if(VECTIS_WITH_KORE_RUNTIME)
       -Wl,--wrap=curl_easy_recv -Wl,--wrap=curl_easy_send)
     add_test(NAME vectis_unit_kore_proxy_wss_mtls_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_wss_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_wss_mtls_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_wss_retry_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
         VECTIS_PROXY_WSS_RETRY=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_wss_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_wss_retry_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_wss_slow_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
         VECTIS_PROXY_WSS_SLOW=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_wss_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_wss_slow_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_wss_cancel_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
         VECTIS_PROXY_WSS_SLOW=1 VECTIS_PROXY_WSS_CANCEL=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_wss_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_wss_cancel_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
     add_test(NAME vectis_unit_kore_proxy_wss_shutdown_live
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_PROXY_WSS_MTLS=1
         VECTIS_PROXY_WSS_SLOW=1 VECTIS_PROXY_WSS_CANCEL=1
         VECTIS_PROXY_WSS_SHUTDOWN=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        15 0 $<TARGET_FILE:vectis_unit_kore_proxy_wss_live>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_wss_live>"
+        -DTIMEOUT_SECONDS=15 -DEXPECTED_EXIT=0
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_wss_shutdown_live PROPERTIES
       LABELS "unit;local" TIMEOUT 180)
   endif()
@@ -419,28 +490,18 @@ if(VECTIS_WITH_KORE_RUNTIME)
     target_compile_options(vectis_unit_kore_proxy_curl_loop_shared PRIVATE -std=c99)
     add_test(NAME vectis_unit_kore_proxy_curl_loop_failure_cleanup
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_EXIT_AFTER_START=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        10 71 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_curl_loop>"
+        -DTIMEOUT_SECONDS=10 -DEXPECTED_EXIT=71
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_curl_loop_failure_cleanup
       PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 20)
-    add_test(NAME vectis_unit_kore_proxy_curl_loop_timeout_cleanup
-      COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_HANG_AFTER_START=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        1 124 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop>)
-    set_tests_properties(vectis_unit_kore_proxy_curl_loop_timeout_cleanup
-      PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 10)
     add_test(NAME vectis_unit_kore_proxy_curl_loop_shared_failure_cleanup
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_EXIT_AFTER_START=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        10 71 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop_shared>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_proxy_curl_loop_shared>"
+        -DTIMEOUT_SECONDS=10 -DEXPECTED_EXIT=71
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_proxy_curl_loop_shared_failure_cleanup
       PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 20)
-    add_test(NAME vectis_unit_kore_proxy_curl_loop_shared_timeout_cleanup
-      COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PROBE_HANG_AFTER_START=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        1 124 $<TARGET_FILE:vectis_unit_kore_proxy_curl_loop_shared>)
-    set_tests_properties(vectis_unit_kore_proxy_curl_loop_shared_timeout_cleanup
-      PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 10)
   endif()
   vectis_add_unit_test(vectis_unit_kore_prebody_handoff
     test_kore_prebody_handoff.c)
@@ -452,8 +513,9 @@ if(VECTIS_WITH_KORE_RUNTIME)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME vectis_unit_kore_prebody_handoff_failure_cleanup
       COMMAND ${CMAKE_COMMAND} -E env VECTIS_KORE_PREBODY_EXIT_AFTER_START=1
-        bash "${CMAKE_SOURCE_DIR}/scripts/run_forked_kore_test.sh"
-        10 71 $<TARGET_FILE:vectis_unit_kore_prebody_handoff>)
+        "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:vectis_unit_kore_prebody_handoff>"
+        -DTIMEOUT_SECONDS=10 -DEXPECTED_EXIT=71
+        -P "${CMAKE_SOURCE_DIR}/tests/run_kore.cmake")
     set_tests_properties(vectis_unit_kore_prebody_handoff_failure_cleanup
       PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 20)
   endif()
@@ -503,19 +565,28 @@ endif()
 if(VECTIS_TARGET_ID STREQUAL "x86_64-linux-gnu" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux"
     AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
   add_test(NAME vectis_runtime_contract
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test_runtime_contract.py"
-            "${CMAKE_BINARY_DIR}")
+    COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}"
+            -P "${CMAKE_SOURCE_DIR}/scripts/test_runtime_contract.cmake")
   set_tests_properties(vectis_runtime_contract PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 30)
   add_test(NAME vectis_runtime_reconfigure
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test_runtime_reconfigure.py"
-            "${CMAKE_BINARY_DIR}")
+    COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}"
+            -P "${CMAKE_SOURCE_DIR}/scripts/test_runtime_reconfigure.cmake")
   set_tests_properties(vectis_runtime_reconfigure PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 30)
+  # This harness configures native tools and must retain the host's declared
+  # global cache identity instead of treating the product's sandbox as XDG.
+  set_tests_properties(vectis_runtime_reconfigure PROPERTIES
+    ENVIRONMENT "XDG_CACHE_HOME=$ENV{XDG_CACHE_HOME}")
   add_test(NAME vectis_runtime_mapping
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test_runtime_mapping.py"
-            "${CMAKE_BINARY_DIR}")
+    COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}"
+            -P "${CMAKE_SOURCE_DIR}/scripts/test_runtime_mapping.cmake")
   set_tests_properties(vectis_runtime_mapping PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 30)
 endif()
 
 if(TARGET vectis_unit_supervisor)
   set_property(TEST vectis_unit_supervisor APPEND PROPERTY LABELS failure-fast)
 endif()
+
+vectis_add_unit_test(vectis_unit_gz test_vectis_gz.c "${CMAKE_SOURCE_DIR}/src/vectis_lua_gz.c")
+target_link_libraries(vectis_unit_gz PRIVATE cpkt::lua_runtime)
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tests/gz-unit")
+set_tests_properties(vectis_unit_gz PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/tests/gz-unit")

@@ -5,6 +5,7 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 requested_abi=${1:-all}
 cmake_bin=${CMAKE:-cmake}
+"$cmake_bin" -P "$repo_root/cmake/vectis_owned_paths.cmake"
 checksum_build_dir=
 
 unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
@@ -101,7 +102,7 @@ status=failed
 class=external-tool-unavailable
 reason=pinned target toolchain could not be provisioned
 artifact=$target_id
-next=inspect the shared c.pkt.systems toolchain cache or request a narrower package target
+next=inspect the shared cpkt toolchain cache or request a narrower package target
 PKT_DIAGNOSTIC_END
 EOF
         exit 1
@@ -146,13 +147,8 @@ run_target() {
   local tool_args=()
 
   bash "$script_dir/deps.sh" "deps-$target_id"
-  case "$build_dir" in
-    "$repo_root"/build/*-release) rm -rf "$build_dir" ;;
-    *)
-      echo "[package] refusing to clean unexpected build dir: $build_dir" >&2
-      exit 1
-      ;;
-  esac
+  # Preparation is incremental. The release entrypoint owns the one clean
+  # boundary; ordinary packaging must reuse CMake's matching prerequisites.
   run_with_target_path "$target_id" "$cmake_bin" --preset "$preset"
   run_with_target_path "$target_id" "$cmake_bin" --build --preset "$preset"
   eval "$("$script_dir/discover_target_tools.sh" --build-dir "$build_dir" --target-id "$target_id")"

@@ -12,6 +12,9 @@ rockspec="$dist_dir/vectis-$version-1.rockspec"
 src_rock="$dist_dir/vectis-$version-1.src.rock"
 luarocks=${LUAROCKS:-luarocks}
 
+"${CMAKE:-cmake}" "-DVECTIS_OWNED_PATHS=$work_root" \
+  -P "$repo_root/cmake/vectis_owned_paths.cmake"
+
 fail() {
   reason=$1
   artifact=${2:-}

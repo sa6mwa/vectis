@@ -30,6 +30,9 @@ case "$source_url" in
     ;;
 esac
 
+"${CMAKE:-cmake}" "-DVECTIS_OWNED_PATHS=$output" \
+  -P "$repo_root/cmake/vectis_owned_paths.cmake"
+
 mkdir -p "$(dirname -- "$output")"
 
 escape_sed() {

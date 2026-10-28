@@ -1,8 +1,17 @@
+include("${CMAKE_CURRENT_LIST_DIR}/vectis_owned_paths.cmake")
+if(DEFINED VECTIS_ROOT)
+  vectis_require_project_root("${VECTIS_ROOT}")
+endif()
+if(DEFINED VECTIS_BINARY_DIR AND NOT "${VECTIS_BINARY_DIR}" STREQUAL "")
+  vectis_require_owned_path("${VECTIS_BINARY_DIR}" "Checksum build directory")
+endif()
 if(DEFINED VECTIS_DIST_DIR AND NOT "${VECTIS_DIST_DIR}" STREQUAL "")
   set(dist_dir "${VECTIS_DIST_DIR}")
 else()
   set(dist_dir "${VECTIS_ROOT}/dist")
 endif()
+vectis_require_owned_path("${dist_dir}" "Checksum output directory"
+  "${CMAKE_CURRENT_LIST_DIR}/../dist")
 if((NOT DEFINED VECTIS_VERSION OR "${VECTIS_VERSION}" STREQUAL "")
    AND DEFINED VECTIS_BINARY_DIR
    AND EXISTS "${VECTIS_BINARY_DIR}/package-metadata.cmake")

@@ -334,6 +334,15 @@ function M.configure(opts)
     return log_status_error(root or "failed to create pslog logger",
                             vstatus.ERR_INVALID)
   end
+  -- Typed custom/observed outputs exist in the adapted runtime. Installed
+  -- upstream modules without this predicate accept only files/paths/functions;
+  -- their function case was rejected above.
+  if pslog.has_native_output and not pslog.has_native_output(root) then
+    pcall(root.destroy, root)
+    return log_status_error(
+      "vectis.log.configure requires a native pslog sink; Vectis loggers "
+        .. "may write from native lifecycle threads", vstatus.ERR_INVALID)
+  end
   logger, scoped_err = scoped_logger(root, fields)
   if logger == nil then
     return nil, scoped_err

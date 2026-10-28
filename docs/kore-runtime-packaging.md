@@ -19,7 +19,9 @@ implementation detail.
   is the readable checkout of that revision.
 - `vendor/kore/patches/series` is the ordered Vectis patch stack.
 - `scripts/verify-kore-patches.sh` verifies that the patch stack still applies
-  cleanly and builds against the provisioned SDK root.
+  cleanly in an owned clone and builds against independent cpkt, pslog and
+  LoneJSON prefixes. It uses the prepared native compiler/runtime and executes
+  `kore -v`; it does not reset the product's patched checkout.
 - `CMakeLists.txt` owns the product build: it selects the Kore sources Vectis
   supports, creates generated Kore source files under the build directory, builds
   `vectis_kore_runtime` as an `OBJECT` target, and appends those objects to the

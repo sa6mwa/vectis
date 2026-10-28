@@ -13,6 +13,9 @@ generated_manifest_tmp="$stage_parent/generated-files.txt"
 archive_manifest_tmp="$stage_parent/archive-files.txt"
 archive="$dist_dir/$stage_name.tar.gz"
 
+"${CMAKE:-cmake}" "-DVECTIS_OWNED_PATHS=$stage_parent;$dist_dir" \
+  -P "$repo_root/cmake/vectis_owned_paths.cmake"
+
 if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "source archive staging requires a git worktree" >&2
   exit 1

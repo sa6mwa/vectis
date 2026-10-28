@@ -43,7 +43,7 @@ static int handle_stateful_order(void *context, lc_consumer_message *message,
     return LC_ERR_TRANSPORT;
   }
   (void)snprintf(state.phase, sizeof(state.phase), "%s", "processed");
-  if (message->state->save(message->state, &workflow_state_map, &state,
+  if (message->state->save(message->state, &workflow_state_map, &state, NULL,
                            error) != LC_OK) {
     return LC_ERR_TRANSPORT;
   }

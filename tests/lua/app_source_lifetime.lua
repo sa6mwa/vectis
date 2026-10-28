@@ -3,6 +3,20 @@ local app = assert(v.app.new({app_name='source-lifetime', bind='127.0.0.1',
   port=assert(tonumber(os.getenv('VECTIS_SOURCE_PORT'))), worker_count=1,
   worker_set_affinity_disabled=true, shutdown_grace_ms=1000,
   request_body_spool_dir=assert(os.getenv('TMPDIR'))..'/spool', tls={mode='disabled'}}))
+local exit_callback_weak=setmetatable({}, {__mode='v'})
+do
+  local replaced=function() error('replaced fork exit callback ran') end
+  exit_callback_weak[1]=replaced
+  assert(app:on_fork_exit(replaced))
+end
+assert(app:on_fork_exit(function(role)
+  assert(role=='kore_parent' or role=='kore_worker')
+  assert(not pcall(app.start,app))
+  assert(not pcall(app.close,app))
+  assert(not pcall(app.on_fork_exit,app,nil))
+  io.stdout:write('fork exit '..role..'\n');io.stdout:flush()
+end))
+collectgarbage('collect');assert(exit_callback_weak[1]==nil)
 local function reject(phase)
   collectgarbage('collect')
   local ok, err = pcall(app.close, app)

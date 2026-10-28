@@ -318,7 +318,7 @@ static int vectis_smith_save_record(lc_lease *lease,
   int rc;
 
   lc_error_init(&lcerr);
-  rc = lease->save(lease, &vectis_smith_record_map, record, &lcerr);
+  rc = lease->save(lease, &vectis_smith_record_map, record, NULL, &lcerr);
   if (rc != LC_OK) {
     vectis_smith_set_cai_error(error, CAI_ERR_TRANSPORT,
                                "failed to save Smith session metadata");

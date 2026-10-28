@@ -51,7 +51,10 @@ function M.client_config(config)
   local legacy = { pouch_crypto_key = "crypto_key", pouch_crypto_key_file = "crypto_key_file",
                    pouch_crypto_generate_key_file = "crypto_generate_key_file", pouch_compression = "compression" }
   for old, new in pairs(legacy) do
-    if config[old] ~= nil then config.pouch[new] = config[old]; config[old] = nil end
+    if config[old] ~= nil then
+      if config.pouch[new] == nil then config.pouch[new] = config[old] end
+      config[old] = nil
+    end
   end
   -- Match native app precedence when both a canonical name and alias appear.
   if config.client_bundle_path == nil then config.client_bundle_path = config.bundle_path end
@@ -96,7 +99,8 @@ function M.client_options(app, source)
     if need_key then config.pouch.crypto_key_file = key_file; config.pouch.crypto_generate_key_file = true end
   end
   -- App-owned Pouch roots have multiple native owner/producer clients.
-  -- Query options retain native precedence; an exclusive root is incompatible.
+  -- Selected typed fields override query values. An already-exclusive app
+  -- root still cannot be shared by child clients, regardless of their policy.
   if pouch then
     assert(config.pouch.single_writer ~= true, "app-owned Pouch clients require shared writer mode (single_writer=false)")
     if config.pouch.single_writer == nil and not query_writer then config.pouch.single_writer = false end
@@ -358,8 +362,19 @@ function M.attach(app, opts)
   local state = { scopes = {}, workflows = {}, lockd = copy(opts.lockd or {}) }
   states[app] = state
   local methods = getmetatable(app).__index
+  methods.set_pouch_settings = function(self, settings)
+    local state = M.state(self)
+    assert(next(state.scopes) == nil and next(state.workflows) == nil,
+      "Pouch settings must be captured before supervisor/workflow declarations")
+    local captured = copy(settings)
+    local ok, err = self:_set_pouch_settings_native(captured)
+    if ok == nil then return nil, err end
+    state.lockd.pouch = captured
+    return true
+  end
   methods.supervisor = M.declare
   methods.workflow = function(self, config) return require("vectis.workflow").declare(self, config) end
+  methods.storage = function(self, config) return require("vectis.storage").declare(self, config) end
   methods.ipc = function(self, name)
     if name == nil then return M.default(self):channel() end
     return assert(M.state(self).scopes[name], "unknown supervisor channel: " .. tostring(name)):channel()

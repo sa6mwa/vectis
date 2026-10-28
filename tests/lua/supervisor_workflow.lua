@@ -79,21 +79,27 @@ assert(not pcall(function() second:outbox({workflow=w, kind="one", handler=deliv
 assert(not pcall(function() app:workflow({namespace="orders",client=client_config}) end))
 local stateful = app:workflow({namespace="stateful",client=client_config,with_state=true,recovery_probe_ms=1000000})
 local checkpoint, stateful_count
+local stateful_receipts = {}
 stateful_count = 0
 stateful:outbox({kind="checkpoint",handler=function(job)
-  assert(not pcall(job.renew,job,30))
+  must(job:renew(30))
   checkpoint = assert(job:state())
   assert(not pcall(function() return checkpoint._core end))
   assert(not pcall(function() checkpoint:close() end))
   assert(not pcall(function() checkpoint:release() end))
   must(checkpoint:update_json({seen=true}))
+  must(job:renew(30))
+  must(checkpoint:update_json({seen=true,revision=2}))
+  must(job:renew(30))
   stateful_count = stateful_count + 1
+  if job.effect_key=='stateful-retry' then return job:retry({delay_seconds=3600,diagnostic='stateful retry'}) end
+  if job.effect_key=='stateful-dead' then return job:dead_letter('stateful dead letter') end
   return job:complete()
 end})
 assert(not pcall(function() w:transaction(function() end) end))
 local function entry(id, kind)
   local payload = "payload-" .. id
-  return {operation_id="op-"..id, effect_id="effect", effect_key=id, payload_digest=openssl.sha256(payload),
+  return {operation_id="op-"..id, effect_id="effect", effect_key=id, payload_digest=openssl.sha256_materialized(payload),
     kind=kind or "one", destination="local", content_type="text/plain"}, payload
 end
 local function append(workflow, id, kind)
@@ -169,7 +175,11 @@ assert(bad_scope:last_error().message:find("deterministic receiver failure",1,tr
 must(bad_scope:start()); assert(bad_scope:last_error()==nil)
 must(bad_scope:stop(0))
 local rejected, reason=bad_scope:channel():send("fault",""); assert(not rejected and reason=="closed")
-append(stateful, "checkpoint", "checkpoint"); must(app:pump(0)); assert(stateful_count==1)
+for index,outcome in ipairs({'complete','retry','dead'}) do
+  local result=append(stateful,'stateful-'..outcome,'checkpoint')
+  stateful_receipts[outcome]=result.outbox_receipts[1].outbox_key
+  must(app:pump(0));assert(stateful_count==index)
+end
 assert(not pcall(function() checkpoint:update_json({seen=false}) end))
 for _, rejection in ipairs({false, "error"}) do
   local ok, err = pcall(w.transaction,w,function(tx)
@@ -204,7 +214,7 @@ assert(count["oversized-key"] == 1)
 assert(undersized:stats().failed_wakes == 1 and undersized:stats().reconcile_wakes == 1)
 assert(undersized:stats().received_keys == 0 and undersized:stats().received_reconciles == 1)
 local stream_entry = entry("stream", "one")
-stream_entry.payload_digest = openssl.sha256(string.rep("s", 262144))
+stream_entry.payload_digest = openssl.sha256_materialized(string.rep("s", 262144))
 local produced, reads = 0, 0
 must(w:transaction(function(tx)
   return tx:append_outbox(stream_entry, {read=function(n)
@@ -229,6 +239,12 @@ local caught = pcall(function()
 end)
 assert(not caught, "caught unknown kind must poison enclosing transaction")
 local inspect = must(lc.open(client_config))
+for outcome,key in pairs(stateful_receipts) do
+  local lease=must(inspect:acquire({namespace='stateful',key=key,owner='inspector',ttl_seconds=30}))
+  local expected=outcome=='complete' and 'completed' or outcome=='retry' and 'retry_wait' or 'dead_letter'
+  assert(must(lease:read_json()).dispatch_state==expected)
+  must(lease:release())
+end
 for _, rejection in ipairs({false,"error"}) do
   local participant=must(inspect:acquire({namespace="orders",owner="inspector",ttl_seconds=30,key="callback-rollback-"..tostring(rejection)}))
   local _,metadata=participant:read_json(); assert(metadata.no_content)

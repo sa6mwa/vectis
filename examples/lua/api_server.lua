@@ -34,7 +34,7 @@ local app = assert(vectis.app.new({
   app_name = "lua-api-example",
   bind = bind,
   port = port,
-  lockd = { endpoints = {"pouch://" .. lockd_path .. "?single_writer=false"} },
+  lockd = { endpoints = {"pouch://" .. lockd_path}, pouch = {single_writer=false} },
 }))
 assert(auth_flow:mount(app))
 

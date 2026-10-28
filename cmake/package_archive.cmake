@@ -6,11 +6,15 @@ if(NOT DEFINED VECTIS_ROOT)
 endif()
 get_filename_component(VECTIS_BINARY_DIR "${VECTIS_BINARY_DIR}" ABSOLUTE)
 get_filename_component(VECTIS_ROOT "${VECTIS_ROOT}" ABSOLUTE)
+include("${CMAKE_CURRENT_LIST_DIR}/vectis_owned_paths.cmake")
+vectis_require_project_root("${VECTIS_ROOT}")
+vectis_require_owned_path("${VECTIS_BINARY_DIR}" "Package build directory")
 if(DEFINED VECTIS_DIST_DIR AND NOT "${VECTIS_DIST_DIR}" STREQUAL "")
   set(vectis_dist_dir "${VECTIS_DIST_DIR}")
 else()
   set(vectis_dist_dir "${VECTIS_ROOT}/dist")
 endif()
+vectis_require_owned_path("${vectis_dist_dir}" "Package output directory" "${VECTIS_ROOT}/dist")
 
 function(vectis_import_cache_path var_name)
   if(DEFINED ${var_name} AND NOT "${${var_name}}" STREQUAL "")
@@ -55,18 +59,16 @@ if(NOT install_result EQUAL 0)
   message(FATAL_ERROR "failed to install vectis package payload")
 endif()
 
-if(NOT EXISTS "${VECTIS_EXTERNAL_ROOT}/include" OR NOT EXISTS "${VECTIS_EXTERNAL_ROOT}/lib")
-  message(FATAL_ERROR "VECTIS_EXTERNAL_ROOT does not contain include/lib: ${VECTIS_EXTERNAL_ROOT}")
-endif()
-
-file(COPY "${VECTIS_EXTERNAL_ROOT}/include/" DESTINATION "${package_root}/include")
-file(COPY "${VECTIS_EXTERNAL_ROOT}/lib/" DESTINATION "${package_root}/lib")
-if(EXISTS "${VECTIS_EXTERNAL_ROOT}/share/doc")
-  file(COPY "${VECTIS_EXTERNAL_ROOT}/share/doc/" DESTINATION "${package_root}/share/doc")
-endif()
-if(EXISTS "${VECTIS_EXTERNAL_ROOT}/share/c.pkt.systems")
-  file(COPY "${VECTIS_EXTERNAL_ROOT}/share/c.pkt.systems" DESTINATION "${package_root}/share")
-endif()
+set(vectis_sdk_names cpkt cpktdb cpktmisc liblockdc liblockdc-postgres
+  lonejson pslog cai liblql libmdf softline)
+file(MAKE_DIRECTORY "${package_root}/deps")
+foreach(name IN LISTS vectis_sdk_names)
+  if(NOT EXISTS "${VECTIS_EXTERNAL_ROOT}/${name}/lib")
+    message(FATAL_ERROR "Missing independently prepared SDK: ${name}")
+  endif()
+  # Preserve each provider's public layout, validation inventory and notices.
+  file(COPY "${VECTIS_EXTERNAL_ROOT}/${name}" DESTINATION "${package_root}/deps")
+endforeach()
 
 function(vectis_darwin_fixup_dylibs)
   if(NOT VECTIS_TARGET_ID MATCHES "apple-darwin$")
@@ -187,134 +189,7 @@ foreach(vectis_package_pc_file IN LISTS vectis_package_pc_files)
   file(WRITE "${vectis_package_pc_file}" "${vectis_package_pc_contents}")
 endforeach()
 
-file(MAKE_DIRECTORY "${package_root}/lib/cmake/vectis")
-file(WRITE "${package_root}/lib/cmake/vectis/vectisConfig.cmake" [=[
-get_filename_component(PACKAGE_PREFIX_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" ABSOLUTE)
-
-include(CMakeFindDependencyMacro)
-find_dependency(Threads REQUIRED)
-set(OpenSSL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/OpenSSL")
-set(ZLIB_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/zlib")
-set(nghttp2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/nghttp2")
-set(Libssh2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libssh2")
-set(CURL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CURL")
-set(CpktLuaRuntime_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktLuaRuntime")
-set(CpktAudio_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktAudio")
-set(CpktOpcUa_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktOpcUa")
-set(CpktSus_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktSus")
-set(LibXml2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libxml2")
-set(pslog_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/pslog")
-set(lonejson_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/lonejson")
-set(liblql_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/liblql")
-set(cai_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/cai")
-set(libmdf_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libmdf")
-set(softline_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/softline")
-find_dependency(OpenSSL CONFIG REQUIRED)
-find_dependency(ZLIB CONFIG REQUIRED)
-find_dependency(nghttp2 CONFIG REQUIRED)
-find_dependency(Libssh2 CONFIG REQUIRED)
-find_dependency(CURL CONFIG REQUIRED)
-find_dependency(CpktLuaRuntime CONFIG REQUIRED)
-find_dependency(CpktAudio CONFIG REQUIRED)
-find_dependency(CpktOpcUa CONFIG REQUIRED)
-find_dependency(CpktSus CONFIG REQUIRED)
-find_package(LibXml2 CONFIG REQUIRED PATHS "${LibXml2_DIR}" NO_DEFAULT_PATH)
-find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
-find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
-find_package(liblql CONFIG REQUIRED PATHS "${liblql_DIR}" NO_DEFAULT_PATH)
-find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
-find_package(libmdf CONFIG REQUIRED PATHS "${libmdf_DIR}" NO_DEFAULT_PATH)
-find_package(softline CONFIG REQUIRED PATHS "${softline_DIR}" NO_DEFAULT_PATH)
-find_package(lockdc CONFIG REQUIRED PATHS "${PACKAGE_PREFIX_DIR}/lib/cmake/lockdc" NO_DEFAULT_PATH)
-
-if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
-  set_property(TARGET cai::cai_static PROPERTY
-    INTERFACE_LINK_LIBRARIES "CURL::libcurl;Threads::Threads;OpenSSL::Crypto;lonejson::lonejson_static")
-endif()
-
-if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
-  set(_vectis_static_links
-    lockdc::static
-    cpkt::opcua
-    cpkt::sus
-    cpkt::audio
-    cai::cai_static
-    libmdf::mdf_static
-    softline::softline_static
-    pslog::pslog_static
-    CURL::libcurl
-    Libssh2::libssh2
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    lonejson::lonejson_static
-    lonejson::openssl
-    lonejson::oidc
-    liblql::lql_static
-    LibXml2::LibXml2
-    nghttp2::nghttp2
-    ZLIB::ZLIB
-  )
-  add_library(vectis::static STATIC IMPORTED)
-  set_target_properties(vectis::static PROPERTIES
-    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libvectis.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/libxml2"
-    INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/lib"
-    INTERFACE_LINK_LIBRARIES "${_vectis_static_links}"
-  )
-endif()
-
-if(NOT TARGET vectis::shared)
-  set(_vectis_shared_links
-    lockdc::shared
-    cpkt::opcua_shared
-    cpkt::sus_shared
-    cpkt::audio_shared
-    cai::cai_shared
-    libmdf::mdf_shared
-    softline::softline
-    pslog::pslog_shared
-    cpkt::curl_shared
-    cpkt::libssh2_shared
-    cpkt::openssl_ssl_shared
-    cpkt::openssl_crypto_shared
-    lonejson::lonejson
-    lonejson::openssl
-    lonejson::oidc
-    liblql::lql_shared
-    cpkt::libxml2_shared
-    cpkt::nghttp2_shared
-    cpkt::zlib_shared
-  )
-  if(APPLE AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.dylib")
-    add_library(vectis::shared SHARED IMPORTED)
-    set_target_properties(vectis::shared PROPERTIES
-      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libvectis.dylib"
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/libxml2"
-      INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/lib"
-      INTERFACE_LINK_LIBRARIES "${_vectis_shared_links}"
-    )
-  elseif(EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.so")
-    add_library(vectis::shared SHARED IMPORTED)
-    set_target_properties(vectis::shared PROPERTIES
-      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libvectis.so"
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/libxml2"
-      INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/lib"
-      INTERFACE_LINK_LIBRARIES "${_vectis_shared_links}"
-    )
-  endif()
-endif()
-
-if(NOT TARGET vectis::vectis)
-  if(TARGET vectis::static)
-    add_library(vectis::vectis ALIAS vectis::static)
-  elseif(TARGET vectis::shared)
-    add_library(vectis::vectis ALIAS vectis::shared)
-  endif()
-endif()
-
-]=])
-
-file(WRITE "${package_root}/lib/cmake/vectis/vectisConfigVersion.cmake" "set(PACKAGE_VERSION \"${VECTIS_VERSION}\")\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\n")
+# The canonical installed CMake config discovers the independent bundled prefixes.
 
 file(MAKE_DIRECTORY "${vectis_dist_dir}")
 set(archive_base "${vectis_dist_dir}/${package_prefix_name}.tar")

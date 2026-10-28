@@ -3,11 +3,12 @@ local root=assert(os.getenv('VECTIS_WORKFLOW_TEST_ROOT'))
 local file=assert(io.open(root..'/diagnostics.log','w+b'))
 assert(v.log.configure({output=file,mode='json',env=false,disable_timestamp=true,level='trace'}))
 local function must(value,err) assert(value~=nil and value~=false,type(err)=='table' and err.message or tostring(err)); return value end
-local function entry(id) return {operation_id=id,effect_id='one',effect_key=id,kind='job',destination='local',payload_digest=ssl.sha256(id)},id end
-for _, unsupported in ipairs({{pouch={crypto_key='ignored'}},{disable_mtls=true},{unknown=true}}) do
+local function entry(id) return {operation_id=id,effect_id='one',effect_key=id,kind='job',destination='local',payload_digest=ssl.sha256_materialized(id)},id end
+for _, unsupported in ipairs({{disable_mtls=true},{unknown=true}}) do
   local ok,err=pcall(v.app.new,{lockd=unsupported,tls={mode='disabled'}})
   assert(not ok and err:find('unsupported app lockd option',1,true))
 end
+assert(not pcall(v.app.new,{lockd={pouch={unknown=true}},tls={mode='disabled'}}))
 assert(not pcall(v.supervisor.client_config,{pouch=false}))
 assert(not pcall(v.supervisor.client_config,{client_bundle={path='ignored'}}))
 for _,invalid in ipairs({{endpoints={other='pouch://ignored'}},{endpoints={'pouch://ok',[3]='pouch://gap'}},

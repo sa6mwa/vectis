@@ -19,6 +19,11 @@ endif()
 # SDK consumers may select an install tree plus a separate target dependency
 # prefix. Keep both inside CMake's target-only package search boundary.
 list(APPEND CMAKE_FIND_ROOT_PATH ${CMAKE_PREFIX_PATH})
+foreach(prefix IN LISTS CMAKE_PREFIX_PATH)
+  if(EXISTS "${prefix}/lib")
+    list(APPEND vectis_test_runtime_dirs "${prefix}/lib")
+  endif()
+endforeach()
 
 function(vectis_pin_local_executables directory)
   get_property(targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
@@ -30,6 +35,13 @@ function(vectis_pin_local_executables directory)
       target_link_options(${target} PRIVATE
         "LINKER:--dynamic-linker=${vectis_test_loader}"
         "LINKER:--disable-new-dtags")
+      if(VECTIS_CONSUMER_LINK STREQUAL "shared" OR VECTIS_EXAMPLE_LINK STREQUAL "shared")
+        # Provider RUNPATHs stop ancestor RPATH lookup for their libc peers.
+        # Eagerly resolve libresolv from the selected runtime in these local
+        # shared-SDK probes, before a provider can find the older host copy.
+        target_link_libraries(${target} PRIVATE
+          "-Wl,--no-as-needed" "${CMAKE_SYSROOT}/lib/libresolv.so.2" "-Wl,--as-needed")
+      endif()
       # RPATH covers transitive dependencies. The runtime contract verifies the
       # actual resolved paths, including dependencies found in the loader cache.
       set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH ${vectis_test_runtime_dirs})
@@ -47,6 +59,16 @@ function(vectis_finalize_local_runtime)
   list(JOIN files "\n" manifest)
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/test-runtime/targets.txt"
     CONTENT "${manifest}\n")
+  file(WRITE "${CMAKE_BINARY_DIR}/test-runtime/inputs.cmake"
+    "set(runtime_sysroot [==[${CMAKE_SYSROOT}]==])\n"
+    "set(runtime_loader [==[${vectis_test_loader}]==])\n"
+    "set(runtime_readelf [==[${CMAKE_READELF}]==])\n"
+    "set(runtime_compiler [==[${CMAKE_C_COMPILER}]==])\n"
+    "set(runtime_exe_debug_flags [==[${CMAKE_EXE_LINKER_FLAGS_DEBUG}]==])\n"
+    "set(runtime_shared_debug_flags [==[${CMAKE_SHARED_LINKER_FLAGS_DEBUG}]==])\n"
+    "set(runtime_prefixes [==[${CMAKE_PREFIX_PATH}]==])\n"
+    "set(runtime_configuration [==[${CMAKE_BUILD_TYPE}]==])\n"
+    "set(runtime_cli [==[${VECTIS_BUILD_BINARY}]==])\n")
 endfunction()
 cmake_language(DEFER CALL vectis_finalize_local_runtime)
 

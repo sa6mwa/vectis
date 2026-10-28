@@ -6,6 +6,8 @@ Follow user and developer instructions and the repository's documented lifecycle
 
 The Vectis executable and its Lua application surface are products. An SDK version bump, successful link, module preload, or upstream facade import does not establish a completed upgrade.
 
+After dependency layout changes, inspect actual compilation/link commands and embedded resource bytes. Retire the owned legacy extraction layout and use imported-target header closure; a pin check elsewhere does not prove that a test or example compiled against those headers. Archive mtimes may precede existing outputs, so changed embedded-source metadata must also invalidate the matching byte blob. Metadata-only or stale-header success is not verification evidence.
+
 For every upgrade, the responsible agent must investigate the differences in **all** upgraded dependencies and their Vectis seams. Compare the prior pinned/released public headers, Lua modules, documentation, and examples with the candidate artifacts. Examine additions, removals, changed defaults, options, ownership, callbacks, errors, concurrency, streaming, persistence, and deployment requirements. Investigate transitive changes that affect those contracts too.
 
 Trace each relevant change through native binding, Lua dependency facade, Vectis convenience facade, app configuration and lifecycle, process/thread placement, diagnostics/logging, docs/examples, normal execution, Linux packed execution, Lua source-rock packaging, and static/shared consumer closure. A method's presence is evidence of availability, not proof of an end-to-end workflow.
@@ -14,11 +16,15 @@ Implement the required seams in the same upgrade task. When an upstream operatio
 
 Vectis owns its convenience APIs and bindings for dependencies without an upstream Lua facade. For those dependencies, expose useful public API surfaces with a concrete Vectis or bundled application use case; exhaustive C API parity and unused surfaces are not requirements. Existing upstream Lua facades, including pslog, LQL and MDF, are authoritative and must be consumed unchanged. Do not extend, rename, mirror omitted C APIs, or patch those facades locally; omissions may reflect deliberate API or performance policy. Flag a concrete required capability or defect for an upstream handoff instead. Vectis-owned convenience APIs are a separate boundary and may use public C APIs, upstream Lua APIs or neither. Preserve them independently; document any workflow gap and the exact upstream contract it needs rather than adding a local provider extension.
 
+Streaming must remain streaming through every seam, with bounded chunks and no undisclosed whole-value collection or staging. Name whole-value operations explicitly materialized. During implementation use focused fast debug builds and tests. Finish the entire surface before the full build and verification, then review it thoroughly. Fix review findings with debug testing only and repeat review until clean; do not repeat full cross builds for small fixes.
+
 Never classify a missing integration as an inevitable property of the architecture. In particular, outbox commit receipts must reach the supervisor dispatcher through the declared bounded wake path; reconciliation is recovery, not an acceptable silent replacement for that fast path. A native notification function alone does not prove worker-to-supervisor delivery. Foreign threads must never enter arbitrary Lua states, and thread-bearing resources must materialize only after the applicable fork boundary.
 
 If a public dependency API cannot support a required contract, report the exact blocker and prepare an upstream report when authorized. Do not hide it behind buffering, periodic polling, a staging file, an invented stub, or documentation that presents a specification as implemented behavior. Document deliberate exclusions with their concrete rationale and reconsideration trigger.
 
 Update `docs/lua-coverage-matrix.md`, relevant manuals and examples, and the current dependency-surface audit. Add observable regression tests for successful and failed execution, cleanup, option propagation, and process/thread boundaries. Keep the first feedback path fast: deterministic faults, zero-wait probes, tiny fixtures, and no delay-based fault tests. Broader lifecycle, real service, packaging, and memory checks must still prove the promised product contract.
+
+Trace vendor feature guards through actual compiler definitions and linked hooks. A patch containing an implementation is insufficient when its guard is disabled. Prove parent-death/control-channel cleanup without a process-scanning test supervisor; native CMake/CTest owns test cancellation. Remove stale hook declarations rather than satisfying them with empty stubs.
 
 ## Documentation maintenance
 

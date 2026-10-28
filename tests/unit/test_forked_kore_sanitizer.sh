@@ -21,14 +21,14 @@ chmod +x "$test_dir/clean" "$test_dir/report"
 
 (
   cd "$test_dir"
-  bash "$wrapper" 5 0 "$test_dir/clean" > clean.output 2>&1
-  if bash "$wrapper" 5 0 "$test_dir/report" > report.output 2>&1; then
+  cmake -DEXECUTABLE="$test_dir/clean" -DTIMEOUT_SECONDS=5 -DEXPECTED_EXIT=0 -P "$wrapper" > clean.output 2>&1
+  if cmake -DEXECUTABLE="$test_dir/report" -DTIMEOUT_SECONDS=5 -DEXPECTED_EXIT=0 -P "$wrapper" > report.output 2>&1; then
     printf 'forked Kore wrapper ignored a worker sanitizer report\n' >&2
     exit 1
   fi
   grep -q 'forked Kore worker sanitizer report:' report.output
   grep -q 'AddressSanitizer: injected worker failure' report.output
-  if compgen -G 'vectis-kore-test.*' > /dev/null; then
+  if compgen -G 'kore-test-*' > /dev/null; then
     printf 'forked Kore wrapper left a test directory behind\n' >&2
     exit 1
   fi

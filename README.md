@@ -38,9 +38,9 @@ one deployable package:
 - Serial logical supervisors, bounded process-safe IPC and transactional outbox
   handlers with automatic worker-to-owner receipt wakeups.
 - Downstream HTTP, SFTP, MQTT, and transfer clients through libcurl.
-- OPC UA clients and servers through the `c.pkt.systems` C89 OPC UA facade.
+- OPC UA clients and servers through the `cpktmisc` C89 OPC UA facade.
 - Audio capture/playback and whisper-backed speech surfaces through the
-  `c.pkt.systems` audio and SUS facades.
+  `cpktmisc` audio and SUS facades.
 - SSH command execution and SFTP transfers through libssh2.
 - OpenSSL-backed key, CSR, certificate, CA, and PEM bundle workflows.
 - Structured logging through `libpslog`.
@@ -56,22 +56,24 @@ one deployable package:
 
 Debug and release builds consume pinned SDK bundles extracted under `.cache/`.
 Release archives are fetched through the shared verified
-`${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/c.pkt.systems/deps}`
+`${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cpkt/deps}`
 archive cache. The current expected dependency set is:
 
-- `c.pkt.systems` 0.11.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
-  the C89 Lua runtime facade, libxml2 2.15.4, OPC UA, audio/miniaudio,
-  SUS/whisper, and supporting package metadata.
-- `liblockdc` 0.18.0 for lockd C and Lua surfaces, including Pouch local
-  storage and transactional inbox/outbox workflow support.
+- `cpkt` 0.6.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
+  the C89 Lua runtime facade, libxml2 and supporting core package metadata.
+- `cpktdb` 0.3.1 for the PostgreSQL and SQLite C89 facades.
+- `cpktmisc` 0.2.1 for OPC UA, audio/miniaudio, SUS/whisper and the optional
+  data/compression/PDF/PNG/FFI facades. Each bundle keeps its own SDK prefix.
+- `liblockdc` 0.23.0 plus its separate PostgreSQL XA provider for lockd C and
+  Lua surfaces, Pouch collections, state retention and transactional workflows.
 - `lonejson` 0.45.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
 - `cai` 0.6.0 for OpenAI API, agent runtime, Smith preset, tool, MCP, and Lua
   binding sources.
-- `liblql` 0.3.0 for the LQL dependency exposed by `liblockdc` 0.18.0.
-- `libmdf` 0.13.0 for Markdown-to-ANSI/HTML rendering, terminal paging, and Lua
+- `liblql` 0.3.0 for the LQL dependency exposed by `liblockdc`.
+- `libmdf` 0.16.0 for Markdown-to-ANSI/HTML rendering, terminal paging, and Lua
   binding sources.
-- `softline` 0.9.0 for line editing, terminal prompt UX, and Lua binding
+- `softline` 0.13.0 for line editing, terminal prompt UX, and Lua binding
   sources.
 - `libpslog` 0.12.0 for structured logging and Lua binding sources.
 - `libpid0` 0.5.0 for Linux PID 1 behavior in the `vectis` executable.
@@ -80,15 +82,27 @@ Vectis validates the dependency manifest during CMake configure. A stale or
 mixed dependency root should fail early instead of producing a subtly mismatched
 SDK.
 
-The c.pkt.systems 0.11.0 shared GNU/Linux dependency set requires **glibc 2.43
-or newer**, up from 2.38 in 0.9.0. This approved deployment minimum applies to
+The selected split-bundle shared GNU/Linux dependency set requires **glibc 2.44
+or newer**, verified from the selected SDKs' versioned ELF imports. This applies to
 shared SDK consumers on x86_64, aarch64 and armhf. Upgrade older deployment
-runtimes before adopting those shared dependencies. Public facade ABI majors
-are unchanged. The shipped, fully static Linux CLI does not acquire this
+runtimes before adopting those shared dependencies. liblockdc core now uses
+ABI 6; its separate PostgreSQL provider uses ABI 0. The shipped, fully static Linux CLI does not acquire this
 dynamic-glibc requirement; linking a static SDK archive into an otherwise
 dynamic application does not remove it.
 
 ## C SDK Model
+
+App-owned collections and managed PostgreSQL XA are documented in
+[storage and PostgreSQL XA](manual/lua-storage.md), including the public C89
+factory and receiver ownership contracts. Toolchains use the separate
+`${XDG_CACHE_HOME:-$HOME/.cache}/cpkt/toolchains` cache. Run the normal native
+build before opening dependency/generated headers in clangd; it prepares the
+headers and `build/debug/compile_commands.json` used by `.clangd`.
+
+When migrating from the monolithic bundle or old toolchain cache, configure a
+fresh owned build directory; an existing CMake cache retains compiler/sysroot
+paths. Native test builds also require Go for the standard-library-only HTTP,
+proxy and metrics fixtures. Their Go caches stay under this checkout's `build/`.
 
 Public configuration structs must be initialized with their matching
 `vectis_*_init()` function before use. The init helpers apply non-zero defaults

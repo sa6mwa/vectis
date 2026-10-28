@@ -35,3 +35,8 @@
 0035-kore-guard-response-write-time-against-future-start.patch
 0036-kore-wake-for-connection-timeout-sweep.patch
 0037-kore-guard-header-length-before-pipeline-split.patch
+0038-kore-zero-ipc-header-padding.patch
+0039-kore-fork-exit-ownership.patch
+0040-kore-release-worker-accept-lock-on-exit.patch
+0041-kore-static-pool-name-ownership.patch
+0042-kore-independent-sdk-prefixes.patch

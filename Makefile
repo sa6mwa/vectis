@@ -5,7 +5,7 @@ MAKEFLAGS += --no-builtin-rules
 ROOT := $(CURDIR)
 CMAKE := cmake
 CTEST := ctest
-GO ?= go
+export VECTIS_VERSION_OVERRIDE
 TIMED := bash ./scripts/run_timed.sh
 KORE_PATCH_STAMP := $(ROOT)/build/.kore-runtime-patches-applied
 KORE_PATCH_FILES := $(wildcard $(ROOT)/vendor/kore/patches/*.patch)
@@ -107,11 +107,11 @@ help:
 		'make build-coverage     Configure and build the coverage preset.' \
 		'make test-instrumentation-presets Build the sanitizer and coverage preset link-regression targets.' \
 		'make build-fuzz         Configure and build the fuzz preset.' \
-		'make bench-metrics-storage Time encrypted Pouch layouts for 6m/12m (Python 3.9+; METRICS_BENCH_ARGS=--smoke for a short check).' \
+		'make bench-metrics-storage Time encrypted Pouch layouts for 6m/12m (native Go fixture; METRICS_BENCH_ARGS=--smoke).' \
 		'make bench-proxy        Compare direct and proxied HTTP/SSE/WS locally (PROXY_BENCH_ARGS="--smoke" for a short check).' \
 		'make bench-proxy-h2     Compare direct HTTP/2 and proxied HTTP/1.1-to-HTTP/2 locally (PROXY_H2_BENCH_ARGS="--smoke").' \
 		'make bench-proxy-soak   Run opt-in SSE/WebSocket churn and app-shutdown soak (PROXY_SOAK_ARGS="--smoke").' \
-		'make perf-gate          Gate encrypted metrics recovery through HTTPS readiness (Linux; Python 3).' \
+		'make perf-gate          Gate encrypted metrics recovery through HTTPS readiness (native Linux fixture).' \
 		'make deps-debug         Provision host debug dependencies into .cache/.' \
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
 		'make deps-cross         Provision aarch64 and armhf GNU/musl release dependencies, plus Darwin when osxcross is available.' \
@@ -142,25 +142,26 @@ help:
 build: build-debug
 test: test-debug
 
-test-lifecycle: $(KORE_PATCH_STAMP)
+test-lifecycle: build-debug
 	$(TIMED) test-vendor-kore-lifecycle bash ./scripts/test_vendor_kore_lifecycle.sh
 	$(TIMED) test-lifecycle bash ./scripts/test_lifecycle_contracts.sh
-	$(TIMED) test-service-runtime-lifecycle bash ./scripts/test_service_runtime_lifecycle_audit.sh
-	$(TIMED) test-lua-facade-matrix bash ./scripts/test_lua_facade_matrix_contracts.sh
-	$(TIMED) test-lua-facade-behavior bash ./scripts/test_lua_facade_behavior_coverage.sh
 	$(TIMED) test-release-privacy-contracts bash ./scripts/test_release_privacy_contracts.sh
+	$(TIMED) test-lifecycle-runtime $(CTEST) --preset $(DEBUG_PRESET) -j 1 -L lifecycle --no-tests=error
+	$(MAKE) --no-print-directory test-service-runtime-lifecycle test-lua-facade-matrix
 
 test-vendor-kore-lifecycle:
 	$(TIMED) test-vendor-kore-lifecycle bash ./scripts/test_vendor_kore_lifecycle.sh
 
-test-service-runtime-lifecycle:
-	$(TIMED) test-service-runtime-lifecycle bash ./scripts/test_service_runtime_lifecycle_audit.sh
+test-service-runtime-lifecycle: build-debug
+	$(TIMED) test-service-runtime-lifecycle $(CTEST) --preset $(DEBUG_PRESET) -j 1 --no-tests=error -R '^(vectis_unit_runtime|vectis_unit_fork_exit.*|vectis_lua_app_log_cleanup_.*|vectis_lua_fork_exit_failure)$$'
 
-test-lua-facade-matrix:
-	$(TIMED) test-lua-facade-matrix bash ./scripts/test_lua_facade_matrix_contracts.sh
+# These execute observable contracts. The semantic coverage matrix/release
+# review remains the responsible agent's reasoning gate, never a text scanner.
+test-lua-facade-matrix: build-debug
+	$(TIMED) test-lua-facade-matrix $(CTEST) --preset $(DEBUG_PRESET) -j 1 --no-tests=error -R '^(vectis_lua_smoke|vectis_lua_facade_contracts|vectis_lua_preload_artifact_contract)$$'
 
-test-lua-facade-behavior:
-	$(TIMED) test-lua-facade-behavior bash ./scripts/test_lua_facade_behavior_coverage.sh
+test-lua-facade-behavior: build-debug
+	$(TIMED) test-lua-facade-behavior $(CTEST) --preset $(DEBUG_PRESET) -j 1 -L lua --no-tests=error
 
 test-release-privacy-contracts:
 	$(TIMED) test-release-privacy-contracts bash ./scripts/test_release_privacy_contracts.sh
@@ -170,8 +171,9 @@ test-target-tools:
 	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
 
 test-cpkt-toolchains:
-	$(TIMED) test-cpkt-toolchain-resolvers bash ./scripts/test-cpkt-toolchain-resolvers.sh
-	$(TIMED) test-cpkt-aflpp-resolver bash ./scripts/test-cpkt-aflpp-resolver.sh
+	$(CMAKE) -E make_directory $(ROOT)/build/cpkt-toolchain-tests
+	$(TIMED) test-cpkt-toolchain-resolvers env TMPDIR=$(ROOT)/build/cpkt-toolchain-tests bash ./scripts/test-cpkt-toolchain-resolvers.sh
+	$(TIMED) test-cpkt-aflpp-resolver env TMPDIR=$(ROOT)/build/cpkt-toolchain-tests bash ./scripts/test-cpkt-aflpp-resolver.sh
 
 test-darwin-linker-route:
 	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
@@ -179,7 +181,7 @@ test-darwin-linker-route:
 deps-debug:
 	$(TIMED) deps-debug bash ./scripts/deps.sh deps-host-debug
 
-$(HOST_DEBUG_MANIFEST): $(ROOT)/scripts/deps.sh
+$(HOST_DEBUG_MANIFEST): $(ROOT)/scripts/deps.sh $(ROOT)/scripts/dependency-pins.tsv
 	$(TIMED) deps-debug bash ./scripts/deps.sh deps-host-debug
 
 deps-release:
@@ -268,13 +270,8 @@ lifecycle-version-contract:
 	$(TIMED) lifecycle-version-contract bash ./scripts/test-release-tag-contract.sh
 
 release:
-	$(MAKE) lifecycle-version-contract
+	$(TIMED) release-identity bash ./scripts/require_release_identity.sh
 	$(MAKE) clean
-	@if [ "$$(bash ./scripts/release_version.sh)" = "0.0.0" ]; then \
-		printf '%s\n' 'make release requires an exact lightweight vX.Y.Z tag on HEAD or an explicit VECTIS_VERSION_OVERRIDE for a non-publishable rehearsal.' >&2; \
-		exit 2; \
-	fi
-	$(TIMED) release-worktree-clean bash ./scripts/require_clean_release_worktree.sh
 	$(TIMED) release-pipeline bash ./scripts/release_pipeline.sh
 
 print-release-version:
@@ -300,29 +297,29 @@ build-coverage: deps-debug $(KORE_PATCH_STAMP)
 coverage: test-coverage
 
 build-fuzz: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) prepare-afl bash ./scripts/cpkt-aflpp.sh ensure
 	$(TIMED) build-fuzz bash ./scripts/configure_fuzz.sh $(FUZZ_PRESET)
 	$(TIMED) build-fuzz-compile $(CMAKE) --build --preset $(FUZZ_PRESET)
 
 bench-metrics-storage: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) bench-metrics-storage-configure $(CMAKE) --preset $(DEBUG_PRESET) -DVECTIS_BUILD_BENCHMARKS=ON
-	$(TIMED) bench-metrics-storage-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis
-	$(TIMED) bench-metrics-storage python3 $(ROOT)/bench/metrics_storage.py --binary $(ROOT)/build/$(DEBUG_PRESET)/vectis --root $(ROOT)/build/$(DEBUG_PRESET)/bench $(METRICS_BENCH_ARGS)
+	$(TIMED) bench-metrics-storage-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin vectis_bench_fixture
+	$(TIMED) bench-metrics-storage $(ROOT)/build/$(DEBUG_PRESET)/bench/vectis_bench_fixture metrics-storage --binary $(ROOT)/build/$(DEBUG_PRESET)/vectis --script $(ROOT)/bench/metrics_storage.lua --root $(ROOT)/build/$(DEBUG_PRESET)/bench/metrics-storage $(METRICS_BENCH_ARGS)
 
 bench-proxy: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) bench-proxy-configure $(CMAKE) --preset $(DEBUG_PRESET)
-	$(TIMED) bench-proxy-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
-	$(TIMED) bench-proxy python3 -B $(ROOT)/bench/proxy.py --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis $(PROXY_BENCH_ARGS)
+	$(TIMED) bench-proxy-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin vectis_bench_fixture
+	$(TIMED) bench-proxy $(ROOT)/build/$(DEBUG_PRESET)/bench/vectis_bench_fixture benchmark --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis --root $(ROOT)/build/$(DEBUG_PRESET)/bench/proxy $(PROXY_BENCH_ARGS)
 
 bench-proxy-h2: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) bench-proxy-h2-configure $(CMAKE) --preset $(DEBUG_PRESET)
-	$(TIMED) bench-proxy-h2-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
-	$(TIMED) bench-proxy-h2-go env TMPDIR=$(ROOT)/build GOCACHE=$(ROOT)/build/go-cache GOPATH=$(ROOT)/build/go-path GOMODCACHE=$(ROOT)/build/go-modcache GOPROXY=off GOTOOLCHAIN=local GO111MODULE=off CGO_ENABLED=0 $(GO) build -o $(ROOT)/build/proxy_h2_helper $(ROOT)/bench/proxy_h2_helper.go
-	$(TIMED) bench-proxy-h2 python3 -B $(ROOT)/bench/proxy_h2.py --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis --helper $(ROOT)/build/proxy_h2_helper $(PROXY_H2_BENCH_ARGS)
+	$(TIMED) bench-proxy-h2-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin vectis_bench_fixture
+	$(TIMED) bench-proxy-h2 $(ROOT)/build/$(DEBUG_PRESET)/bench/vectis_bench_fixture benchmark --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis --root $(ROOT)/build/$(DEBUG_PRESET)/bench/proxy --http2 $(PROXY_H2_BENCH_ARGS)
 
 bench-proxy-soak: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) bench-proxy-soak-configure $(CMAKE) --preset $(DEBUG_PRESET)
-	$(TIMED) bench-proxy-soak-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin
-	$(TIMED) bench-proxy-soak python3 -B $(ROOT)/bench/proxy_soak.py --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis $(PROXY_SOAK_ARGS)
+	$(TIMED) bench-proxy-soak-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis_bin vectis_bench_fixture
+	$(TIMED) bench-proxy-soak $(ROOT)/build/$(DEBUG_PRESET)/bench/vectis_bench_fixture benchmark --vectis $(ROOT)/build/$(DEBUG_PRESET)/vectis --root $(ROOT)/build/$(DEBUG_PRESET)/bench/proxy --seconds 60 --concurrency 16 $(PROXY_SOAK_ARGS)
 
 fuzz: build-fuzz
 
@@ -334,8 +331,8 @@ finalize-slice: format test-lifecycle test-target-tools test-cpkt-toolchains tes
 lua-rock:
 	$(TIMED) lua-rock bash ./scripts/build_lua_rock.sh
 
-test-opcua-lua-surface: deps-debug
-	$(TIMED) test-opcua-lua-surface python3 ./scripts/verify_opcua_lua_surface.py
+test-opcua-lua-surface: build-debug
+	$(TIMED) test-opcua-lua-surface $(CTEST) --test-dir $(ROOT)/build/$(DEBUG_PRESET) -R '^vectis_(lua_opcua_e2e|opcua_lua_cleanup|opcua_lua_reentry)$$' --output-on-failure --stop-on-failure --no-tests=error
 
 test-opcua-pubsub-live:
 	$(TIMED) test-opcua-pubsub-live bash ./scripts/test-live-opcua-pubsub.sh
@@ -416,7 +413,7 @@ test-e2e:
 	$(TIMED) test-e2e bash ./scripts/test-e2e.sh
 
 perf-gate: build-debug
-	$(TIMED) perf-gate python3 $(ROOT)/tests/metrics_startup.py --binary $(ROOT)/build/$(DEBUG_PRESET)/vectis
+	$(TIMED) perf-gate $(CTEST) --preset $(DEBUG_PRESET) -R '^vectis_metrics_recovery_performance$$' --output-on-failure --no-tests=error -j 1
 
 test-all: test lua-test valgrind fuzz-smoke perf-gate test-e2e
 
@@ -474,7 +471,7 @@ vendor-kore-upgrade:
 build-kore: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-kore bash ./scripts/build-kore.sh ./.cache/deps/host-debug
 
-verify-kore-patches: deps-debug vendor-kore
+verify-kore-patches: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) verify-kore-patches bash ./scripts/verify-kore-patches.sh ./.cache/deps/host-debug
 
 dev-up:

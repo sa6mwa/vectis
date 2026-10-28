@@ -483,8 +483,8 @@ static void test_busy_promote_binding(void) {
   editor = sl_create();
   assert(editor != NULL);
   assert(sl_set_prompt_queue(editor, 1, 4, 2) == SL_OK);
-  assert(sl_prompt_queue_append(editor, "oldest") == SL_OK);
-  assert(sl_prompt_queue_append(editor, "newest") == SL_OK);
+  assert(sl_prompt_queue_append(editor, "oldest", 0, NULL) == SL_OK);
+  assert(sl_prompt_queue_append(editor, "newest", 0, NULL) == SL_OK);
   /* Idle promotion remains owned by Softline. */
   assert(vectis_smith_cli_promote(editor, SL_KEY_ALT_ENTER, &ui, &action) ==
          SL_OK);

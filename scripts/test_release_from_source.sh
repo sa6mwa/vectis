@@ -56,9 +56,9 @@ fi
 
 if [ "${VECTIS_SOURCE_SMOKE_BUILD:-1}" != "0" ]; then
   bash "$source_root/scripts/deps.sh" deps-host-debug
-  "$cmake_bin" --preset debug -S "$source_root" -B "$work_root/build"
-  "$cmake_bin" --build "$work_root/build"
-  "$cmake_bin" --build "$work_root/build" --target test
+  "$cmake_bin" --preset debug -S "$source_root" -B "$source_root/build/debug"
+  "$cmake_bin" --build "$source_root/build/debug"
+  "$cmake_bin" --build "$source_root/build/debug" --target test
 fi
 
 echo "source archive smoke ok"

@@ -4,6 +4,20 @@ This is the implementation ledger: checked items are delivered, unchecked
 items are remaining work. Current APIs and constraints are in the manual and
 [documentation index](docs/README.md). Keep items observable and testable.
 
+## Future roadmap: SSH remote execution
+
+Parked indefinitely by user direction on 2026-10-28. This is future product
+work, separate from the current dependency and public-API integration work.
+
+- [ ] Revisit remote script/Vectis execution over SSH, explicit environment
+  propagation, streamed output, optional stdin/PTY and whole-run sudo elevation.
+- [ ] Revisit key generation and authorized-key installation as part of that
+  future design. No remote-execution adapter implementation is authorized now.
+
+The existing libssh2 memory finding is with cpkt upstream. Recheck its focused
+unsuppressed regression after a new cpkt release; no further investigation is
+part of the current work.
+
 ## Area 1: Project Skeleton
 
 - [x] Create CMake project with presets and Makefile entrypoints.
@@ -317,7 +331,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Register C-owned workflow tables (`vectis.auth`, `vectis.cert`, `vectis.embedded`, `vectis.app`, and `vectis.ssh`) as direct preloaded modules and top-level `require("vectis")` aliases.
 - [x] Add user-facing docs and smoke coverage for the direct `vectis.embedded` packed asset workflow module.
 - [x] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `native`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
-- [x] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
+- [x] Require the responsible agent's semantic upgrade/release gate to cover every changed bundled dependency and Vectis workflow, including explicit coverage-matrix entries and observable evidence. Source-text scanners are retired.
 - [x] Ensure the `vectis` Lua facade exposes structured status/error objects consistently across all Vectis-owned Lua helpers, mirroring C status, source, timeout, ownership, and cleanup conventions.
 - [x] Normalize outbound `vectis.rest.client` JSON encode failures into structured result envelopes instead of raising Lua assertion errors.
 - [x] Normalize `vectis.rest.error_response` JSON encode failures into minimal structured JSON fallback responses instead of raising Lua assertion errors.
@@ -453,9 +467,9 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add Lua examples for CAI live/service-adapter workflows as those facades land.
 - [x] Add a self-contained Lua example for loaded-model SUS/whisper transcription with deterministic skip behavior and packed execution coverage.
 - [x] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
-  - [x] Add an executable Lua facade matrix contract that keeps the Lua index, coverage matrix, module docs, embedded preload smoke identities, and `vectis.libs` aliases in sync for every declared dependency-native and Vectis-owned module.
-  - [x] Add an executable Lua facade behavior coverage audit that maps every declared dependency-native and Vectis-owned module to local behavior tests, packed execution evidence where applicable, ownership/finalizer coverage, structured errors, streaming/spooling, worker replies, and deterministic protocol scenarios.
-- [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
+  - [x] Execute actual Lua smoke, facade and installed preload behavior through `make test-lua-facade-matrix`; keep index/manual/matrix consistency in the responsible agent's semantic review. This supersedes the source-text scanner.
+  - [x] Execute the Lua-labeled behavior suite through `make test-lua-facade-behavior`; review success/failure, packed execution, ownership, errors, streaming, worker replies and protocol evidence semantically rather than matching source snippets.
+- [x] Verify statically preloaded modules in `vectis` and keep source rocks separate from binary SDKs. Independent provider SDK payloads and inventories are preserved, including their public Lua files where supplied; local LuaRocks trees and initialized VM state must not ship.
 - [x] Add a checked Lua facade documentation index that links dependency-native modules, Vectis-owned workflow modules, the coverage matrix, and module-level docs.
 - [x] Expose the full public Vectis status enum in Lua and cover structured DSV callback-stop errors with `status`, `status_string`, and `message`.
 - [x] Extend Vectis-owned Lua `nil, err` objects with C error source metadata and optional dependency/http/detail diagnostics.

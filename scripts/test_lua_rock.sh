@@ -176,6 +176,20 @@ stub("curl.core", {
     }
   end,
 })
+local digest_core = { DIGEST_MAX_BYTES = 64, DIGEST_CHUNK_BYTES = 65536 }
+for _, name in ipairs({
+  "digest_stream_new", "digest_materialized", "digest_materialized_hex",
+  "digest_stream", "digest_stream_hex", "digest_file", "digest_file_hex",
+  "hmac_stream_new", "hmac_materialized", "hmac_materialized_hex",
+  "hmac_stream", "hmac_stream_hex", "hmac_file", "hmac_file_hex",
+}) do
+  digest_core[name] = function() error("native digest placeholder invoked") end
+end
+stub("vectis.digest.core", digest_core)
+local buffer_core = { CHUNK_BYTES = 65536 }
+buffer_core.new = function() error("native buffer placeholder invoked") end
+buffer_core.from_materialized = function() error("native buffer placeholder invoked") end
+stub("vectis.buffer.core", buffer_core)
 stub("vectis.dsv.core", {
   parse_json = function()
     return '[["a"]]'
@@ -230,6 +244,8 @@ local expected_modules = {
   "vectis",
   "vectis.auth",
   "vectis.cai",
+  "vectis.digest",
+  "vectis.buffer",
   "vectis.dsv",
   "vectis.http",
   "vectis.kore",
@@ -324,6 +340,14 @@ local routes = flow:routes({ steps = { "password", "totp" } })
 assert(routes.app == app)
 assert(routes.steps[1] == "password")
 assert(routes.steps[2] == "totp")
+local digest = loaded["vectis.digest"]
+local buffer = loaded["vectis.buffer"]
+assert(buffer == buffer_core and buffer.CHUNK_BYTES == 65536)
+assert(digest.new == digest_core.digest_stream_new)
+assert(digest.hmac_new == digest_core.hmac_stream_new)
+assert(digest.stream == digest_core.digest_stream)
+assert(digest.hmac_file == digest_core.hmac_file)
+assert(digest.CHUNK_BYTES == 65536 and digest.MAX_DIGEST_BYTES == 64)
 local dsv = loaded["vectis.dsv"]
 assert(dsv.to_string({ rows = { { "a", "b" } } }) == "a,b\n")
 assert(type(dsv.parse("a,b\n")) == "table")

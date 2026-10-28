@@ -1,7 +1,13 @@
 # SQLite and PostgreSQL receiver facades
 
-Status: reviewed design, with implementation paused on the PostgreSQL C89
-result-retrieval gap described below. This is not a finalized implementation
+Status: component design under the complete public API facade goal. The
+[complete facade specification](lua-public-api-completeness-spec.md) supersedes
+earlier scope exclusions and delivery sequencing here. Its final sequence is
+implementation with focused debug tests, full build, then review with debug-only
+fix iterations until clean. The previous PostgreSQL C89 result-retrieval
+prerequisite is resolved by cpktdb 0.3.1. The first XA borrow adapter has a
+separate [implementation contract](postgres-xa-adapter-spec.md). This broader
+standalone connection/cursor design is not a finalized implementation
 authority or a delivered API. The completion record must identify the tested
 candidate and limitations.
 
@@ -17,7 +23,8 @@ The pinned c.pkt.systems 0.11.0 SDK supplies SQLite 3.53.4 through
 `cpkt/postgres.h`/`cpkt::postgres`. The latter is a client, not a server. Inspect
 the installed public headers, facade guides and imported targets as authority;
 the earlier temporary four-library Lua proposal is superseded for these two
-databases. PDF and PNG remain separate tasks. A PostgreSQL facade fix is required
+databases. PDF and PNG have separate component contracts within the complete
+public API goal. A PostgreSQL facade fix is required
 before finalizing the error contract and starting implementation.
 
 All database operations must use those public C89 facades. Native sqlite3/libpq
@@ -26,9 +33,9 @@ required operation cannot be implemented through the C89 facade, pause the
 active goal and report the precise missing public operation before proceeding.
 Do not bypass it with a native dependency call or a private-header adapter.
 
-### Upstream prerequisite discovered during review
+### Historical upstream prerequisite (resolved in cpktdb 0.3.1)
 
-The installed header documents `cpkt_postgres_get_result()` returning NULL as
+The previously pinned header documents `cpkt_postgres_get_result()` returning NULL as
 drainage. In the inspected producer source, `cpkt_postgres_track_result()` also
 frees a received result and returns NULL when notice-lifetime bookkeeping or
 event preparation fails. There is no checked retrieval status distinguishing
@@ -45,6 +52,13 @@ client error record. Reinspect the released facade and prove its allocation
 failure behavior before removing this prerequisite. The self-contained upstream
 report is under ignored `stash/cpkt-postgres-result-retrieval-bugreport.md`.
 
+The upgraded public facade supplies `cpkt_postgres_get_result_checked` and
+`cpkt_postgres_receive_checked`, distinct RESULT/DRAINED/FAILED states, and an
+allocation-free diagnostic containing discarded SQLSTATE and server text.
+Vectis's XA adapter uses checked retrieval. Deterministic adapter tests inject
+FAILED rather than accepting apparent drainage; actual provider allocation
+fault and live-service checks remain part of final verification.
+
 Use the existing strict C89 policy, Lua 5.5.1, receiver conventions, export
 allowlist, selected Bootlin execution runtime, source-rock boundary and static
 Linux CLI packaging. PostgreSQL's official imported target owns its LDAP,
@@ -52,12 +66,16 @@ SASL, Kerberos/GSSAPI, OAuth, curl, OpenSSL and platform linkage closure.
 
 ## Execution policy
 
-Every Vectis execution operation uses a prepared statement or the PostgreSQL
+Every Vectis convenience execution operation uses a prepared statement or the PostgreSQL
 parameterized protocol, including statements with zero parameters. Lua callers
 must provide a dense parameter array, including `{}` for a static command.
 C callers provide a typed array and explicit count; a NULL array is valid only
-for count zero. No raw SQL execution, interpolation, multi-statement script
-executor or unsafe Lua core bypass is exposed by Vectis.
+for count zero. These convenience receivers expose no raw SQL execution,
+interpolation or multi-statement script executor. The later complete public API
+requirement also includes faithful direct dependency bindings; those retain
+their native operations and documented risks. They are separate from the
+safety policy of `vectis.sqlite` and `vectis.pg`, and must use typed ownership
+and public C89 calls rather than private handles.
 
 SQL text is a trusted application template. Bound values cannot change its
 syntax. A caller that concatenates untrusted text into the template remains
@@ -337,13 +355,13 @@ blocking work; C readiness does not constitute an automatic HTTP scheduler.
 3. Implement C shells/common values, SQLite, PostgreSQL, Lua, app lifecycle,
    examples/manual, dependency metadata/export and packaging seams. Use only
    focused fast builds/tests during this phase.
-4. Review the complete surface, fix findings and repeat affected focused tests.
-   Only then run the full native project suite and applicable memory/package
-   gates. Do not run the full suite after each partial slice.
-5. Build/check the supported other architectures and Darwin, preserving existing
-   QEMU and native-Darwin evidence requirements. Native runtime proof must be
-   distinguished from cross-builds. Do not push a branch or launch hosted checks
-   without established authorization.
+4. Once the whole public API implementation has landed, run the full native
+   suite, memory/package gates and supported platform builds, preserving QEMU
+   and native-Darwin evidence requirements. Distinguish native execution from
+   cross compilation. Do not push or launch hosted checks without authorization.
+5. Review the complete implementation after that full verification. Fix
+   findings with focused debug tests only and repeat review until clean. Do
+   not repeat full platform builds for small fixes; state their proof limits.
 
 Fast tests use in-memory/tiny SQLite databases, immediate BUSY, deliberate bad
 bindings, NUL/NULL/empty values, exact integer boundaries, duplicate columns,

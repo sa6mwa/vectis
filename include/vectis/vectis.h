@@ -82,6 +82,7 @@ extern "C" {
 
 struct lc_client;
 struct lc_lease;
+struct lc_update_opts;
 struct lc_sink;
 struct lc_source;
 struct lc_enqueue_req;
@@ -236,6 +237,17 @@ typedef struct vectis_error {
   char message[256];
   char detail[256];
 } vectis_error;
+
+/* Runs once, on the owner thread immediately before a forked Kore parent or
+ * worker exits after native teardown. role is "kore_parent"/"kore_worker".
+ * Never runs in the original application process. May destroy app; must not
+ * start new work. Configure before start; userdata remains caller-owned. */
+typedef vectis_status (*vectis_fork_exit_fn)(vectis_app *app, const char *role,
+                                             void *userdata,
+                                             vectis_error *error);
+vectis_status vectis_app_set_fork_exit_handler(vectis_app *,
+                                               vectis_fork_exit_fn, void *,
+                                               vectis_error *);
 
 typedef struct vectis_mailbox_config {
   /* Zero means VECTIS_MAILBOX_DEFAULT_CAPACITY. */
@@ -520,6 +532,8 @@ typedef struct vectis_lockd_config {
   int pouch_crypto_generate_key_file_set;
   const char *pouch_compression;
 } vectis_lockd_config;
+
+struct lc_pouch_settings;
 
 typedef struct vectis_cai_config {
   /*
@@ -2057,8 +2071,18 @@ struct vectis_app {
   vectis_status (*proxy_route)(vectis_app *self,
                                const vectis_proxy_route_config *config,
                                vectis_error *error);
-  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS - 1u];
+  /* Capture typed local Pouch policy before the first startup attempt. Selected
+   * strings are copied. Existing app/config ABI sizes remain unchanged. */
+  vectis_status (*set_pouch_settings)(vectis_app *self,
+                                      const struct lc_pouch_settings *settings,
+                                      vectis_error *error);
+  vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS - 2u];
 };
+
+vectis_status
+vectis_app_set_pouch_settings(vectis_app *app,
+                              const struct lc_pouch_settings *settings,
+                              vectis_error *error);
 
 struct vectis_managed_service {
   vectis_status (*run)(vectis_managed_service *self, vectis_error *error);
@@ -3047,25 +3071,30 @@ vectis_lockd_state_load_in_namespace(struct lc_client *client, const char *ns,
                                      const char *key, const char *owner,
                                      long ttl_seconds, const lonejson_map *map,
                                      void *out, vectis_error *error);
+/* Mapped writes preserve fetched CAS defaults when options is NULL. Otherwise
+ * forward the public lc_update_opts, including retention and preconditions.
+ * Initialize it with lc_update_opts_init(); omission preserves retention. */
 vectis_status vectis_lockd_state_save(struct lc_client *client, const char *key,
                                       const char *owner, long ttl_seconds,
                                       const lonejson_map *map,
-                                      const void *value, vectis_error *error);
-vectis_status
-vectis_lockd_state_save_in_namespace(struct lc_client *client, const char *ns,
-                                     const char *key, const char *owner,
-                                     long ttl_seconds, const lonejson_map *map,
-                                     const void *value, vectis_error *error);
-vectis_status vectis_lockd_state_update(struct lc_client *client,
-                                        const char *key, const char *owner,
-                                        long ttl_seconds,
-                                        const lonejson_map *map, void *state,
-                                        vectis_lockd_state_update_fn update,
-                                        void *userdata, vectis_error *error);
+                                      const void *value,
+                                      const struct lc_update_opts *options,
+                                      vectis_error *error);
+vectis_status vectis_lockd_state_save_in_namespace(
+    struct lc_client *client, const char *ns, const char *key,
+    const char *owner, long ttl_seconds, const lonejson_map *map,
+    const void *value, const struct lc_update_opts *options,
+    vectis_error *error);
+vectis_status vectis_lockd_state_update(
+    struct lc_client *client, const char *key, const char *owner,
+    long ttl_seconds, const lonejson_map *map, void *state,
+    vectis_lockd_state_update_fn update, void *userdata,
+    const struct lc_update_opts *options, vectis_error *error);
 vectis_status vectis_lockd_state_update_in_namespace(
     struct lc_client *client, const char *ns, const char *key,
     const char *owner, long ttl_seconds, const lonejson_map *map, void *state,
-    vectis_lockd_state_update_fn update, void *userdata, vectis_error *error);
+    vectis_lockd_state_update_fn update, void *userdata,
+    const struct lc_update_opts *options, vectis_error *error);
 
 vectis_status vectis_request_json_into(vectis_request *request,
                                        const lonejson_map *map, void *out,

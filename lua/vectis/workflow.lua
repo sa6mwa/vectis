@@ -12,6 +12,9 @@ local config_keys = {
   "host_retry_delay_max_seconds", "recovery_interval_seconds", "shutdown_timeout_ms",
   "replay_dead_letters_on_startup", "dead_letter_retention_seconds",
   "dead_letter_max_count", "dead_letter_max_bytes",
+  "completed_retention_seconds", "completed_max_count",
+  "inbox_retention_seconds", "inbox_max_count",
+  "command_retention_seconds", "command_max_count",
 }
 local function state(self) return assert(private[self], "workflow is closed") end
 local function close_resources(w, ms)
@@ -77,7 +80,6 @@ local function job_adapter(w, registration, raw)
   end
   function job:renew(ttl)
     live()
-    assert(not w.with_state, "renewed stateful completion is blocked by liblockdc 0.18.0 Pouch version preconditions")
     return raw:renew(ttl or w.config.claim_ttl_seconds or 300)
   end
   function job:state()
@@ -187,6 +189,61 @@ end
 function Workflow:outbox(opts)
   return self:_register(opts.supervisor or supervisor.default(state(self).app), opts)
 end
+local function forward_receipts(w, receipts)
+  -- A successful durable commit is independent of bounded wake saturation.
+  for _, receipt in ipairs(receipts or {}) do
+    local ok, send_err = w.scope.native:send(0, receipt.outbox_key)
+    if ok then w.evidence.forwarded_keys = w.evidence.forwarded_keys + 1
+    elseif send_err ~= "closed" then
+      if send_err ~= "full" then w.evidence.failed_wakes = w.evidence.failed_wakes + 1 end
+      local signaled = w.channel:signal("reconcile")
+      w.evidence.reconcile_wakes = w.evidence.reconcile_wakes + 1
+      if not signaled then w.evidence.closed_wakes = w.evidence.closed_wakes + 1 end
+      break
+    else w.evidence.closed_wakes = w.evidence.closed_wakes + 1; break end
+  end
+end
+function Workflow:xa_transaction(coordinator, handler)
+  assert(type(handler)=='function','workflow XA transaction requires a callback')
+  local w=state(self)
+  local result,err,code,outcome=coordinator:transaction_blocking(function(raw)
+    local active,poisoned,box=true,false,nil
+    local tx={}
+    function tx:append_outbox(entry,payload)
+      assert(active,'XA workflow transaction is outside its callback lifetime')
+      local appended=table.pack(pcall(function()
+        assert(type(entry)=='table' and w.registrations[entry.kind],'unregistered Vectis outbox kind')
+        box=box or checked(raw:outbox(producer(w)))
+        return checked(box:append(entry,payload))
+      end))
+      if not appended[1] then poisoned=true;error(appended[2],0) end
+      return table.unpack(appended,2,appended.n)
+    end
+    setmetatable(tx,{__index=function(_,name)
+      assert(type(name)=='string' and not name:match('^_'),'XA workflow exposes public operations only')
+      assert(name~='close' and name~='close_blocking' and name~='outbox' and
+        not name:match('_start$'),'XA transaction lifecycle belongs to workflow')
+      local method=raw[name]
+      if type(method)=='function' then return function(_,...)
+        assert(active,'XA workflow transaction is outside its callback lifetime')
+        return method(raw,...)
+      end end
+    end})
+    local called=table.pack(pcall(handler,tx))
+    active=false
+    if not called[1] then error(called[2],0) end
+    assert(not poisoned,'XA workflow is rollback-only after rejected append')
+    if called[2]==false or (called[2]==nil and called[3]~=nil) then
+      error(called[3] or 'XA workflow transaction rejected',0)
+    end
+    return table.unpack(called,2,called.n)
+  end)
+  if not result then return nil,err,code,outcome end
+  w.app:_workflow_call(function()
+    for _,commit in ipairs(result.outboxes or {}) do forward_receipts(w,commit.outbox_receipts) end
+  end)
+  return result
+end
 function Workflow:transaction(handler)
   assert(type(handler) == "function", "workflow transaction requires a callback")
   local w = state(self)
@@ -225,18 +282,7 @@ function Workflow:transaction(handler)
       return value
     end)
     if not result then return nil, err end
-    -- Receipt forwarding is automatic and never changes a successful commit.
-    for _, receipt in ipairs(result.outbox_receipts or {}) do
-      local ok, send_err = w.scope.native:send(0, receipt.outbox_key)
-      if ok then w.evidence.forwarded_keys = w.evidence.forwarded_keys + 1
-      elseif send_err ~= "closed" then
-        if send_err ~= "full" then w.evidence.failed_wakes = w.evidence.failed_wakes + 1 end
-        local signaled = w.channel:signal("reconcile")
-        w.evidence.reconcile_wakes = w.evidence.reconcile_wakes + 1
-        if not signaled then w.evidence.closed_wakes = w.evidence.closed_wakes + 1 end
-        break
-      else w.evidence.closed_wakes = w.evidence.closed_wakes + 1; break end
-    end
+    forward_receipts(w,result.outbox_receipts)
     return result
   end)
 end

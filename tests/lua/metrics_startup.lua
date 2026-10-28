@@ -36,18 +36,23 @@ if mode == "seed" then
   if arg[5] == "crash" then
     print("SEEDED")
     io.stdout:flush()
-    while true do vectis.sleep(1) end
+    -- The compiled fixture holds stdin open until its actual SIGKILL barrier.
+    -- No polling loop or timed test delay is needed.
+    io.read('a')
+    error('crash fixture stdin closed before kill')
   end
   client:close()
 else
   local app = assert(vectis.app.new({
     app_name = "metrics-startup-gate", bind = "127.0.0.1", port = tonumber(arg[4]),
+    worker_count=1,worker_set_affinity_disabled=true,
     tls = {mode="manual", cert_key_bundle_path=root .. "/tls.pem", domain="localhost"},
   }))
   assert(app:route({path="/ready", handler=function() return {status=200, body="ready"} end}))
   assert(app:metrics({path="/.metrics", json_path="/.metrics.json",
                      persistence_enabled=true, storage_endpoint=endpoint}))
   checked(app:start())
+  io.stdout:write('METRICS READY\n');io.stdout:flush()
   checked(app:wait())
   app:close()
 end

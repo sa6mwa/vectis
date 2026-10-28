@@ -79,7 +79,7 @@ int main(void) {
   saved.version = 1;
   status =
       vectis_lockd_state_save(client, "accounts/1001", "vectis-lockd-example",
-                              30L, &account_doc_map, &saved, &verror);
+                              30L, &account_doc_map, &saved, NULL, &verror);
   if (status == VECTIS_OK) {
     status =
         vectis_lockd_state_load(client, "accounts/1001", "vectis-lockd-example",

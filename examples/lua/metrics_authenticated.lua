@@ -36,7 +36,7 @@ local app = assert(vectis.app.new({
   app_name = "lua-metrics-auth-example",
   bind = bind,
   port = port,
-  lockd = { endpoints = {"pouch://" .. storage_dir .. "?single_writer=false"} },
+  lockd = { endpoints = {"pouch://" .. storage_dir}, pouch = {single_writer=false} },
 }))
 
 assert(auth_workflow:mount(app))

@@ -8,8 +8,11 @@ local app = assert(v.app.new({ app_name="workflow-route", bind="127.0.0.1", port
 local scope = app:supervisor({ name="effects" })
 local other = app:supervisor({ name="other-effects" })
 local probe_ms = assert(tonumber(os.getenv("VECTIS_WORKFLOW_ROUTE_PROBE_MS")))
+local client={endpoints={"pouch://"..root.."/pouch"},pouch={single_writer=false,crypto_key=key}}
 local workflow = app:workflow({ namespace="route-effects", ipc_capacity=4, recovery_probe_ms=probe_ms,recovery_interval_seconds=0,
-  client={endpoints={"pouch://"..root.."/pouch"},pouch={single_writer=false,crypto_key=key}} })
+  client=client })
+local xa= os.getenv('VECTIS_WORKFLOW_ROUTE_XA')=='1'
+local store=xa and app:storage({client=client})
 -- Fixture pump proves explicit SUS log safe points run during blocking wait.
 -- Real foreign-thread copying/delivery is tested by the actual-source pthread unit.
 local sus=require("sus")
@@ -40,17 +43,34 @@ assert(app:route({path="/effect",method="POST",body="buffered",max_body_bytes=64
   assert(scope:state()=="declared" and effects==0, "producer must never run effect handlers")
   assert(not pcall(app.close,app), "owned HTTP callback must reject close")
   local id=request.body
-  local result, err=workflow:transaction(function(tx)
+  local function append(tx)
     assert(not pcall(app.close,app)); assert(not pcall(app.stop,app))
     assert(not pcall(app.pump,app,0)); assert(not pcall(scope.stop,scope))
     assert(not pcall(scope.native.stop,scope.native))
+    if xa then
+      local state=assert(tx:acquire({namespace='route-domain',key=id,owner='route',ttl_seconds=30}))
+      assert(state:update_json({id=id,accepted=true}))
+    end
     tx:append_outbox({operation_id=id,effect_id="effect",effect_key=id,
-      payload_digest=openssl.sha256(id),kind=id:find("two",1,true) and "two" or "one",
+      payload_digest=openssl.sha256_materialized(id),kind=id:find("two",1,true) and "two" or "one",
       destination="local",content_type="text/plain"},id)
-  end)
+  end
+  local result,err,receipts
+  if xa then
+    local co=assert(store:xa_coordinator())
+    result,err=workflow:xa_transaction(co,append)
+    co:close()
+    receipts=0
+    for _,outbox in ipairs(result and result.outboxes or {}) do
+      receipts=receipts+#(outbox.outbox_receipts or {})
+    end
+  else
+    result,err=workflow:transaction(append)
+    receipts=result and #(result.outbox_receipts or {})
+  end
   if not result then return {status=500,body=lc.encode_json(err)} end
   return {status=200,content_type="application/json",body=lc.encode_json({
-    receipts=#(result.outbox_receipts or {}),effects_in_producer=effects})}
+    receipts=receipts,effects_in_producer=effects})}
 end}))
 assert(app:start())
 io.stdout:write("ready\n"); io.stdout:flush()

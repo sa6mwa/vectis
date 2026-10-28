@@ -54,9 +54,514 @@ the restoration does not claim full migration/platform/service/release approval.
 Earlier component test counts and formatted-emission requirements are historical,
 not current feature or release commitments.
 
+## Active split-bundle upgrade, 2026-10-27
 
+### Pslog formatted derivation and shared output lifetime, 2026-10-28
 
-## Current libmdf 0.14.0 upgrade
+The previous goal turn made verified progress on owned/observed outputs. This
+continuation implements `logger:withf` and `pslog.withf` through public typed
+fields, not a synthetic va_list or private native layout. It maps all native
+verbs and l-prefixed aliases, exact int/unsigned-int/long/unsigned-long widths,
+nil/C strings, typed pointers, boolean/int and entry-errno `%m` capture. The
+32-field native grammar limit and invalid-format nil result are preserved.
+Argument type/arity/domain failures occur before native acquisition; derived
+children retain pointer owners independently of parent cleanup. No new Vectis
+wrapper is needed: `vectis.log` already returns these native receivers.
+
+Strict C comparison found that public structured emission is not equivalent to
+native variadic emission for valid long colored keys. Custom palette strings
+make the difference visible. The attempted emission adapter was removed from
+product registration and the independent public-C89 probe reproduced the gap
+without Lua/Vectis objects. The [withdrawn requirement and reproducer](upstream-lua-facades.md)
+record the exact public resolution needed; no external report has been sent.
+This is not a completed emission mapping and does not stop other API work.
+
+Review also found and reproduced premature typed-sink invalidation after root
+destruction with a surviving derived logger. The adapter now counts the actual
+native logger group, including deferred cleanup/adoption rollback. Sink closed
+state follows last native destruction, while explicit owning close retains its
+native role. Public C descriptor probes confirm that child close leaves the
+shared sink open. Regression tests cover destroyed roots, last derived shells,
+live borrows, collection order and exactly-once callback cleanup. Derived
+finalizers resolve retained parent/configuration edges to restore weak callback
+lookups even after root destruction. Structured free-function nil messages now
+preserve native NULL-message behavior; a C byte comparison covers both forms.
+
+Current focused evidence on branch `init` over
+`61e84b97f3335a24bcff1b683e0637524816a9d6`:
+
+- `cmake --build build/debug --target vectis_bin vectis_unit_pslog_owner_oom vectis_unit_pslog_withf -j2` passed.
+- `ctest --test-dir build/debug --output-on-failure --no-tests=error -j1 -R 'pslog|logger_native_sink|app_log_cleanup|cli_source_integrity|preload_artifact_contract'`: **16/16, 5.79s**, including normal/packed `withf` and output behavior.
+- `vectis_unit_pslog_withf` compares output byte-for-byte with native C across **32 configurations**: console/JSON, color, verbose fields, builtin/custom palettes and both nonfinite-float policies. It exercises every verb/alias, NULL strings, escaping/non-ASCII content, exact numeric boundaries, nil cloning, 32/33-field limits, long/unicode keys and static-field ownership. Emission chunks remain bounded at 32 bytes. These are derivation results, not formatted-emission evidence.
+- Constructor/derivation OOM sweeps now include `withf`: seven families at sixteen deterministic allocation positions each, all observing both failure and success. Existing seven output families at 64 positions and native FILE adoption at 32 positions remain covered.
+- Strict Memcheck, no suppressions, definite/indirect/possible losses as errors: ownership unit **473,748 allocations/frees**, native `withf` reference **35,123**, actual `withf` CLI **2,328**, actual expanded output CLI **3,110**. All four have zero live bytes/blocks and zero errors.
+- Exact embedded-manual readback matches the current `manual/lua-pslog.md`. The standalone C89 requirement snippet matches its compiled probe source byte-for-byte.
+- The updated `examples/lua/logging.lua` demonstrates `withf` through a `vectis.log` receiver; `vectis_example_lua_logging` passes. Repository formatting and whitespace checks pass. The full dirty worktree remains the coherent unfinished migration with no staged content; this adaptation depends on that base and is not an independent verified commit.
+
+Evidence: `build/pslog-resume/withf-final-build.log`, `withf-final-tests.log`,
+`withf-final-memcheck-{owner,reference,lua,outputs}.log`,
+`withf-manual-readback.log` and `typed-format-gap.log`.
+The coverage matrix, inventory, manuals, binding notes and component contract
+track this scope. These additions use the adapted runner's native module; the
+installed stock pslog rock does not expose `withf`. Source-rock availability and
+consumer closure remain parent integration requirements, not inferred from CLI
+proof. Retained Lua-facing interop and other public-API families
+remain active. Full native/platform/service/package gates await the whole
+surface. No commit/push/tag/release has run; the existing coherent migration
+remains uncommitted. SSH execution, the upstream libssh2 finding and the Smith
+migration keep their previously stated deferrals.
+
+### Pslog owned/observed-output continuation, 2026-10-28
+
+The branch remains `init` over `61e84b97f3335a24bcff1b683e0637524816a9d6`.
+This extends the earlier public-value checkpoint below. The existing broader
+uncommitted upgrade is preserved; no push, release or commit is claimed.
+
+The provenance-checked binding now implements `output_from_fp`,
+`output_init_file`, `output_new`, `output_destroy`, `observed_output_init` and
+`observed_output_stats_get`. Typed records expose native write/close/isatty
+status, exact accepted counts, captured userdata/callback fields and owned,
+moved and closed state. Native FILE hooks remain native hooks. Owned FILE
+adoption invalidates the original Lua file shell; borrowed FILE ownership stays
+with its caller. Observed records expose actual native cumulative counters,
+failure metadata and synchronous notification, with no log-line collection.
+
+Shared heap states and collectable Lua edges implement ownership transfer,
+explicit borrows, leased target views, derived logger retention and deferred
+cleanup. Explicit owning close rejects live borrows. Protected scopes cover
+constructor isatty, write, failure notification, close and their argument/result
+allocations. First exceptions, including false values, survive later cleanup
+errors. A custom Lua close callback can fail before entry under persistent OOM;
+native close/free is still attempted once, with no unsafe automatic retry.
+Separate native-descriptor probes prove builtin FILE rollback closes its
+descriptor after successful acquisition followed by Lua adoption failure.
+
+Review found that weak callback graph lookups can disappear before finalizers
+mark retained uservalue graphs. Finalizers now restore those identities from
+their owner edges inside a protected frame before native cleanup. Tests prove
+exactly-once close for unreachable callback/coroutine graphs and deferred owners
+sharing borrowed loggers. Cleanup preserves a preparation error while removing
+temporary metadata from its Lua stack. The native interop ABI remains 1.
+
+Vectis app seed handoff accepts native FILE/observer outputs and rejects custom
+Lua hooks. `vectis.log.configure` now performs the same check when the adapted
+runtime's predicate is available; the installed stock source-rock module has
+no typed-output constructors and retains its existing file/path/function rules.
+Direct pslog and `vectis.log.new` continue to support Lua callbacks. The manuals,
+coverage matrix, inventory and component specification describe this delivered
+surface. Full source-rock/platform/service gates await the complete parent
+surface; module availability is not claimed as final packaging evidence.
+
+Focused Debug evidence against the current effective sources:
+
+- `cmake --build build/debug --target vectis_bin vectis_unit_pslog_owner_oom -j2` passed.
+- `ctest --test-dir build/debug --output-on-failure --no-tests=error -j1 -R 'pslog|logger_native_sink|app_log_cleanup|cli_source_integrity|preload_artifact_contract'`: **14/14, 4.11s**, including normal and Linux packed execution.
+- Existing constructor/derivation faults remain covered. Seven additional output acquisition/borrow/logger families run at 64 deterministic allocation positions each; native FILE-to-logger adoption runs at 32 positions. Every family observes failures and successes. Public native callback entry is tested with allocator failure for legacy and typed observed outputs; no Lua error escapes their C frame.
+- Strict Memcheck, no suppressions, definite/indirect/possible losses as errors: expanded native unit **460,279 allocations/frees**, actual output CLI fixture **2,933 allocations/frees**; both have zero live bytes/blocks and zero errors.
+- Exact embedded-manual readback matches `manual/lua-pslog.md`.
+- `bash scripts/check_format.sh` and `git diff --check` pass. The full dirty
+  worktree was inspected: the prior upgrade/lifecycle/native/Lua/documentation
+  delta remains task-owned unfinished work, with no staged content. This output
+  adaptation depends on that migration and is not an independent verified commit.
+
+Logs: `build/pslog-resume/outputs-final-build.log`, `outputs-final-tests.log`,
+`outputs-final-memcheck-unit.log`, `outputs-final-memcheck-lua.log` and
+`outputs-manual-readback.log`. This is historical component evidence. The
+continuation above implements `withf`; formatted emission and retained Lua-facing
+interop tokens remain unfinished, as do the
+other open families in the public API ledger. SSH remote execution and the
+upstream libssh2 finding remain parked under the user's stated constraints.
+
+### Recovered goal and pslog public-value continuation, 2026-10-28
+
+The active goal was recovered from the saved conversation and the retained
+build logs. The branch remains `init` over
+`61e84b97f3335a24bcff1b683e0637524816a9d6`, with the earlier uncommitted overhaul
+preserved. The cpkt 0.6.0 full native log records 265/265 passing checks; the
+old trace blocker is resolved. The broader public-API ledger still contains
+unfinished components, so that suite does not establish full surface coverage.
+SSH remote execution is indefinitely parked on the future roadmap. The known
+libssh2 memory finding is with cpkt upstream and awaits a new release; no further
+investigation is part of this continuation.
+
+The pslog 0.12.0 local adaptation now exposes native constants and fresh defaults,
+all 32 built-in palettes and all sixteen custom palette fields, the trust
+predicate, all twelve typed field constructor families and their binary views,
+immutable metadata/union snapshots, structured free-function/view emissions,
+receiver view methods and native-output qualification. Unsigned domains use
+exact integer/decimal representations; native long/int widths are checked.
+Native headers and C/Lua interop ABI 1 are unchanged. Lua root exports use a
+second source-hash-checked, zero-fuzz delta; the actual compiled source is the
+generated adaptation and embedded source bytes use its adapted init module.
+
+Configuration captures borrowed values before native acquisition. Protected
+output frames include argument setup, chunk allocation and result validation;
+native-style code/written results remain visible to the native emitter. Lua
+exceptions, including false error values, propagate after native unwind.
+Whole-operation guards protect field conversion and derivation as well as
+emission. Weak callback lookups and collectable owner edges avoid registry-root
+cycles. Preallocated cleanup nodes defer sibling native destruction discovered
+by GC until unwind. Consumed field owners survive callback mutation of input
+arrays/maps; derived pointer fields retain their typed resources independently
+of later source-array mutation. Direct Lua emissions use the invoking coroutine,
+restoring the pinned creator context for public C interop. Native-only sink
+qualification continues to reject Lua callbacks for foreign-thread use.
+
+Focused Debug verification:
+
+- `cmake --build build/debug --target vectis_bin vectis_unit_pslog_owner_oom -j2`.
+- `ctest --test-dir build/debug --output-on-failure --no-tests=error -j1 -R 'pslog|logger_native_sink|app_log_cleanup|cli_source_integrity|preload_artifact_contract'`: **13/13, 3.84s**. Includes normal/packed behavior, six constructor/derivation families at sixteen deterministic allocation positions, whole-operation/metamethod/GC guards, input mutation, defaults/palette/domain checks and app seed cleanup.
+- A native C reference compares all twenty-four field forms and a NULL/zero-length message with Lua output byte-for-byte. Native subprocess references compare explicit fatal/panic and generic level-aware behavior; no delays or process scanning.
+- Strict Memcheck, definite/indirect/possible losses as errors and no suppressions: the native unit frees **74,004/74,004** allocations; the actual CLI fixture frees **3,732/3,732**. Both have zero live bytes/blocks and zero errors. The native reference fixture stays in the owned build working directory.
+
+Review repaired the generated-source selection, explicit private-header include
+dependency, field-conversion reentry window, temporary receiver rooting and
+consumed/prefix field ownership before this passing evidence. Startup warm-up
+keeps allocation sweeps focused on acquisition/adoption rather than option-name
+interning; every family observes both failures and successes. Scratch evidence
+is under `build/pslog-resume/`, especially `final-build.log`, `final-tests.log`,
+`memcheck-unit.log` and `memcheck-lua.log`.
+
+This is historical component evidence, not full API or release approval. At this
+checkpoint owned/observed outputs were unfinished; the continuation above
+supersedes that gap. Formatted log families, retained Lua-facing interop tokens
+and other families in the public-API ledger remain active.
+No full cross build, release, push or commit has run for this continuation.
+
+### cpkt 0.6.0 observer follow-up, 2026-10-28
+
+The active core pin is now 0.6.0. This supersedes the earlier 0.5.2 trace
+blocker and identities below; the records remain scoped historical evidence.
+Compared `v0.5.2...v0.6.0`: one commit,
+`4ae844f7d9687cff7f37ada0360c19ac786321dc`, adds the runtime observer, callback
+guards, documentation and tests. The installed public-header tree differs only
+in `cpkt/lua_runtime.h`; provider ABI compatibility is retained. All seven SDK
+digests agree with the published checksum inventory, SHA-256
+`23b191c67670e695a57f3b9d7c45521df1ebf5e0dff332d29bae395b670eaaed`.
+
+Vectis removes its raw Lua-hook module and installs the public C89 callback
+between host calls. The callback writes bounded metadata to stderr, never
+enters Lua and never retains borrowed bytes. Packed `--vectis -x` uses the same
+observer while preserving application arguments; plain packed `-x` remains an
+application argument. The manual, coverage matrix and upgrade contract describe
+the interface. The original CLI admin/trace regression, normal trace, packed
+trace and public C89 observer checks pass 4/4 in 2.29s. The C89 check proves
+removal/replacement, callback reentry guards, coroutine/close/finalizer events
+and terminal instruction limits with and without tracing, using no delays.
+The self-contained CR is marked resolved; its historical raw-hook probe remains
+unchanged because that mechanism is deliberately unsupported.
+
+The API blocker is resolved. Remaining full native/platform/package and
+instrumentation gates are in progress; the older 261/262 and SDK results do not
+verify these new bytes. Focused evidence:
+`build/bundle-upgrade/cpkt-0.6.0-trace-focused.log`.
+
+### liblockdc 0.23.0 follow-up, 2026-10-28
+
+The selected core and separate PostgreSQL provider are now 0.23.0. All fifteen
+target/Lua pins agree with the published checksum inventory, whose SHA-256 is
+`1a6f1ae0f6f8c2fbf452d2b14904e269dfe3b447baceda627f98b6c19ecef825`.
+Compared release commit `296e6d819e1961b9828cc1f4171623de431d1b96` with
+0.22.0: public signatures/layouts and PostgreSQL header are unchanged, core ABI
+remains 6, provider ABI 0, and native Lua bindings are byte-identical. The Lua
+facade adds renewal comments. Pouch now preserves the higher committed/lease
+version floor while retaining staged-version and fencing behavior.
+
+The exact three-case report reproducer now completes read, update and
+renew-update with count 1 and no error. Vectis removes the stateful restriction.
+The direct public-facade regression passes eleven control/renewal/outcome cases
+normal/packed in 2.20s, checking repeated renewal, writes before/after renewal,
+complete/retry/dead-letter and checkpoint policy. The Vectis workflow adapter
+also passes repeated-renewal deferred decisions normal/packed. Completion
+retires its private sidecar; retry/dead-letter retain it. Automatic renewal
+during a blocked Lua handler remains unsupported. The self-contained CR under
+stash is marked resolved and retains the original historical reproduction.
+
+Ordinary lease write/renew/write also passes through the C and normal/packed
+Lua surfaces, checking that renewal preserves the committed body version.
+Actual CLI Memcheck of all eleven direct cases reports 112773 balanced
+allocations/frees, zero live bytes/blocks and zero errors without suppressions.
+These focused 0.23.0 checks do not replace the final native/platform/package
+verification of the whole candidate.
+
+This upgrade exposed a Vectis build dependency defect: archive sources with
+older mtimes replaced paths but the byte blob stayed stale while metadata
+changed. The blob now depends on its generated metadata header as well as the
+source paths. A 0.07s CLI check exports every actual embedded Lua source and
+compares its SHA-256 with the binary's inventory. The new lockdc exported bytes
+also match the acquired 0.23.0 source exactly. Generated Kore/header/input-list
+files now preserve mtimes when unchanged; reconfigure plus CLI build proves
+`ninja: no work to do` without sleeps or another cache framework.
+
+### Legacy-prefix review repair, 2026-10-28
+
+A broader compilation-command audit found test/example private include flags
+that still preferred the old merged SDK over imported targets. The old payload
+contained MDF 0.14 and Softline 0.9 headers. Those targets' earlier successes
+cannot establish current-header compatibility. Their legacy flags are removed;
+the old payload is retired after replacement SDK preparation, with a fixture
+proving that unrelated generated state remains. The normal compilation database
+now contains no merged `host-debug/include` path.
+
+This exposed two stale Smith test calls to Softline's old two-argument queue
+append function; they now explicitly append approved entries with the current
+four-argument public contract. The cache cutover, Smith behavior, MDF allocator
+and LQL OOM checks pass 6/6 in 2.59s against current headers. Standalone Kore and
+kodev use separate SDK prefixes and the prepared native compiler/runtime;
+clean-clone patch application/build and actual `kore -v` pass through patch
+0042. Verification no longer resets the product's generated Kore checkout.
+The interrupted broad suite is not a completed final gate.
+
+### Current native continuation and trace blocker, 2026-10-28
+
+With current headers, all native targets and formatting pass. Tests 1–71
+pass, including the real PostgreSQL XA normal/packed fixture and the
+20,000-update metrics recovery gate (129.14s). The installed Lua preload probe
+still expected the old ambiguous hash/compression names; it now verifies the
+explicit materialized names, streamed SHA-256 and the new storage/PG/workflow
+module aliases, and passes in isolation. Tests 73–107 pass too, including the
+two-worker XA receipt wake and stateful renewal regressions.
+
+Test 108 exposes an upstream runtime integration gap: `vectis -x` installs a
+line hook through a public module opener, but cpkt 0.5.2's strict runtime clears
+or replaces that hook at host/coroutine boundaries. Its public runtime API has
+no trace observer compatible with instruction-limit enforcement. A standalone
+public C89 reproducer linked to the published SDK reports
+`runtime_status=0 trace_lines=0`. The self-contained upstream request is
+`stash/cpkt-lua-runtime-trace-observer-cr.md`. Do not bypass budget enforcement,
+access private runtime state, silently remove tracing or mark the suite/release
+gate complete. Independent verification may continue while this is unresolved.
+
+Removed unused duplicate expected-version constants; actual dependency identity
+continues to come from validated pins/manifests and exact package selection.
+The source-archive smoke now builds inside the extracted source's own `build/`
+tree, as required by the new ownership boundary. Structural archive readback
+passes; its full extracted build remains pending.
+
+### Native/package review continuation, 2026-10-28
+
+All 262 currently registered native cases have now been exercised across scoped
+runs. The retained CLI admin/trace case is the one unresolved failure: its
+credential checks complete before `-x` produces no trace. All other current
+cases pass after the focused preload and reconfigure-harness repairs. This is
+not a passing aggregate gate. Real external AI providers, loaded models,
+devices and remote services remain distinct opt-in coverage.
+
+The reconfigure harness must preserve the host XDG cache identity when it
+configures prepared native tools; product sandbox paths are inappropriate
+there. Its corrected configure/remove/reconfigure/identity checks and the
+actual foreign-mapping rejection/gzip tail pass 3/3 in 1.90s. Reconfiguring and
+rebuilding unchanged Debug code reports `ninja: no work to do`.
+
+Retired the three source-text service/facade audits and their CTest presence
+case. Their Make targets now execute observable CTest contracts. The actual
+standard lifecycle target, target-tool discovery, Darwin linker routing and
+shared resolver/AFL fixtures pass. Darwin availability uses the same prepared
+resolver as CMake, handles discovered Darwin-25 suffixes and invokes the
+selected linker with `--ld-path`; its synthetic test no longer borrows the
+workstation's MIG or expects CMake to change PATH. This is tool-route evidence,
+not a complete Darwin product build.
+
+A fresh native GNU Release build produces both libraries and the static CLI.
+Exact shared exports pass. C89/C++ consumers, pkg-config and 36 installed
+examples pass against the static SDK. The complete SDK was then moved to a
+different prefix: shared C/C++ consumers, pkg-config, the private-symbol
+negative sentinel, all 36 shared examples and actual loader mappings pass.
+A minimal shared probe gives the executable only Vectis/libc runtime paths,
+so broad consumer peer paths cannot mask the library's relative dependency
+closure. The relocated CLI's current Lua preload/behavior probe passes too.
+
+Shared-SDK verification initially detected the host resolver DSO mixed into
+the pinned runtime: provider RUNPATHs prevent ancestor RPATH lookup for that
+system peer. Local shared consumer/example probes now eagerly link the pinned
+`libresolv.so.2`; their actual mapping check passes. Provider payloads and
+shipped library policy are unchanged by that private test-runtime repair.
+Package architecture/OS/libc metadata is now normalized even when the target
+ID was explicit. Provisional native SDK bytes are not release artifacts.
+
+Source-rock archive/spec/source-rock validation, installation and the separate
+source-rock smoke pass. This checks source packaging/composition (the smoke
+uses dependency doubles); real native behavior is proved separately above.
+Lua build/output paths use the common physical ownership validator, including
+symlinked absent destinations. The fast cache fixture proves rejection without
+creating foreign Lua build/artifact state and still makes exactly seven local
+archive requests. Source packages include the ownership/version helpers used
+by their supplied build scripts. The complete Vectis source archive also passes
+extraction, root/version and exact manifest readback with
+`VECTIS_SOURCE_SMOKE_BUILD=0`; this deliberately does not claim a fresh source
+build or a passing aggregate suite. Final lifecycle fixtures and formatting
+pass after these helper changes, and the Debug rebuild performs no work.
+
+Current strict Memcheck checks of the native PostgreSQL transport-fault unit,
+digest unit and actual Lua GC regression each report balanced allocations,
+zero live blocks/bytes and zero errors without suppressions. The eleven-case
+real CLI stateful-renewal memory result above remains separate evidence.
+
+Evidence is under ignored `build/bundle-upgrade/`: `final-native-tests*.log`,
+`preload-repair.log`, `native-tail-focused.log`, `native-examples-final.log`,
+`final-lifecycle.log`, `final-tool-gates.log`, `native-sdk-static.log`,
+`native-sdk-shared-relocated.log`, `native-sdk-preloads.log`,
+`source-rock-current.log`, `source-rock-smoke.log`,
+`source-output-ownership.log`, `source-archive-structure.log`,
+`final-lifecycle-fixtures.log`, `final-format.log`, `final-debug-noop.log` and
+`final-memory/`. The first lifecycle log ends
+at the old Darwin fixture failure; its lifecycle portion passed, and the
+affected target/tool tail passes in `final-tool-gates.log` after repair.
+
+The working tree remains based on `61e84b97f3335a24bcff1b683e0637524816a9d6` on
+`init`, with the prior uncommitted facade work preserved. There is no completed
+release candidate or clean semantic release gate. Full cross-platform builds,
+Darwin product proof, full instrumentation/source-build gates and final
+whole-candidate review remain pending the public cpkt trace-observer contract.
+No commit or publication has been made; provisional SDK checks do not approve
+the unfinished overhaul for release.
+
+### Earlier 0.22.0 component evidence
+
+The component checks below predate the 0.23.0 pin. They establish the earlier
+implementation slices; final whole-candidate checks must use current pins.
+
+Focused continuation, 2026-10-28: retained PostgreSQL commit recovery passes
+normal/packed after coordinator reopening, twice without re-registering the
+resource or replaying application SQL. The rootless service test preserves
+the host session's Podman XDG paths; the generic process sandbox must not
+redirect workstation network/runtime state. Database payloads remain owned.
+
+The independent cache/clean fixtures prove digest repair, zero-request hits,
+separate extraction, preserved file modes and rejection of borrowed checkout
+paths, including symlinked absent destinations. A complete Kore patch-stack
+reapplication through patch 0041 passes. A forced one-worker replacement
+passes strict Memcheck in the original owner, parent and replacement child,
+with zero errors/lost bytes and no suppressions; the killed child cannot have
+a terminal memory summary. The two inherited static pool names are reclaimed
+at their actual owners, without changing generic pool initialization contracts.
+
+Native HTTP/MQTT/WebSocket fixtures replace their Python controllers and
+preserve wire assertions. HTTP upload verifies 172 requests in 0.38s.
+WebSocket logging enabled/disabled passes normal/packed in 1.19s. The optional
+SSH fixture is now a data server only; Bash/Lua drive all eleven wire cases,
+which pass with test-only Paramiko 4.0.0. Python remains only in data serving
+and environment/source generation. Compiled proxy HTTP/TLS/H2, storage and
+short recovery checks pass; the 20,000-update recovery gate and remaining full
+platform/package checks are still pending. Ordinary clangd discovery for
+`src/vectis_pg.c` reports zero errors with the normal native build database.
+Public storage-header parsing also passes through ordinary `.clangd` database
+discovery (`--tweaks=` limits this invocation to parsing/editor semantics).
+Without that scope, clangd 23.1.2's check mode reports failed DefineOutline
+refactoring probes for external declarations; these are not compiler errors.
+Public headers have their own C89 build commands, so the editor no longer
+needs a second hard-coded dependency include list.
+
+Post-build review found a Lua-finalizer ownership gap in the new PostgreSQL
+adapter/result methods. Protected guards now prevent close/reentry during
+allocating calls and root exact parameter strings independently of mutable
+caller tables. A real GC regression exercises adapter close during query
+setup, result close during column metadata allocation and subsequent recovery
+after an invalid accessor. It passes against real PostgreSQL normal/packed.
+The same Lua probe runs against service-free public C89 receiver doubles with
+genuine cpkt result storage in 0.05s; this supplements, not replaces, transport
+and official borrow-bridge integration. Strict Memcheck reports 3657 balanced
+allocations/frees, zero live bytes/blocks and zero errors without suppressions.
+
+Focused follow-up, 2026-10-28: C/Lua mapped state writes now forward public
+retention options. C and normal/packed Lua checks prove omission, clearing and
+invalid-value handling. The old stateful-renewal blocker was retested through
+the direct released liblockdc 0.22.0 Lua API: read/update controls complete,
+but renew/update still fails deferred completion's version precondition. The
+self-contained CR is `stash/liblockdc-pouch-stateful-renew-completion.md`.
+That restriction was necessary then; the 0.23.0 follow-up above supersedes it.
+
+The XA worker wake fixture now commits Pouch business state and registered
+outbox work from two HTTP workers, with callbacks confined to the supervisor
+owner. Eight concurrent effects pass normal/packed, using actual receipt keys
+and no recovery reconciles while the recovery timer is deliberately delayed.
+Separate managed XA calls have distinct global IDs; this is not an application
+request-deduplication policy. Native conflicts propagate rather than replaying
+application work. The ordinary outbox duplicate test remains intact.
+
+MCP failures now use a compiled HTTP fixture and Lua JSON assertions under
+CTest, retaining direct/supervised/packed behavior and an actual unfinished
+oversized-body socket rejection/closure. Python no longer controls that test.
+Updated resolver fixtures pass; AFL reuses common Bootlin discovery and
+try_compile propagation. The lifecycle artifact fixtures now use independent
+provider manifests. Source-text API/plan assertions were retired; they did
+not prove behavior and cannot implement the mandatory agent semantic gate.
+
+The embedded Kore feature guard now matches its actual compiler definition,
+so parent-death cleanup is active without a process-scanning supervisor.
+Forked Lua runtimes close after native teardown; optional C/Lua fork-exit
+callbacks are documented and never run in the original owner. IPC padding is
+initialized. Actual worker termination tests prove remaining-worker intake
+after graceful exit and SIGKILL. Nonzero Kore parent exits reach stop errors.
+Strict service Memcheck passed again after the callback refinements: original
+CLI, Kore parent and worker each report zero errors and zero definite, indirect
+or possible lost bytes, without suppressions. The fixture now requires all
+three process summaries. Full lifecycle, package and platform verification
+remains pending.
+
+The current work on `init` replaces c.pkt.systems 0.11.0 with independent
+cpkt 0.5.2, cpktdb 0.3.1 and cpktmisc 0.2.1 prefixes. It upgrades liblockdc to
+0.23.0 plus its separately linked PostgreSQL provider, MDF to 0.16.0 and Softline
+to 0.13.0. Other selected releases remain as recorded in
+`docs/cpkt-bundle-upgrade-spec.md` and `scripts/dependency-pins.tsv`.
+The previous complete-facade goal was cleared by the user; its uncommitted
+implementation remains preserved. The sections below describe earlier baseline
+evidence, not a claim that current pins are unchanged or final gates passed.
+
+New C app factories return public collection/coordinator receiver shells using
+the shared app client. Lua storage scopes lazily materialize their native
+client after startup/fork and close descendants on stop. Collection operations
+preserve incremental raw JSONL plus metadata. XA operation proxies preserve
+native result/wait distinctions; a blocking helper waits on actual readiness.
+The PostgreSQL adapter uses checked public C89 retrieval and the official Lua
+borrow bridge; query failures poison managed scopes rather than becoming EOF.
+XA workflow commit receipts enter the existing bounded direct-key wake path.
+
+Focused evidence so far: native PG/borrow/readiness fault tests pass in 0.01s;
+storage/collection/XA wake and rollback behavior passes normal/packed in 0.68s;
+real rootless Podman Kube PostgreSQL commit/abort, text/binary/NULL binding and
+caught SQL/shape errors pass normal/packed, with teardown/unprivileged reset.
+Native CMake runtime mapping/reconfiguration checks pass 2/2 in 1.67s; replaced
+the corresponding Python controllers. LQL/MDF/pslog source provenance checks
+pass with split-prefix fixtures. Native dependency preparation passes with a
+curl shim that rejects every network call, proving a verified cache hit uses
+zero acquisition requests. These are component checks, not final verification.
+
+Remaining major-upgrade work includes lifecycle controller migration, package
+and release fixture cutover, semantic coverage of the remaining changed seams,
+complete documentation reconciliation, final native/platform/package/memory
+verification, and whole-candidate review. The libcai_app/Smith migration remains
+deferred until a released dependency provides it. No release or push occurred.
+
+## Historical complete public API facade baseline
+
+The current uncommitted implementation starts from `e3687ae` on `init`.
+At that earlier baseline, dependency pins were unchanged. The
+[complete facade specification](lua-public-api-completeness-spec.md) and
+[inventory ledger](lua-public-api-inventory.md) own the expanded scope: all
+public libvectis and dependency C89 APIs, with true streaming and explicit
+materialized names. Earlier C-only exclusions are gaps to implement, not an
+approved current policy. Inventory declaration counts do not establish coverage.
+
+Implemented debug slices include the digest/HMAC C receiver and reader/file
+paths, all 17 typed Pouch app settings and precedence, and the compression C
+receiver with protected Lua reader/writer flow, raw/header/back ownership,
+typed allocators, caller-owned buffer operations, native-width checksums and
+readonly CRC-table capabilities. LQL and MDF component evidence follows below.
+Current focused crypto/compression checks passed 7/7 in 1.14 seconds, including
+normal/packed Lua. Digest/HMAC C Memcheck reported no live allocations or
+errors; compression ownership probes also passed. These are slice evidence,
+not the complete surface gate or a release review. Source-rock, installed SDK,
+full builds/platform evidence and the final whole-goal review remain pending.
+
+The required sequence is the entire implementation with focused debug tests,
+then the full build/verification, then review and repeated debug-fix/review
+until clean. The PostgreSQL checked-retrieval prerequisite recorded in
+the [SQL component specification](sql-database-facades-spec.md) is resolved by
+cpktdb 0.3.1 in the active upgrade; no native
+header or private-layout bypass is authorized.
+
+## Completed libmdf 0.14.0 upgrade baseline
 
 The upgrade starts from `ae48963` and changes only libmdf's seven SDK pins, its
 Lua source pin and the expected version. Other dependency versions and archives
@@ -211,7 +716,7 @@ MDF `a4c4ac66c2bf67aeb6d19f76e13ea245e34dce291221803dea079db8d7df1eb8`.
 | liblockdc 0.18 | Full upstream state/queue/outbox/source/sink import plus newly identified public endpoint helpers | App-owned canonical options/logging bridge, consumer and workflow post-fork clients, real receipt FD delivery, recovery and cleanup. Direct root remains upstream. Pull/auto-renew/kind selection/candidate FD limits detailed below; shared leadership is future Vectis work. |
 | pslog 0.12 | Full upstream Lua facade and official native `pslog_lua.h` capability/ref interface | OPC UA native sink interop, exact lengths/FATAL nontermination, native app/logd/service seeds. Function outputs rejected where worker emission is possible. Borrowed native clients close children before seed cleanup. |
 | CAI 0.6 | Full upstream facade | Existing local constructors/response/agent/tools/MCP, worker envelopes, genuine CAI client request/output streams and logger inheritance retained. Lua app MCP is deliberately buffered and stateless: public CAI has an HTTP response sink, but this established Lua route collects tool results/responses. Persistent/streamed Lua server behavior needs an explicit future product contract; no MCP streaming claim is made. Provider/MCP remote execution requires opt-in gates; constructor presence is not a live-provider claim. |
-| LQL 0.3 | Full upstream facade | Local data pipelines and packed dependency surface retained. No redundant renamed wrapper; repeated Vectis-owned query lifecycle would trigger convenience integration. |
+| LQL 0.3 | Public receiver binding with local provenance-checked adaptation | Complete component mappings and ownership/callback repairs; native provider unchanged. Focused normal/packed and OOM evidence below, with whole-goal gates pending. |
 | MDF 0.13 | Full upstream facade | Terminal Markdown and Smith incremental rendering retained. Renderer document ownership remains explicit; whole-response buffering is not introduced. |
 | OpenSSL 3.6.4 | Existing Lua EVP digest/HMAC/sign/verify/codecs/CSPRNG; new SDK C89 facade | Auth/OIDC/cert/TLS/ACME/public signing workflows retained. Native OpenSSL pointer graphs remain C-only; require a concrete ownership-bearing workflow before extending Lua. |
 | curl 8.22.0 | Existing public options/upload/download/read/write facade | HTTP/REST/WebDAV/SMTP/MQTT, worker config/logging, HTTP and CAI/DSV streams retained. Public option passthrough provides existing auth mechanisms. No new GSS/SASL context objects are needed to retain curl's current options. Live broker/mail/provider gates remain opt-in. |
@@ -611,3 +1116,561 @@ accepted as implemented configuration. The unmet current contracts prevent
 claiming the full product promise or passing its release gate. Required upstream
 fixes or an explicit authority decision must resolve those contracts. Future
 local phases do not acquire an invented upstream prerequisite.
+
+### Owned gzip FILE receiver slice
+
+`<vectis/gz.h>` / `src/vectis_gz.c` map public gzopen/gzopen64, gzdopen,
+gzbuffer, gzsetparams, gzread/gzwrite, gzfread/gzfwrite, gzputs/gzgets,
+gzgetc/gzgetc_, gzputc/gzungetc, gzflush, gzrewind, gzseek/gztell/gzoffset
+and applicable *64 forms, gzeof/gzdirect, gzerror/gzclearerr and
+close/read-close/write-close. Lua registration uses only that public receiver;
+CLI registration, common static/shared sources, install headers and exports
+are wired. No private native layouts, borrowed Lua provider userdata or
+provider-to-Lua calls. FD ownership and close failure semantics remain native.
+
+Focused evidence: `vectis_unit_gz` includes descriptor transfer/failure and
+post-advancement deterministic Lua OOM cleanup. `vectis_lua_gz` uses the
+normal/Linux-packed upgrade harness for binary/empty/partial-element flow,
+line/character operations, params/flush, buffer timing, offsets, native direct
+reads, concatenated members, resumed EOF, corruption/truncation and cleanup.
+This is a bounded implementation slice, not the whole-goal semantic review.
+Typed gzprintf/gzvprintf, raw stream/config/callback families, CRC-table and
+wider native checksum domains remain pending. Full shared/platform/package
+consumer checks remain with the parent goal; source rock requires the native
+embedding facade as before.
+
+Focused receiver verification: `cmake --preset debug` and
+`cmake --build --preset debug --target vectis_bin vectis_unit_gz -j2` passed.
+`ctest --preset debug -j1 --stop-on-failure -R
+'^(vectis_unit_gz|vectis_lua_gz)$'` passed both tests (including normal/Linux
+packed Lua). The focused Valgrind probe exits 99 with one uninitialized-value
+branch in installed zlib 1.3.2 `gztell64`, originating in native `gz_open` malloc.
+It reports 501 allocations/frees and zero live bytes; no leaks. The pure public
+provider reproducer `vectis_unit_gz --native-tell` (gzopen, gzwrite, gztell,
+gzclose; no receiver calls) independently produces that same error, with nine
+allocations/frees and zero live bytes. Logs are in ignored
+`build/gz-valgrind-origins.log` and `build/gz-native-valgrind.log`.
+Writer-offset memory correctness remains an unresolved upstream requirement;
+no private-layout initialization, hidden seek or Valgrind suppression is used.
+The header/API compiles under the strict project C89 flags; there is no C89
+availability blocker. This provider defect blocks clean memory/release evidence,
+not declaration coverage. Parent investigation/fix is required before approval.
+
+### LQL component implementation evidence (2026-10-07)
+
+This implementation record supersedes the prior LQL gap inventory for the local
+Vectis binding. The upstream 0.3.0 leak reproduction remains historical provider
+binding evidence: its unadapted spooled callback leaked 65,632 bytes after OOM.
+The standalone source is now tracked at `tests/unit/test_lql_callback_oom.c`;
+the self-contained upstream report remains in ignored stash. No report was sent.
+
+The candidate is the uncommitted task-owned delta on branch `init`, over the
+parent's existing worktree. LQL native/Lua release is 0.3.0 and Lua is 5.5.1.
+Exact source, header and archive pins are recorded in `patches/lql/README.md`.
+CMake validates both installed hashes, applies a zero-fuzz local MIT patch under
+build/generated, and compiles it instead of the unchanged SDK Lua source.
+Native liblql, caches and adjacent repositories are unmodified.
+
+The component maps all 41 receiver fields, ten public free operations and nine
+callback types through public `lql/lql.h`. Direct `lql` and `vectis.libs.lql`
+remain identical. Public term/config/result fields and enum constants are
+mapped; lengths and any_count derive from strings/dense arrays with explicit
+count agreement checks. Size/time/int domains are validated before narrowing,
+with exact decimal strings beyond Lua integer range. Callback user contexts
+are pinned Lua state/closure captures, never numeric native addresses.
+
+Protected adapters include reader/writer/replay/value/decision/cancel/clock and
+mutation open/read/close, covering allocation and returned-error interpretation.
+Pre-acquisition cleanup tokens and operation allocation/reference ledgers prevent
+wrapper/setup OOM leaks. Child tokens retain the public receiver through cleanup;
+explicit close/manual GC invalidate shells immediately and defer native disposal
+while active. Same-client reentry is rejected. Cursors check retained owners and
+callback value/writer shells expire on every return, including Lua OOM. Native
+FILE requests borrow public Lua IO resources and reject close during use.
+
+The manual now documents usable builders, all term fields/inspection, callbacks,
+options, direct FILE serialization/filtering and explicit materialized/spooled
+names. Repository callers migrate the removed ambiguous capability spelling.
+File-value open/close are explicitly paired; normal/failed/stopped paths retain
+first errors. True streams retain caller replay and bounded chunks, emit before
+EOF, reject root arrays and return native UNSUPPORTED for projection/mutation
+and wide pre-read shapes. No fake stream or silent spool fallback was added.
+
+Focused commands (serialized, debug only):
+
+- `cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug`.
+- `cmake --build build/debug --target vectis_bin vectis_unit_lql_callback_oom vectis_unit_lql_allocation_failures -j2`.
+- Exact CTest selection: `vectis_lua_lql_public`, `vectis_lql_binding_provenance`, `vectis_unit_lql_callback_oom`, `vectis_unit_lql_callback_oom_stream`, `vectis_unit_lql_allocation_failures`, `-j1 --stop-on-failure --output-on-failure`.
+- Focused Valgrind: `--leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=99`, on the standalone fixture and allocation test. Zero live bytes and zero errors after VM shutdown.
+
+The Lua marker runs in normal and packed executables through
+`upgrade_seams.cmake`; it asserts observable behavior in every operation family,
+not just API presence. Allocation probes cover all callback types and 24 growth
+fault positions in 17 acquisition/materialization families, including retained
+alias expiry after OOM. Provenance probes distinguish source drift from header
+drift. Scratch transcripts are under `build/lql-binding/`.
+
+This is component implementation evidence, not the mandatory final whole-goal
+semantic review or release approval. Full suite/cross/platform/service/package/
+source-rock and final parent review gates were intentionally not run. The source
+rock remains Lua-only and requires the corresponding adapted native runtime.
+
+### LQL follow-up implementation verification
+
+Fresh focused checks of the saved binding delta exposed a double release of a
+callback registry reference. Protected callback cleanup now removes the matching
+operation-ledger entry before unref, preventing later callback slots from
+aliasing. A regression alternates repeated nested value/replay writes with
+failed replay and GC. The first-error fixture now proves a primary file-reader
+failure survives a failing paired close callback; native spooled mutation closes
+file-value readers before output delivery, so the former writer-before-close
+fixture did not actually exercise the claimed ordering.
+
+The five exact LQL checks passed in 0.40 seconds: provenance/source-header drift,
+normal/packed public behavior, spooled and true-stream OOM probes, and allocation
+failures. Fresh Valgrind of the repaired standalone spooled probe and the expanded
+allocation test reports zero live bytes and zero errors. The allocation test
+covers 17 acquisition/materialization families at 24 fault positions plus all
+callback families. No full suite, cross build or final whole-goal review ran.
+
+### MDF public surface and callback finding
+
+The MDF component specification records all 29 free declarations, 15 usable
+receiver methods, 28 options fields and nested allocator/emission/font records.
+Native layout buffering needs separate bounded-working-set proof; buffered
+pager-source and materialized string rendering must not masquerade as streams.
+A standalone released-binding sink-allocation probe reproduces 12,640 leaked
+native bytes after Lua OOM and VM close in about 0.69 seconds. The public C
+renderer is not blamed for a normal sink-return failure: the released Lua
+adapter allocates its output string before lua_pcall and unwinds across the
+native frame. A complete self-contained upstream report is under ignored stash.
+At this initial inventory stage, MDF binding repairs and mappings were pending.
+The later MDF sections below supersede that implementation status. No cache or
+adjacent repository was modified.
+
+### MDF callback/result cleanup and metadata slice
+
+A repository-owned, provenance-checked pair of MIT binding deltas now protects
+source/sink/trace allocation and return interpretation, restores callback active
+counters, and releases native materialized strings after result-copy OOM.
+Whole-value render names are explicitly `render_materialized` in the core,
+Lua module, terminal caller, examples, tests and manual. The adapted metadata
+surface includes native theme count/zero-based lookup, all 49 numeric public
+constants plus the version string, four native font dump variants and immutable
+built-in font views with bounded offset reads. No complete font is copied when
+constructing those views, and no provider-private state is inspected.
+
+Seven focused debug checks passed in 0.66 seconds: source/core/header provenance,
+normal/packed public behavior, existing output policy and rendering regressions,
+MDF and terminal examples, and deterministic callback/materialized-copy faults.
+Fresh Valgrind of the six-case allocation probe exits zero, with zero live bytes
+and zero errors. Source geometry changes remain legal; source EOF/errors, sink/
+trace status codes, font alias preservation, force/non-force behavior and EOF
+are observed rather than inferred from function presence. Initial fixture
+syntax errors were corrected before the passing result; no unresolved test
+failure is hidden by these counts.
+
+At this earlier slice, the remaining MDF work included allocator and emission-buffer
+resource ownership, memory configuration, arbitrary font readers, buffered source
+pager, explicit-sink variants and bounded native-layout proof remain required.
+The remaining native table/layout buffering is documented, not approved as an
+unconditionally bounded stream. No full suite, SDK/package/source-rock build,
+cross/platform build or final whole-goal review ran for this slice.
+
+### MDF captured policies and font-reader adapters
+
+Raw-field configuration snapshots now pin borrowed strings/functions independently
+of caller mutation and GC. Native zero int flags remain false; both memory
+retention fields and scalar library-owned emission settings reach the C options.
+These retention fields are not live working-set limits. Custom mutable emission
+data and allocator hooks were pending at this slice; the later allocator/transfer
+section supersedes that status. No supplied pointer is guessed.
+
+Regular/italic font readers use retained Lua owners, protected allocation and
+error interpretation, bounded chunk delivery and exact native offsets. One-shot
+owners contain Lua resources only and remain rooted through renderer destruction;
+persistent owners refresh callback thread affinity and reject close during active
+font calls. Normal/packed tests cover fragmented binary delivery, nil/error,
+over-capacity/empty/exception failures, original table mutation, collection,
+creation in a collected coroutine and owner close attempts. Synthetic byte
+fixtures prove embedding/callback semantics, not browser font decoding.
+The callback allocation test now has eight cases, including one-shot/persistent
+font-reader OOM, and fresh Valgrind reports zero live bytes and errors.
+
+Native font emission requires a family; early fixture omissions were corrected
+so the fault probes actually enter the font callback. No full suite, platform
+build, SDK/package build or final whole-goal review ran. Allocator/mutable-buffer,
+buffered pager, explicit-sink and bounded-layout contracts remained required at
+this slice; the later allocator/transfer section records current layout evidence.
+
+### Public byte buffers and borrowed MDF emission storage
+
+At this slice, `vectis/buffer.h` supplied two C89 receiver shells and sixteen exported free
+functions. Lua `vectis.buffer` covers explicit materialized allocation/copy,
+zero-based bounded read/write, prefix-preserving resize, stable readonly/mutable
+leases and subspans, parent close/GC survival and typed data capabilities. Native
+pointer values never become Lua addresses. Root loading, optional-native source
+rock handling, embedded resources, installed header/source and export seams are
+updated. The core has no Lua dependency.
+
+MDF accepts mutable buffer/span emission data by acquiring its own public C
+lease through the Vectis-owned binding bridge. It does not inspect the other
+module's userdata. Scalar/options validation precedes acquisition; oversized
+capacity and readonly storage fail explicitly. Ownership transfer was pending
+at this slice; the subsequent allocator/transfer section supersedes that status.
+Native constructor failure and close release the lease after native destruction.
+A one-shot success initially retained a lease until GC; the immediate-resize
+regression caught that and now observes synchronous release. Parent or source
+span close while a renderer lives cannot free its storage.
+
+Seven focused debug buffer/MDF checks passed in 0.78 seconds, including three
+normal/Linux-packed behavior harnesses and provenance. Native buffer faults
+exercise each constructor/span allocation, resize preservation and count
+boundary with zero-wait tiny fixtures. Fresh MDF allocation Memcheck (nine
+cases, including leased result-copy OOM) exits zero: 5,807 allocations/frees,
+zero live bytes and zero errors. The focused buffer C Memcheck also passed.
+New bindings compile with strict C89; an ISO-only size formatter replaced a
+C99 printf modifier before verification.
+
+At this slice the supporting resource did not establish provider transfer/realloc
+origins or custom allocator hooks. See the subsequent section for that evidence.
+Full suite/static-shared consumer/
+source-rock/platform builds and the final whole-goal review remain deferred.
+
+### MDF allocator, transfer and bounded native workspace
+
+The adapted binding maps public alloc/free pairs, optional realloc and native
+allocate-copy-free fallback through owned public C buffer receivers. Accepted
+Lua buffers are consumed; rejected handles stay usable. Realloc/free receive
+readonly scoped views, whose leases expire after success, exceptions and OOM.
+Protected cleanup releases physical storage even when a void free observer
+fails, and retains the first diagnostic. Pending emission transfer freezes its
+Lua owner until renderer construction succeeds or rolls back. Native growth and
+free retire managed allocations exactly once. No provider-private layout or
+numeric address is used.
+
+GC testing exposed skipped free observers after Lua cleared weak owner-map
+values. A preallocated, temporary operation pin now retains callback access
+during teardown without introducing a permanent registry cycle. One-shot
+source/sink/trace owners also replace registry refs that could outlive failed
+option validation. Mutation, collected creation coroutines, callback reentry,
+invalid origins, rejected buffers and immediate constructor rollback are tested.
+
+Streaming/incremental paths cap native live workspace at 262144 bytes, charging
+the full owned buffer capacity plus 512 bytes per allocation. Exact checked
+accounting covers allocate, resize, free, transfer and rollback. Borrowed emission
+capacity and lease overhead also count; unused zero-cap storage is not leased or
+transferred. Source/sink/trace
+chunks are at most 65536 bytes. A generated 130-byte producer processes over
+1 MiB and emits from its first chunk before EOF. A pending full HTML table fails
+with an explicit workspace diagnostic before EOF; the separately named buffered
+layout completes the same source. No source is collected in the Lua adapter.
+
+Ten focused debug checks passed in 2.85 seconds, including normal/packed public,
+allocator and streaming behavior, output-policy/regression cases, native buffer
+faults, both binding provenance checks and 13 deterministic VM allocation-failure cases. Fresh
+allocation-case Memcheck exits zero: 9206 allocations/frees, zero live bytes,
+zero errors. The working-set test uses tiny generated fragments and no delay.
+The actual CLI allocator/ownership/GC fixture also passes Memcheck with 5155
+allocations/frees, zero live bytes and zero errors. Callback contexts refresh on
+all native receiver entry points and close, including invocation after creation
+coroutine GC. Active cross-coroutine reentry is rejected while legal source
+geometry changes remain usable.
+
+Both binding stagers now patch disposable candidates and copy only changed
+effective contents. Their zero-wait tests seed old timestamps and verify an
+unchanged second configure preserves them. Unrelated configure no longer
+recompiles the LQL binding during MDF-only debug work.
+
+At this slice, remaining MDF work included fresh defaults, option/value mappings,
+buffered source pager and explicit-sink forms. The next section supersedes its
+defaults/configuration status. The complete
+dependency sweep remains active. Full builds/platform/package/service gates and
+the final whole-goal implementation review remain deferred as instructed.
+
+### MDF native defaults, configuration and value domains
+
+The adapted core/module now expose fresh native options defaults and all native
+option names alongside existing convenience names, with explicit canonical
+precedence. Default allocator function values become callable typed-buffer
+operations without numeric pointer exposure. Canonical regular/italic face
+records map format/data/data_len/read/userdata, and built-in immutable typed
+faces can be reused without copying their fonts. Trace records map emit/userdata
+alongside the function form. Callback userdata survives caller-table mutation
+and is released at renderer close. Native renderer format and ANSI integers,
+exact terminal descriptors/fallback ints, token lengths and levels are mapped.
+
+Inspection found number-to-string coercion could produce unretained native
+configuration pointers. C-string fields are now strict and reject embedded NUL;
+font and token payloads remain binary-safe. Token text stays rooted through later
+computed-field reads and native use. Native memory limits and streaming/buffered
+names remain unchanged.
+
+Eight focused debug checks pass in 2.74 seconds, including normal/packed option,
+public, allocator and streaming behavior, rendering policy/regressions,
+provenance and 16 deterministic VM allocation-failure cases. Fresh OOM Memcheck
+shows 11513 allocations/frees, zero live bytes and zero errors. The actual CLI
+option/default/font/trace fixture also has zero live bytes and errors, with 3085
+allocations/frees. The tests use small fixtures and no waits.
+
+At this slice, remaining MDF mappings were caller-sized path buffers, explicit
+sinks and the buffered source pager; the next section supersedes that status. All other dependency
+surfaces and final whole-goal build/review gates retain their original scope.
+
+### MDF explicit sinks, path outputs and buffered pager
+
+All six public explicit-sink free functions are mapped through temporary owned
+callback scopes: token/finish/render/feed/flush/document EOF. Module and receiver
+`*_to` forms preserve the bound sink and native state transitions. Source/sink
+records preserve callback/userdata identity, capture raw fields against mutation
+and use protected bounded callbacks. Caller-sized path outputs acquire public
+mutable C buffer leases, validate capacity and release both on every exit.
+Nullable path identity inputs retain native false/no-alias behavior.
+
+The buffered source pager calls the public native pager without a second Lua
+collection or staging layer. Pager ownership commits on a public origin free/
+realloc event; native validation and early open/option/non-terminal failures
+leave untouched origins usable. Event-driven PTY fixtures inject quit only after
+the alternate-screen entry, with no sleeps, and verify EOF, embedded-NUL suffix,
+terminal restoration, file/owned-buffer success and source/early-origin failures.
+Both normal and packed executions pass; the native VM fault fixture additionally
+exercises pager source OOM while terminal arguments are valid.
+
+The new identity regression caught negative Lua stack indexes being evaluated
+after temporary pushes, which caused an identical binding to reset pending
+input. Indexes now become absolute before comparison. Another regression proves
+a native-success rebind retains its installed callback even when allocator
+cleanup failure is reported afterward; configured one-byte retention limits
+make that failure deterministic. Native synchronous rendering requires reset
+after an incremental document, which the mixed-workflow fixture now respects.
+
+Ten focused MDF checks pass in 3.69 seconds, including normal/packed I/O/pager/
+streaming behavior and 19 ordinary plus one terminal-only VM allocation-failure
+cases. Fresh ordinary fault Memcheck has 13811 allocations/frees, zero live bytes
+and zero errors; CLI I/O behavior also has zero live bytes/errors. The later
+nullable/non-terminal/rebinding regressions pass their focused normal/packed
+harness. Installed libmdf exposes only mdf.h; its 29 free declarations, 15 usable
+receiver methods, records and constants have mappings. No symbol count or this
+component evidence approves the final whole-goal semantic/platform/package/
+consumer gates, which remain deferred until all surfaces are implemented.
+
+### Raw zlib receiver foundation
+
+A reviewed supplemental specification records the entire remaining raw-stream
+contract. The new public C89 shell owns native init/basic/extended/version-size,
+step, copy, end and destruction, with native statuses separate from ownership
+errors. Chunk buffers are bounded, overlap-checked and borrowed only for one
+step. NEED_DICT/BUF_ERROR remain recoverable. Native allocator copy faults and
+close during active copy callbacks preserve source lifetime.
+
+Lua maps eight native constructor forms, independent copy/end, scalar public
+fields and dictionary/reset/keep/tuning/bit/sync/validation controls. Bounded
+output and dictionary values have explicit materialized names; native capability
+maps to its typed owner, never an address. Private state/reserved are not public
+caller-owned fields. Kind checks prevent an inflate operation from silently
+becoming deflate, and sizeof(z_stream) is exposed instead of guessed per arch.
+Protected result/field construction contains OOM and GC cleanup.
+
+Three focused debug checks pass in 0.29 seconds, including normal/packed Lua and
+four deterministic VM allocation faults. Native state and VM-fault Memcheck
+runs have zero live bytes/errors (24 and 1741 allocations/frees respectively).
+The later injected native copy failure also preserves its source. Raw typed IO,
+parameter output, bounds, headers, Lua allocator ownership, back-inflate and
+remaining checksum/gz contracts are still implementation work. This partial
+surface does not approve the whole-goal release gate or remove any requirement.
+
+### Raw zlib retained IO, parameter output and bounds
+
+The public C89 raw shell now retains independent typed input/output leases,
+queries current cursor spans, validates native availability and runs against
+bound resources without payload collection. Native copies retain both leases;
+closing parent C/Lua handles cannot invalidate copied pointers. Bounds/overlap,
+readonly output, invalid replacements and unbind/end lifetimes are checked.
+Borrowed-chunk process refuses to overwrite retained bindings.
+
+Lua next_in/next_out map to owned typed views of their native next/avail region,
+not addresses. Buffer bridge ownership stays inside the Vectis binding. Protected
+field construction roots each adopted C span before the next Lua allocation;
+Oom tests include failure after a first view allocation and confirm final lease
+release. deflateParams emits into the real bound output and preserves BUF_ERROR
+retry; bounds preserve exact native uLong/size_t domains and unsigned arithmetic.
+Z_SIZE_MAX/Z_ULONG_MAX avoid fixed arch assumptions in fixtures.
+
+Four focused debug checks pass in 0.45 seconds, including normal/Linux-packed
+raw state and retained-IO behavior, native C consumer lifetime/copy and seven
+VM allocation-failure cases. Native receiver, OOM and CLI IO Memcheck each show
+zero live bytes/errors; the final OOM probe has 3933 allocations/frees and CLI IO
+has 1593. Fixtures are tiny and immediate. Typed IO, params and bounds are no
+longer remaining integrations; gzip headers, Lua allocator ownership, back-
+inflate, CRC/checksum domains and gz varargs remain in the full scope. Final
+platform/package/consumer/whole-surface review gates stay deferred.
+
+### Zlib gzip-header records and ownership
+
+All 13 public gz_header fields now map through a dedicated C89 header shell and
+Lua typed owner. Native mutable capture and readonly write resources retain
+independent byte leases. Shared native copies retain one header record exactly
+as the public native copy does; closing its shell/parents does not invalidate
+that record. Scalar and used-capacity domains, string terminators, native NULL
+replacement, truncation and actual extra_len remain observable. Protected
+constructors/getters reconcile temporary/native spans after failure/OOM.
+
+A pure installed-provider C89 probe establishes deflateReset retains the custom
+header although zlib.h says it restores defaults. Upstream v1.3.2 tagged source
+corroborates retention. The self-contained report is
+stash/zlib-1.3.2-deflatereset-gzip-header-bugreport.md; no wrapper/private layout is
+needed for reproduction. The adapter retains deflate references until explicit
+nil detachment/end and releases successful inflate reset/keep/reset2 capture.
+This is a documented native mismatch, not a hidden compatibility shim.
+
+Five focused debug checks passed in 0.56 seconds; later native header lifecycle,
+constructor/getter OOM and explicit empty-field regressions pass their selected
+checks. Normal/packed tests cover fields, truncation, CRC rejection, shared copy,
+parent close, native discard/replacement and failed construction. Fresh native,
+nine-case VM OOM and actual CLI header Memcheck all have zero live bytes/errors
+(101, 5066 and 1825 allocations/frees). An initial C fixture embedded a NUL in its
+Lua source and failed parsing; constructing that byte with string.char corrected
+the fixture before the passing evidence. No delay-driven test was added.
+
+Header mappings are implemented; custom Lua allocators, back-inflate, checksum/
+CRC-table/vararg gaps and all other dependency surfaces remain. Final full builds,
+platform/package/consumer and whole-surface review gates remain deferred.
+
+### Back-inflate and owned buffer write locks
+
+Public C89 back initialization/callback/end and Lua native names are mapped.
+The window retains an independent mutable lease; a private owned write lock
+prevents mutation through every checked Lua alias during input/output callbacks.
+Buffer locks themselves have C/Lua receiver mappings, retain storage, nest
+independently and permit reads and parent close. Native callback close/reentry,
+overlapping input/window and invalid/readonly/ABI windows are rejected.
+
+Lua uses one bounded input buffer, protected raw callback/userdata captures and
+immediate window-sized writer delivery. Unused bytes become retained typed input
+before returning; no C stack or transient string pointer survives. Results have
+checked uint64 counts and typed unused input, with bounded explicitly materialized
+unused bytes. Multiple complete raw streams, source versus sink failure, corruption
+and first Lua error identity (including false) are observed. Every native unwind
+restores locks; back state uses inflateBackEnd and is excluded from ordinary
+inflate/reset/copy/header paths.
+
+Five focused checks pass in 0.67 seconds, including normal/packed 45 KiB window
+output, second-stream unused-input handoff, source/sink/error-object cases,
+window alias locks, direct C callbacks and nested lock allocation/lifetime faults.
+The 12-case VM OOM probe covers back construction/input/output in addition to
+prior raw/header/IO faults. Native, VM-fault and actual CLI back behavior Memcheck
+all have zero live bytes/errors (18, 6924 and 2062 allocations/frees). The C fixture
+initially used a const-discarding legacy in_func cast; a C89-compatible pointer
+representation copy corrected it before the passing evidence.
+
+At that slice back-inflate was implemented; allocators, checksum/CRC-table and
+vararg domains remained. The following sections supersede that status.
+No full platform/package/consumer build or final whole-goal review ran here.
+
+Later validation-failure inspection moved callback capture into the protected
+back driver. Partial capture now releases its graph without invalidating an
+unadvanced owner; failures after native entry close advanced state. Explicit
+owner close also clears captured values. A weak-reference regression proves
+captured userdata is collectible after invalid sink-record rejection while
+the raw owner remains reusable. The selected five checks pass in 0.44 seconds;
+fresh CLI back Memcheck remains clean with 2115 allocations/frees and zero live
+bytes/errors. Native and prior 12-case OOM code paths retain their passed proof.
+
+### Protected zlib Lua allocators
+
+The reviewed raw-stream allocator contract is implemented through public C89
+hooks and Vectis-owned typed buffers. Constructor records capture the paired
+callbacks and opaque. Accepted allocations consume unleased owned handles;
+rejections preserve caller ownership. Scoped readonly free views expire even
+on Lua OOM, and physical cleanup runs after observer failure. Native copies
+independently root their shared context. Reentry/close through siblings is
+guarded, the invoking coroutine is refreshed, and temporary GC teardown pins
+avoid a permanent registry cycle. First error identity survives native unwind,
+including false. Review removed retention of a reported error graph on a
+reusable parent; a weak-reference regression proves collection while it stays open.
+
+Six focused checks passed in 0.82 seconds after that repair, including normal/
+packed allocator behavior and the then-16-case VM OOM probe. Earlier allocator
+memory records are superseded by the enlarged 19-case probe below.
+
+### Native zlib buffers, checksum domains and readonly table
+
+Public C89 helpers and Lua mappings cover all eight compress/uncompress buffer
+variants, both compression bounds, native uLong checksum/combine/operator
+domains, uInt versus size_t input widths and readonly provider CRC-table values.
+Temporary leases surround protected setup/results; no payload is copied or
+staged. Native codes, partial output and uncompress2 consumption remain visible.
+Overlaps, readonly/locked output and invalid widths fail before writes. Empty
+typed buffers remain distinct from NULL checksum initialization even though
+their underlying zero-capacity allocation has a NULL pointer. The independent
+table shells validate all 256 entries without exposing addresses or mutations.
+
+The pinned provider explicitly returns zero for a zero CRC operator and masks
+checksum operands to 32 bits. Reference inspection corrected an initial wider-
+result test assumption and the proposed zero-operator rejection. Nonzero
+operators with only high bits violate native multiplication's termination
+precondition and are rejected before entering it. Wider meaningful arguments
+otherwise retain native normalization, as direct C reference tests demonstrate.
+
+Ten affected debug checks passed in 3.65 seconds (normal/packed streaming, raw,
+IO, headers, back-inflate, allocators, caller buffers and direct native/VM tests).
+Native receiver, 19-case VM allocation-failure and actual CLI buffer fixtures
+passed strict Memcheck: 165, 12139 and 2159 allocations/frees respectively,
+zero live bytes/blocks and zero errors. Fresh tiny offset-boundary and pager
+feedback-path refinements receive the additional focused evidence below.
+
+Typed gzip printf/vprintf remains implementation work; all other dependency
+gaps remain in the parent scope. These component checks do not approve the
+whole-goal semantic, platform, packaging or release gates.
+
+### Pager test ownership under updated lifecycle guidance
+
+The newly added Python PTY driver was replaced by a compiled C89/POSIX test
+under the lifecycle skill's prohibition on Python test controllers. CMake/CTest
+still own invocation, assertions and normal/packed selection. The fixture uses
+tiny output, event-driven quit, a bounded failure deadline, terminal readback
+and exact child cleanup. The OOM case now recognizes its own success marker
+before waiting, removing an avoidable deadline wait when child exit races poll.
+Existing unrelated Python lifecycle tests were not extended by this repair.
+
+The refined pager check passes in 0.76 seconds; caller-buffer/native boundary
+checks plus pager pass 3/3 in 0.96 seconds. Embedded manual readback confirms
+the final allocator and native-buffer sections. Fresh actual-CLI allocator
+Memcheck passes with 2976 allocations/frees, zero live bytes/blocks and errors.
+
+### libpslog public contract and native-owner OOM repair
+
+The 0.12.0 public native header, Lua binding and public Lua/C interop header were
+inspected; the reviewed component contract is `pslog-public-facade-spec.md`.
+The existing Lua module does not cover all native config/output/observation/
+palette/field/callback/interop families. Its manual no longer claims the complete
+native surface is already exposed.
+
+A standalone released-source probe reproduces a derived-owner OOM leak without
+linking Vectis: 312 definite and 4,953,576 indirect lost bytes after complete VM
+teardown; all VM allocations were freed. The single self-contained report is
+`stash/libpslog-lua-derived-owner-oom-bugreport.md`. Callback setup before pcall
+and other parsing/lifetime findings remain source-review concerns to reproduce.
+
+A repository-owned binding delta protects the complete adoption of newly
+acquired loggers and destroys the handle before propagating adoption failure.
+It covers userdata/metatable/callback-rooting setup, preserves existing parent/
+coroutine ownership and leaves native libpslog/public interop ABI unchanged.
+Staging checks source, native header and interop header identities, uses zero
+fuzz and does not rewrite unchanged effective source. SDK caches were not edited.
+
+Five constructor/derivation OOM families prove recovery and cleanup. Normal/
+packed child callbacks retain the creator coroutine through parent collection
+and release it after child collection. These two focused tests pass in 0.40
+seconds. The five-family native memory probe has 2142 allocations/frees, zero
+live bytes/blocks and zero errors. This is owner-repair proof, not complete
+libpslog callback or public-surface coverage. Remaining pslog and other component
+gaps continue under the full parent specification; full platform/package/release
+checks remain deferred until that implementation is complete.
+
+Final focused pslog checks (provenance, normal/packed ownership, native-only
+sink qualification, repeated app seed cleanup and owner OOM) pass 5/5 in 0.63
+seconds. Actual CLI callback/coroutine ownership also passes strict Memcheck:
+1611 allocations/frees, zero live bytes/blocks and zero errors. No cross build,
+full suite, release or push ran. The broad implementation remains uncommitted
+on `init`; these records are component evidence only.

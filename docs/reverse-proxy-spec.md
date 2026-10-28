@@ -1239,14 +1239,16 @@ host load does not turn the correctness gate into a noisy performance test.
 The opt-in local HTTP/1.1 comparison is `make bench-proxy`, with
 `PROXY_BENCH_ARGS="--tls"` for a trusted HTTPS/WSS origin and HTTPS/WSS
 downstream. Both legs use the same local certificate in that profile. The
-harness in `bench/proxy.py` warms each path, generates and consumes payloads
+compiled fixture in `bench/proxy_bench.go` and `bench/proxy_http.go` warms each path, generates and consumes payloads
 in 16 KiB chunks, checks that a duplex response arrives before upload EOF,
 and measures small requests, streaming downloads, slow uploads/readers, SSE,
 and WebSocket echo at 1, 8, and 16 concurrent streams. It reports JSON with
 direct and proxied latency distributions, added latency, request and response
 byte counts, directional throughput, worker peak RSS, process-group file
-descriptors, and CPU time. The `--smoke` form is registered as two short CTest
-integration cases (HTTP and TLS); they
+descriptors, and CPU time. Native CMake declares the fixture's source inputs and
+one build output, using only the existing host Go toolchain and standard library.
+The `--smoke` form is registered as three short CTest
+integration cases (HTTP, TLS and HTTP/2 origin); they
 assert behavior and set no performance threshold. The harness owns its
 origin, proxy process group, temporary certificate, and teardown.
 
@@ -1270,8 +1272,8 @@ for direct HTTP/2 and proxied HTTP/1.1-to-HTTP/2 requests. It verifies both
 client protocols and that the origin receives HTTP/2, then measures small
 requests, streaming download, slow upload and reader, duplex response before
 upload EOF, and SSE at 1, 8, and 16 streams. `PROXY_H2_BENCH_ARGS="--smoke"`
-runs a short functional check. The Go helper uses the standard library and is
-built only for this opt-in target; normal CTest does not compile it. Existing
+runs a short functional check. The same compiled fixture is reused by these
+commands and ordinary native Linux CTest. Existing
 deterministic C fixtures separately check certificate-verified HTTP/2 memory,
 pausing, and duplex behavior. The direct and proxied profiles have different
 downstream protocols by design, so their latency delta includes HTTP version
@@ -1291,10 +1293,12 @@ records session counts, p50/p95/p99 latency, worker RSS, descriptors, CPU,
 active streams at shutdown, and graceful worker exit time. It has no latency
 or throughput pass threshold until repeated measurements on a dedicated
 runner establish one. The normal `test-all` gate does not run this soak.
-`/proc` resource samples are Linux-only and observational. The HTTP/2 direct
-resource fields measure the origin process; proxied fields measure the Vectis
-process group, so those figures are not a memory delta. The soak's direct
-resource fields are null because its origin runs inside the harness process.
+`/proc` resource samples are Linux-only and observational. The report's
+`resource` object measures the owned Vectis process tree across the run;
+`harness_cpu_seconds` includes the local origin and clients. These are not a
+direct-versus-proxied memory delta. List arguments use commas, for example
+`--concurrency 1,8,16 --profiles download,sse,ws`. Generated inputs and evidence
+stay in the checkout's build directory. Failed runs retain that owned evidence.
 The conservative 256 MiB worker admission target is checked through the
 admission and memory tests described above.
 

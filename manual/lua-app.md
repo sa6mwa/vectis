@@ -16,8 +16,10 @@ WebDAV, auth routes, metrics, WebSockets, OpenAPI, and the concrete managed
 worker-service registrations are available as `app:<method>(opts)` calls.
 `app:route_count()` exposes the C route-count diagnostic.
 
-Every public C receiver has one of these deliberate mappings; the contract
-test fails if the C table gains an unclassified receiver.
+The table records existing convenience mappings and remaining direct-binding
+gaps. Classification checks are inventory; they do not establish faithful
+coverage of every public C operation. Pending bindings remain completeness
+work rather than permanent C-only exclusions.
 
 | C receiver | Lua surface | Reason when not one-to-one |
 | --- | --- | --- |
@@ -27,10 +29,23 @@ test fails if the C table gains an unclassified receiver.
 | `app->dsv_route()`, `app->prefixed_dsv_route()` | `app:dsv()` | Native streaming DSV parsing with Lua row callbacks; it does not materialize the request body. |
 | `app->upload_stream()`, `app->upload_file()`, `app->upload_reader()` | `app:upload()` | Lua exposes an ownership-safe bounded chunk callback rather than borrowed C file/reader callbacks. |
 | `app->cai_mcp_route()` | `app:mcp()` | Lua MCP routes buffer request, tool result and response and are stateless; the C adapter exposes a response sink. A future persistent/streamed Lua server needs an explicit product contract. |
-| `app->logger()`, `app->cai_client()`, `app->lockd_client()` | C-only | These return borrowed process-local native handles; Lua must not fabricate or own them. |
-| `app->managed_service()`, `app->register_consumer_receiver()`, `app->consumer_service_receiver()` | C-only | These accept borrowed C callbacks or native lockdc receiver handles. Lua instead provides the concrete mailbox-backed consumer, curl, CAI, audio, SUS, and OPC UA service workflows. |
+| `app->logger()`, `app->cai_client()`, `app->lockd_client()` | Direct binding pending | These return borrowed process-local native handles; remaining typed mappings must preserve their owner and explicit-close lifetime. |
+| `app->managed_service()`, `app->register_consumer_receiver()`, `app->consumer_service_receiver()` | Generic direct binding pending | These accept borrowed C callbacks or native lockdc receiver handles. Current convenience workflows cover concrete mailbox-backed consumer, curl, CAI, audio, SUS, and OPC UA services. |
+| `app->set_pouch_settings()` | `app:set_pouch_settings(settings)` | Captures all 17 typed settings before declaring scopes or starting the app. Strings are copied; explicit typed settings take precedence over flat defaults. |
 
 ## Lifecycle
+
+`app:storage({client=...})` declares app-owned collections and managed XA
+resources before start. See [storage and PostgreSQL XA](lua-storage.md) for
+post-fork materialization, streaming, operation waits and descendant cleanup.
+
+`app:on_fork_exit(function(role) ... end)` installs optional cleanup before
+start in forked Kore parent/worker processes. Roles are `kore_parent` and
+`kore_worker`; the original app owner is excluded. It runs after native
+teardown, with lifecycle reentry rejected. Exceptions or rejection fail the
+child; `app:stop()` reports a nonzero Kore parent exit. Pass nil to remove the
+user callback. The embedded runtime always reclaims its copied child Lua VM;
+clearing the callback cannot disable that cleanup. SIGKILL bypasses callbacks.
 
 `app:supervisor(opts)`, `app:workflow(opts)`, and `app:ipc(name)` compose the
 serial supervisor domain while preserving this native app userdata and its auth
@@ -165,6 +180,11 @@ override on managed service configs.
 
 `vectis.app.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:
+
+The current Kore server backend requires an RSA certificate/private-key pair.
+ECDSA server certificates are unsupported by its private-key manager. This
+restriction concerns server TLS; outbound client TLS uses the selected client
+library's certificate support.
 
 - `cert_key_bundle_path`, `bundle_path`
 - `cert_key_bundle_pem`, `bundle_pem`

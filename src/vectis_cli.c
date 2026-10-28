@@ -1,7 +1,14 @@
 #include "vectis_cli.h"
 #include "vectis_internal.h"
+#include "vectis_lua_buffer.h"
+#include "vectis_lua_digest.h"
+#include "vectis_lua_gz.h"
 #include "vectis_lua_lockdc.h"
+#include "vectis_lua_pg.h"
+#include "vectis_lua_pouch.h"
 #include "vectis_lua_supervisor.h"
+#include "vectis_lua_zlib_raw.h"
+#include "vectis_lua_zlib_stream.h"
 
 #include <arpa/inet.h>
 #include <cpkt/lua_runtime.h>
@@ -116,6 +123,8 @@ typedef struct vectis_pack_embedded_payload {
 #endif
 
 typedef struct vectis_lua_runtime_context {
+  cpkt_lua_runtime *runtime;
+  pid_t owner_pid;
   const unsigned char *embedded_lockd_bundle;
   size_t embedded_lockd_bundle_size;
   const unsigned char *embedded_asset_payload;
@@ -124,6 +133,12 @@ typedef struct vectis_lua_runtime_context {
   size_t embedded_manifest_size;
   vectis_embedded_fs *embedded_fs;
 } vectis_lua_runtime_context;
+
+static void vectis_lua_runtime_close(vectis_lua_runtime_context *context) {
+  cpkt_lua_runtime *runtime = context->runtime;
+  context->runtime = NULL;
+  cpkt_lua_runtime_free(runtime);
+}
 
 typedef struct vectis_lua_memory_source {
   const unsigned char *data;
@@ -390,6 +405,10 @@ typedef struct vectis_lua_sus_worker_registration {
 } vectis_lua_sus_worker_registration;
 
 struct vectis_lua_app {
+  vectis_lua_runtime_context *runtime_context;
+  lua_State *fork_exit_lua;
+  int fork_exit_ref;
+  const char *fork_exit_role;
   vectis_app *app;
   int started, closing;
   unsigned int owned_call_depth, callback_depth;
@@ -627,6 +646,7 @@ typedef struct vectis_lua_auth_oauth2_transport {
 
 extern int luaopen_lonejson_core(lua_State *lua);
 extern int luaopen_lockdc_core(lua_State *lua);
+extern int luaopen_lockdc_postgres(lua_State *lua);
 extern int luaopen_cai(lua_State *lua);
 extern int luaopen_lql_core(lua_State *lua);
 extern int luaopen_libmdf_core(lua_State *lua);
@@ -684,6 +704,7 @@ static void vectis_cli_usage(FILE *stream) {
         "  PACKED_APP --vectis ACTION [OPTIONS]\n"
         "                             Run a Vectis management action.\n"
         "  PACKED_APP --vectis --help Show this Vectis help.\n"
+        "  PACKED_APP --vectis -x [ARGS] Trace the embedded Lua script.\n"
         "  PACKED_APP -- --vectis     Pass --vectis to the application.\n\n"
         "Actions:\n"
         "  docs                       Print the embedded documentation.\n"
@@ -6955,6 +6976,7 @@ static void vectis_lua_parse_lockd_config(lua_State *lua, int index,
                                         "pouch_crypto_key_file",
                                         "pouch_crypto_generate_key_file",
                                         "pouch_compression",
+                                        "pouch",
                                         "logger_disabled",
                                         NULL};
 
@@ -6985,7 +7007,7 @@ static void vectis_lua_parse_lockd_config(lua_State *lua, int index,
     if (allowed[field_index] == NULL)
       luaL_error(lua, "unsupported app lockd option: %s", field);
     if (strcmp(field, "endpoints") != 0 && strcmp(field, "timeout_ms") != 0 &&
-        strcmp(field, "logger_disabled") != 0 &&
+        strcmp(field, "pouch") != 0 && strcmp(field, "logger_disabled") != 0 &&
         strcmp(field, "pouch_crypto_generate_key_file") != 0) {
       luaL_checktype(lua, -1, LUA_TSTRING);
       text = lua_tolstring(lua, -1, &text_size);
@@ -8699,6 +8721,22 @@ static int vectis_lua_app_owned_idle(lua_State *lua) {
         "app lifecycle is not allowed inside a workflow or client callback");
   return 0;
 }
+static int vectis_lua_app_set_pouch_settings(lua_State *lua) {
+  lc_pouch_settings settings;
+  vectis_error error;
+  vectis_app *app;
+  int pins;
+  (void)vectis_lua_app_owned_idle(lua);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  lua_newtable(lua);
+  pins = lua_gettop(lua);
+  vectis_lua_pouch_parse(lua, 2, &settings, pins);
+  app = vectis_lua_app_app(lua, 1);
+  if (app->set_pouch_settings(app, &settings, &error) != VECTIS_OK)
+    return vectis_lua_push_error(lua, error.code, &error);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
 static int vectis_lua_app_open_lockdc_unprotected(lua_State *lua) {
   return vectis_lua_lockdc_open(lua, vectis_lua_app_app(lua, 1));
 }
@@ -8734,6 +8772,8 @@ static int vectis_lua_app_supervisor_pump(lua_State *lua) {
 
 static int vectis_lua_app_close_unprotected(lua_State *lua) {
   vectis_lua_app *server = vectis_lua_check_app(lua, 1);
+  luaL_unref(lua, LUA_REGISTRYINDEX, server->fork_exit_ref);
+  server->fork_exit_ref = LUA_NOREF;
   vectis_lua_supervisor_restore(lua, 1);
   vectis_lua_app_consumer_service_free_all(server);
   vectis_lua_app_opcua_service_free_all(server);
@@ -8787,6 +8827,79 @@ static int vectis_lua_app_close(lua_State *lua) {
       return lua_error(lua);
   }
   return 0;
+}
+
+static int vectis_lua_fork_exit_call(lua_State *lua) {
+  vectis_lua_app *server = lua_touserdata(lua, 1);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, server->fork_exit_ref);
+  lua_pushstring(lua, server->fork_exit_role);
+  lua_call(lua, 1, 2);
+  return 2;
+}
+static vectis_status vectis_lua_fork_exit(vectis_app *app, const char *role,
+                                          void *userdata, vectis_error *error) {
+  vectis_lua_app *server = userdata;
+  vectis_lua_runtime_context *context = server->runtime_context;
+  lua_State *lua = server->fork_exit_lua;
+  vectis_status status = VECTIS_OK;
+  int base = lua_gettop(lua), rc;
+  const char *message;
+  (void)app;
+  if (context->owner_pid == getpid())
+    return VECTIS_OK;
+  if (server->fork_exit_ref != LUA_NOREF) {
+    if (!lua_checkstack(lua, 4)) {
+      status = VECTIS_ERR_NOMEM;
+      vectis_cli_error_set(error, status,
+                           "cannot reserve Lua fork exit callback stack");
+    } else {
+      server->fork_exit_role = role;
+      ++server->callback_depth;
+      ++server->owned_call_depth;
+      lua_pushcfunction(lua, vectis_lua_fork_exit_call);
+      lua_pushlightuserdata(lua, server);
+      rc = lua_pcall(lua, 1, 2, 0);
+      --server->callback_depth;
+      --server->owned_call_depth;
+      if (rc != LUA_OK ||
+          (lua_isboolean(lua, base + 1) && !lua_toboolean(lua, base + 1)) ||
+          (lua_isnil(lua, base + 1) && !lua_isnil(lua, base + 2))) {
+        int index = rc == LUA_OK ? base + 2 : base + 1;
+        message = lua_type(lua, index) == LUA_TSTRING
+                      ? lua_tostring(lua, index)
+                      : "Lua fork exit callback failed";
+        status = VECTIS_ERR_STATE;
+        vectis_cli_error_set(error, status, message);
+      }
+      lua_settop(lua, base);
+    }
+  }
+  /* lua_close may finalize server/app. Do not touch either afterwards. */
+  vectis_lua_runtime_close(context);
+  vectis_embedded_fs_close(context->embedded_fs);
+  context->embedded_fs = NULL;
+  return status;
+}
+static int vectis_lua_app_on_fork_exit(lua_State *lua) {
+  vectis_lua_app *server;
+  vectis_error error;
+  int reference = LUA_NOREF;
+  (void)vectis_lua_app_owned_idle(lua);
+  server = vectis_lua_check_app(lua, 1);
+  if (!lua_isnoneornil(lua, 2)) {
+    luaL_checktype(lua, 2, LUA_TFUNCTION);
+    lua_pushvalue(lua, 2);
+    reference = luaL_ref(lua, LUA_REGISTRYINDEX);
+  }
+  if (vectis_app_set_fork_exit_handler(server->app, vectis_lua_fork_exit,
+                                       server, &error) != VECTIS_OK) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, reference);
+    return vectis_lua_push_error(lua, error.code, &error);
+  }
+  luaL_unref(lua, LUA_REGISTRYINDEX, server->fork_exit_ref);
+  server->fork_exit_ref = reference;
+  lua_pushboolean(lua, 1);
+  return 1;
 }
 
 static int vectis_lua_app_start(lua_State *lua) {
@@ -13614,6 +13727,8 @@ static int vectis_lua_app_new(lua_State *lua) {
   vectis_lua_app *server;
   vectis_app_config config;
   vectis_error error;
+  lc_pouch_settings pouch_settings;
+  int pouch_pins;
   const char *app_name;
   const char *bind;
   const char *mode;
@@ -13631,6 +13746,17 @@ static int vectis_lua_app_new(lua_State *lua) {
   int tls_index;
 
   luaL_checktype(lua, 1, LUA_TTABLE);
+  lc_pouch_settings_init(&pouch_settings);
+  lua_newtable(lua);
+  pouch_pins = lua_gettop(lua);
+  lua_getfield(lua, 1, "lockd");
+  if (lua_istable(lua, -1)) {
+    lua_pushliteral(lua, "pouch");
+    lua_rawget(lua, -2);
+    vectis_lua_pouch_parse(lua, -1, &pouch_settings, pouch_pins);
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
   lockd_endpoints = NULL;
   trusted_proxies = NULL;
   tls_domains = NULL;
@@ -13956,6 +14082,12 @@ static int vectis_lua_app_new(lua_State *lua) {
   lua_pop(lua, 1);
   vectis_lua_parse_lockd_config(lua, 1, &config.lockd, &lockd_endpoints);
   server = (vectis_lua_app *)lua_newuserdatauv(lua, sizeof(*server), 1);
+  server->runtime_context = cpkt_lua_runtime_context_from_state(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
+  server->fork_exit_lua = lua_tothread(lua, -1);
+  lua_pop(lua, 1);
+  server->fork_exit_ref = LUA_NOREF;
+  server->fork_exit_role = NULL;
   server->app = NULL;
   server->started = server->closing = 0;
   server->owned_call_depth = server->callback_depth = 0u;
@@ -14001,6 +14133,17 @@ static int vectis_lua_app_new(lua_State *lua) {
   }
   luaL_getmetatable(lua, VECTIS_LUA_APP);
   lua_setmetatable(lua, -2);
+  if (vectis_app_set_fork_exit_handler(server->app, vectis_lua_fork_exit,
+                                       server, &error) != VECTIS_OK)
+    return vectis_lua_push_error(lua, error.code, &error);
+  if (pouch_settings.set_mask != 0u &&
+      vectis_app_set_pouch_settings(server->app, &pouch_settings, &error) !=
+          VECTIS_OK) {
+    server->app->close(server->app);
+    server->app = NULL;
+    vectis_lua_app_log_seed_cleanup(server);
+    return vectis_lua_push_error(lua, error.code, &error);
+  }
   lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.supervisor");
   lua_call(lua, 1, 1);
@@ -22575,6 +22718,8 @@ static void vectis_lua_register_app(lua_State *lua) {
     lua_setfield(lua, -2, "_workflow_idle");
     lua_pushcfunction(lua, vectis_lua_app_open_lockdc_client);
     lua_setfield(lua, -2, "_open_lockdc_client");
+    lua_pushcfunction(lua, vectis_lua_app_set_pouch_settings);
+    lua_setfield(lua, -2, "_set_pouch_settings_native");
     lua_pushcfunction(lua, vectis_lua_app_supervisor_native);
     lua_setfield(lua, -2, "_supervisor_native");
     lua_pushcfunction(lua, vectis_lua_app_supervisor_storage_defaults);
@@ -22583,6 +22728,8 @@ static void vectis_lua_register_app(lua_State *lua) {
     lua_setfield(lua, -2, "pump");
     lua_pushcfunction(lua, vectis_lua_app_start);
     lua_setfield(lua, -2, "start");
+    lua_pushcfunction(lua, vectis_lua_app_on_fork_exit);
+    lua_setfield(lua, -2, "on_fork_exit");
     lua_pushcfunction(lua, vectis_lua_app_restart);
     lua_setfield(lua, -2, "restart");
     lua_pushcfunction(lua, vectis_lua_app_restart);
@@ -22766,6 +22913,7 @@ static void vectis_lua_set_required_module(lua_State *lua, const char *field,
 static void vectis_lua_push_libs_table(lua_State *lua) {
   lua_newtable(lua);
   vectis_lua_set_required_module(lua, "lockdc", "lockdc");
+  vectis_lua_set_required_module(lua, "lockdc_postgres", "lockdc.postgres");
   vectis_lua_set_required_module(lua, "lonejson", "lonejson");
   vectis_lua_set_required_module(lua, "pslog", "pslog");
   vectis_lua_set_required_module(lua, "lql", "lql");
@@ -22874,6 +23022,10 @@ static int luaopen_vectis(lua_State *lua) {
   vectis_lua_set_required_module(lua, "audio_worker", "vectis.audio_worker");
   vectis_lua_set_required_module(lua, "sus_worker", "vectis.sus_worker");
   vectis_lua_set_required_module(lua, "cert", "vectis.cert");
+  vectis_lua_set_required_module(lua, "digest", "vectis.digest");
+  vectis_lua_set_required_module(lua, "pg", "vectis.pg");
+  vectis_lua_set_required_module(lua, "storage", "vectis.storage");
+  vectis_lua_set_required_module(lua, "buffer", "vectis.buffer");
   vectis_lua_set_required_module(lua, "cli", "vectis.cli");
   vectis_lua_set_required_module(lua, "ssh", "vectis.ssh");
   vectis_lua_set_required_module(lua, "kore", "vectis.kore");
@@ -23099,6 +23251,9 @@ static int vectis_luaopen_vectis_kore(void *lua_state) {
 static int vectis_luaopen_lockdc_core(void *lua_state) {
   return luaopen_lockdc_core((lua_State *)lua_state);
 }
+static int vectis_luaopen_lockdc_postgres(void *lua_state) {
+  return luaopen_lockdc_postgres((lua_State *)lua_state);
+}
 
 static int vectis_luaopen_lonejson_core(void *lua_state) {
   return luaopen_lonejson_core((lua_State *)lua_state);
@@ -23119,6 +23274,18 @@ static int luaopen_vectis_xml_core(lua_State *lua) {
 
 static int vectis_luaopen_vectis_xml_core(void *lua_state) {
   return luaopen_vectis_xml_core((lua_State *)lua_state);
+}
+
+static int vectis_luaopen_vectis_digest_core(void *lua_state) {
+  return luaopen_vectis_digest_core((lua_State *)lua_state);
+}
+
+static int vectis_luaopen_vectis_pg_core(void *lua_state) {
+  return luaopen_vectis_pg_core((lua_State *)lua_state);
+}
+
+static int vectis_luaopen_vectis_buffer_core(void *lua_state) {
+  return luaopen_vectis_buffer_core((lua_State *)lua_state);
 }
 
 static int luaopen_vectis_dsv_core(lua_State *lua) {
@@ -23181,66 +23348,6 @@ static void vectis_lua_openssl_push_hex(lua_State *lua,
   free(out);
 }
 
-static int vectis_lua_openssl_sha256(lua_State *lua) {
-  const unsigned char *data;
-  size_t data_size;
-  unsigned char digest[SHA256_DIGEST_LENGTH];
-
-  data = (const unsigned char *)luaL_checklstring(lua, 1, &data_size);
-  SHA256(data, data_size, digest);
-  lua_pushlstring(lua, (const char *)digest, sizeof(digest));
-  return 1;
-}
-
-static int vectis_lua_openssl_sha256_hex(lua_State *lua) {
-  const unsigned char *data;
-  size_t data_size;
-  unsigned char digest[SHA256_DIGEST_LENGTH];
-
-  data = (const unsigned char *)luaL_checklstring(lua, 1, &data_size);
-  SHA256(data, data_size, digest);
-  vectis_lua_openssl_push_hex(lua, digest, sizeof(digest));
-  return 1;
-}
-
-static int vectis_lua_openssl_hmac_sha256(lua_State *lua) {
-  const unsigned char *key;
-  const unsigned char *data;
-  size_t key_size;
-  size_t data_size;
-  unsigned char digest[EVP_MAX_MD_SIZE];
-  unsigned int digest_size;
-
-  key = (const unsigned char *)luaL_checklstring(lua, 1, &key_size);
-  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
-  digest_size = 0u;
-  if (HMAC(EVP_sha256(), key, (int)key_size, data, data_size, digest,
-           &digest_size) == NULL) {
-    return luaL_error(lua, "openssl HMAC-SHA256 failed");
-  }
-  lua_pushlstring(lua, (const char *)digest, (size_t)digest_size);
-  return 1;
-}
-
-static int vectis_lua_openssl_hmac_sha256_hex(lua_State *lua) {
-  const unsigned char *key;
-  const unsigned char *data;
-  size_t key_size;
-  size_t data_size;
-  unsigned char digest[EVP_MAX_MD_SIZE];
-  unsigned int digest_size;
-
-  key = (const unsigned char *)luaL_checklstring(lua, 1, &key_size);
-  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
-  digest_size = 0u;
-  if (HMAC(EVP_sha256(), key, (int)key_size, data, data_size, digest,
-           &digest_size) == NULL) {
-    return luaL_error(lua, "openssl HMAC-SHA256 failed");
-  }
-  vectis_lua_openssl_push_hex(lua, digest, (size_t)digest_size);
-  return 1;
-}
-
 static const EVP_MD *vectis_lua_openssl_digest(lua_State *lua,
                                                const char *algorithm) {
   const EVP_MD *digest;
@@ -23257,98 +23364,14 @@ static const EVP_MD *vectis_lua_openssl_digest(lua_State *lua,
   return digest;
 }
 
-static int vectis_lua_openssl_digest_value(lua_State *lua) {
-  const EVP_MD *digest;
-  const unsigned char *data;
-  const char *algorithm;
-  size_t data_size;
-  unsigned char out[EVP_MAX_MD_SIZE];
-  unsigned int out_size;
-
-  algorithm = luaL_checkstring(lua, 1);
-  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
-  digest = vectis_lua_openssl_digest(lua, algorithm);
-  out_size = 0u;
-  if (EVP_Digest(data, data_size, out, &out_size, digest, NULL) != 1) {
-    return luaL_error(lua, "openssl digest failed");
-  }
-  lua_pushlstring(lua, (const char *)out, (size_t)out_size);
-  return 1;
-}
-
-static int vectis_lua_openssl_digest_hex(lua_State *lua) {
-  const EVP_MD *digest;
-  const unsigned char *data;
-  const char *algorithm;
-  size_t data_size;
-  unsigned char out[EVP_MAX_MD_SIZE];
-  unsigned int out_size;
-
-  algorithm = luaL_checkstring(lua, 1);
-  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
-  digest = vectis_lua_openssl_digest(lua, algorithm);
-  out_size = 0u;
-  if (EVP_Digest(data, data_size, out, &out_size, digest, NULL) != 1) {
-    return luaL_error(lua, "openssl digest failed");
-  }
-  vectis_lua_openssl_push_hex(lua, out, (size_t)out_size);
-  return 1;
-}
-
-static int vectis_lua_openssl_hmac(lua_State *lua) {
-  const EVP_MD *digest;
-  const unsigned char *key;
-  const unsigned char *data;
-  const char *algorithm;
-  size_t key_size;
-  size_t data_size;
-  unsigned char out[EVP_MAX_MD_SIZE];
-  unsigned int out_size;
-
-  algorithm = luaL_checkstring(lua, 1);
-  key = (const unsigned char *)luaL_checklstring(lua, 2, &key_size);
-  data = (const unsigned char *)luaL_checklstring(lua, 3, &data_size);
-  digest = vectis_lua_openssl_digest(lua, algorithm);
-  out_size = 0u;
-  if (HMAC(digest, key, (int)key_size, data, data_size, out, &out_size) ==
-      NULL) {
-    return luaL_error(lua, "openssl HMAC failed");
-  }
-  lua_pushlstring(lua, (const char *)out, (size_t)out_size);
-  return 1;
-}
-
-static int vectis_lua_openssl_hmac_hex(lua_State *lua) {
-  const EVP_MD *digest;
-  const unsigned char *key;
-  const unsigned char *data;
-  const char *algorithm;
-  size_t key_size;
-  size_t data_size;
-  unsigned char out[EVP_MAX_MD_SIZE];
-  unsigned int out_size;
-
-  algorithm = luaL_checkstring(lua, 1);
-  key = (const unsigned char *)luaL_checklstring(lua, 2, &key_size);
-  data = (const unsigned char *)luaL_checklstring(lua, 3, &data_size);
-  digest = vectis_lua_openssl_digest(lua, algorithm);
-  out_size = 0u;
-  if (HMAC(digest, key, (int)key_size, data, data_size, out, &out_size) ==
-      NULL) {
-    return luaL_error(lua, "openssl HMAC failed");
-  }
-  vectis_lua_openssl_push_hex(lua, out, (size_t)out_size);
-  return 1;
-}
-
 static size_t vectis_lua_openssl_size(lua_State *lua, int index,
                                       const char *label) {
   lua_Integer value;
 
   value = luaL_checkinteger(lua, index);
   if (value < 0 || (lua_Unsigned)value > VECTIS_LUA_OPENSSL_MAX_BYTES) {
-    luaL_error(lua, "%s must be between 0 and %u bytes", label,
-               (unsigned)VECTIS_LUA_OPENSSL_MAX_BYTES);
+    luaL_error(lua, "%s must be between 0 and %d bytes", label,
+               (int)VECTIS_LUA_OPENSSL_MAX_BYTES);
     return 0u;
   }
   return (size_t)value;
@@ -23357,8 +23380,8 @@ static size_t vectis_lua_openssl_size(lua_State *lua, int index,
 static void vectis_lua_openssl_check_bytes(lua_State *lua, size_t size,
                                            const char *label) {
   if (size > VECTIS_LUA_OPENSSL_MAX_BYTES) {
-    luaL_error(lua, "%s must be at most %u bytes", label,
-               (unsigned)VECTIS_LUA_OPENSSL_MAX_BYTES);
+    luaL_error(lua, "%s must be at most %d bytes", label,
+               (int)VECTIS_LUA_OPENSSL_MAX_BYTES);
   }
 }
 
@@ -23469,8 +23492,8 @@ static int vectis_lua_openssl_base64_decode(lua_State *lua) {
   }
   max_input = 4u * ((VECTIS_LUA_OPENSSL_MAX_BYTES + 2u) / 3u);
   if (data_size > max_input) {
-    return luaL_error(lua, "openssl base64 output must be at most %u bytes",
-                      (unsigned)VECTIS_LUA_OPENSSL_MAX_BYTES);
+    return luaL_error(lua, "openssl base64 output must be at most %d bytes",
+                      (int)VECTIS_LUA_OPENSSL_MAX_BYTES);
   }
   out_size = (data_size / 4u) * 3u;
   padding = 0;
@@ -24363,22 +24386,106 @@ static int vectis_lua_zlib_version(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_zlib_compile_flags(lua_State *lua) {
+  uLong flags;
+  flags = zlibCompileFlags();
+  if ((uint64_t)flags <= (uint64_t)LUA_MAXINTEGER) {
+    lua_pushinteger(lua, (lua_Integer)flags);
+  } else {
+    lua_createtable(lua, 0, 2);
+    lua_pushinteger(lua, (lua_Integer)((uint64_t)flags >> 32u));
+    lua_setfield(lua, -2, "high");
+    lua_pushinteger(lua, (lua_Integer)((uint64_t)flags & 0xffffffffu));
+    lua_setfield(lua, -2, "low");
+  }
+  return 1;
+}
+
+static int vectis_lua_zlib_error_string(lua_State *lua) {
+  lua_Integer code;
+  if (!lua_isinteger(lua, 1))
+    return luaL_error(lua, "zlib error code must be a native integer");
+  code = lua_tointeger(lua, 1);
+  if (code < Z_VERSION_ERROR || code > Z_NEED_DICT)
+    return luaL_error(lua, "unknown zlib error code");
+  lua_pushstring(lua, zError((int)code));
+  return 1;
+}
+
+static void vectis_lua_zlib_constants(lua_State *lua) {
+  static const struct {
+    const char *name;
+    int value;
+  } values[] = {{"Z_NO_FLUSH", Z_NO_FLUSH},
+                {"Z_PARTIAL_FLUSH", Z_PARTIAL_FLUSH},
+                {"Z_SYNC_FLUSH", Z_SYNC_FLUSH},
+                {"Z_FULL_FLUSH", Z_FULL_FLUSH},
+                {"Z_FINISH", Z_FINISH},
+                {"Z_BLOCK", Z_BLOCK},
+                {"Z_TREES", Z_TREES},
+                {"Z_OK", Z_OK},
+                {"Z_STREAM_END", Z_STREAM_END},
+                {"Z_NEED_DICT", Z_NEED_DICT},
+                {"Z_ERRNO", Z_ERRNO},
+                {"Z_STREAM_ERROR", Z_STREAM_ERROR},
+                {"Z_DATA_ERROR", Z_DATA_ERROR},
+                {"Z_MEM_ERROR", Z_MEM_ERROR},
+                {"Z_BUF_ERROR", Z_BUF_ERROR},
+                {"Z_VERSION_ERROR", Z_VERSION_ERROR},
+                {"Z_NO_COMPRESSION", Z_NO_COMPRESSION},
+                {"Z_BEST_SPEED", Z_BEST_SPEED},
+                {"Z_BEST_COMPRESSION", Z_BEST_COMPRESSION},
+                {"Z_DEFAULT_COMPRESSION", Z_DEFAULT_COMPRESSION},
+                {"Z_FILTERED", Z_FILTERED},
+                {"Z_HUFFMAN_ONLY", Z_HUFFMAN_ONLY},
+                {"Z_RLE", Z_RLE},
+                {"Z_FIXED", Z_FIXED},
+                {"Z_DEFAULT_STRATEGY", Z_DEFAULT_STRATEGY},
+                {"Z_BINARY", Z_BINARY},
+                {"Z_TEXT", Z_TEXT},
+                {"Z_ASCII", Z_ASCII},
+                {"Z_UNKNOWN", Z_UNKNOWN},
+                {"Z_DEFLATED", Z_DEFLATED},
+                {"ZLIB_VERNUM", ZLIB_VERNUM},
+                {"ZLIB_VER_MAJOR", ZLIB_VER_MAJOR},
+                {"ZLIB_VER_MINOR", ZLIB_VER_MINOR},
+                {"ZLIB_VER_REVISION", ZLIB_VER_REVISION},
+                {"ZLIB_VER_SUBREVISION", ZLIB_VER_SUBREVISION}};
+  size_t i;
+  for (i = 0u; i < sizeof(values) / sizeof(values[0]); ++i) {
+    lua_pushinteger(lua, values[i].value);
+    lua_setfield(lua, -2, values[i].name);
+  }
+  lua_pushliteral(lua, ZLIB_VERSION);
+  lua_setfield(lua, -2, "ZLIB_VERSION");
+}
+
 static int luaopen_zlib(lua_State *lua) {
   lua_newtable(lua);
+  vectis_lua_zlib_stream_register(lua);
+  vectis_lua_zlib_raw_register(lua);
+  vectis_lua_gz_register(lua);
   lua_pushcfunction(lua, vectis_lua_zlib_version);
   lua_setfield(lua, -2, "version");
+  lua_pushcfunction(lua, vectis_lua_zlib_version);
+  lua_setfield(lua, -2, "zlibVersion");
+  lua_pushcfunction(lua, vectis_lua_zlib_compile_flags);
+  lua_setfield(lua, -2, "zlibCompileFlags");
+  lua_pushcfunction(lua, vectis_lua_zlib_error_string);
+  lua_setfield(lua, -2, "zError");
+  vectis_lua_zlib_constants(lua);
   lua_pushcfunction(lua, vectis_lua_zlib_deflate);
-  lua_setfield(lua, -2, "deflate");
+  lua_setfield(lua, -2, "deflate_materialized");
   lua_pushcfunction(lua, vectis_lua_zlib_inflate);
-  lua_setfield(lua, -2, "inflate");
+  lua_setfield(lua, -2, "inflate_materialized");
   lua_pushcfunction(lua, vectis_lua_zlib_deflate);
-  lua_setfield(lua, -2, "compress");
+  lua_setfield(lua, -2, "compress_materialized");
   lua_pushcfunction(lua, vectis_lua_zlib_decompress);
-  lua_setfield(lua, -2, "decompress");
+  lua_setfield(lua, -2, "decompress_materialized");
   lua_pushcfunction(lua, vectis_lua_zlib_gzip);
-  lua_setfield(lua, -2, "gzip");
+  lua_setfield(lua, -2, "gzip_materialized");
   lua_pushcfunction(lua, vectis_lua_zlib_gunzip);
-  lua_setfield(lua, -2, "gunzip");
+  lua_setfield(lua, -2, "gunzip_materialized");
   lua_pushcfunction(lua, vectis_lua_zlib_deflate_file);
   lua_setfield(lua, -2, "deflate_file");
   lua_pushcfunction(lua, vectis_lua_zlib_inflate_file);
@@ -24396,24 +24503,9 @@ static int luaopen_zlib(lua_State *lua) {
 
 static int luaopen_openssl(lua_State *lua) {
   lua_newtable(lua);
+  vectis_lua_digest_register(lua);
   lua_pushcfunction(lua, vectis_lua_openssl_version);
   lua_setfield(lua, -2, "version");
-  lua_pushcfunction(lua, vectis_lua_openssl_sha256);
-  lua_setfield(lua, -2, "sha256");
-  lua_pushcfunction(lua, vectis_lua_openssl_sha256_hex);
-  lua_setfield(lua, -2, "sha256_hex");
-  lua_pushcfunction(lua, vectis_lua_openssl_hmac_sha256);
-  lua_setfield(lua, -2, "hmac_sha256");
-  lua_pushcfunction(lua, vectis_lua_openssl_hmac_sha256_hex);
-  lua_setfield(lua, -2, "hmac_sha256_hex");
-  lua_pushcfunction(lua, vectis_lua_openssl_digest_value);
-  lua_setfield(lua, -2, "digest");
-  lua_pushcfunction(lua, vectis_lua_openssl_digest_hex);
-  lua_setfield(lua, -2, "digest_hex");
-  lua_pushcfunction(lua, vectis_lua_openssl_hmac);
-  lua_setfield(lua, -2, "hmac");
-  lua_pushcfunction(lua, vectis_lua_openssl_hmac_hex);
-  lua_setfield(lua, -2, "hmac_hex");
   lua_pushcfunction(lua, vectis_lua_openssl_hex_encode);
   lua_setfield(lua, -2, "hex_encode");
   lua_pushcfunction(lua, vectis_lua_openssl_hex_decode);
@@ -24478,29 +24570,49 @@ static int vectis_luaopen_sus(void *lua_state) {
   return luaopen_sus((lua_State *)lua_state);
 }
 
-static void vectis_lua_trace_hook(lua_State *lua, lua_Debug *debug) {
+static void vectis_lua_trace_line(void *context,
+                                  const cpkt_lua_runtime_trace_event *event) {
+  FILE *output;
   const char *source;
+  size_t size, i;
+  int named, truncated;
+  unsigned char byte;
 
-  if (lua == NULL || debug == NULL) {
+  if (event == NULL || event->source == NULL || event->line <= 0) {
     return;
   }
-  if (lua_getinfo(lua, "Sl", debug) == 0 || debug->currentline <= 0) {
-    return;
+  output = (FILE *)context;
+  source = event->source;
+  size = event->source_size;
+  named = size > 0u && (source[0] == '@' || source[0] == '=');
+  fputs("+ ", output);
+  if (named) {
+    ++source;
+    --size;
+  } else {
+    fputs("[string \"", output);
   }
-  source = debug->short_src[0] != '\0' ? debug->short_src : "?";
-  fprintf(stderr, "+ %s:%d\n", source, debug->currentline);
-}
-
-static int vectis_luaopen_trace(void *lua_state) {
-  lua_State *lua;
-
-  lua = (lua_State *)lua_state;
-  if (lua == NULL) {
-    return 0;
+  /* Diagnostic names stay bounded even when Lua uses source text as its ID.
+   * Never enter Lua, retain borrowed event bytes, or alter runtime policy. */
+  truncated = size > 160u;
+  if (truncated && named && event->source[0] == '@') {
+    fputs("...", output);
+    source += size - 160u;
   }
-  lua_sethook(lua, vectis_lua_trace_hook, LUA_MASKLINE, 0);
-  lua_pushboolean(lua, 1);
-  return 1;
+  if (size > 160u) {
+    size = 160u;
+  }
+  for (i = 0; i < size; ++i) {
+    byte = (unsigned char)source[i];
+    fputc(byte < 32u || byte == 127u ? '?' : (int)byte, output);
+  }
+  if (truncated && !(named && event->source[0] == '@')) {
+    fputs("...", output);
+  }
+  if (!named) {
+    fputs("\"]", output);
+  }
+  fprintf(output, ":%d\n", event->line);
 }
 
 static int vectis_lua_report_status(cpkt_lua_runtime *runtime,
@@ -24694,6 +24806,11 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
+  status = cpkt_lua_runtime_register_c_module(runtime, "lockdc.postgres",
+                                              vectis_luaopen_lockdc_postgres);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
   status =
       vectis_lua_register_resource_module(runtime, "lockdc", "lockdc.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
@@ -24800,6 +24917,11 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
+  status = vectis_lua_register_resource_module(runtime, "vectis.storage",
+                                               "vectis.storage");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
   status = cpkt_lua_runtime_register_c_module(runtime, "vectis.lockd.core",
                                               vectis_luaopen_lockd_core);
   if (status != CPKT_LUA_RUNTIME_OK)
@@ -24809,6 +24931,30 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
+  status = cpkt_lua_runtime_register_c_module(
+      runtime, "vectis.digest.core", vectis_luaopen_vectis_digest_core);
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = vectis_lua_register_resource_module(runtime, "vectis.digest",
+                                               "vectis.digest");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.pg.core",
+                                              vectis_luaopen_vectis_pg_core);
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status =
+      vectis_lua_register_resource_module(runtime, "vectis.pg", "vectis.pg");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = cpkt_lua_runtime_register_c_module(
+      runtime, "vectis.buffer.core", vectis_luaopen_vectis_buffer_core);
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
+  status = vectis_lua_register_resource_module(runtime, "vectis.buffer",
+                                               "vectis.buffer");
+  if (status != CPKT_LUA_RUNTIME_OK)
+    return status;
   status =
       vectis_lua_register_resource_module(runtime, "vectis.dsv", "vectis.dsv");
   if (status != CPKT_LUA_RUNTIME_OK) {
@@ -24885,6 +25031,8 @@ static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,
   runtime = NULL;
   status = cpkt_lua_runtime_new(&runtime);
   if (status == CPKT_LUA_RUNTIME_OK) {
+    context->runtime = runtime;
+    context->owner_pid = getpid();
     cpkt_lua_runtime_set_context(runtime, context);
     status = cpkt_lua_runtime_openlibs(runtime);
   }
@@ -24892,15 +25040,12 @@ static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,
     status = vectis_lua_register_modules(runtime);
   }
   if (status == CPKT_LUA_RUNTIME_OK && trace_enabled) {
-    status = cpkt_lua_runtime_register_c_module(runtime, "__vectis_trace",
-                                                vectis_luaopen_trace);
-  }
-  if (status == CPKT_LUA_RUNTIME_OK && trace_enabled) {
-    status = cpkt_lua_runtime_require(runtime, "__vectis_trace");
+    status = cpkt_lua_runtime_set_trace_callback(runtime, vectis_lua_trace_line,
+                                                 stderr);
   }
   if (status != CPKT_LUA_RUNTIME_OK) {
     rc = vectis_lua_report_status(runtime, status);
-    cpkt_lua_runtime_free(runtime);
+    vectis_lua_runtime_close(context);
     return rc;
   }
   *out = runtime;
@@ -24952,7 +25097,7 @@ static int vectis_lua_run_buffer(
   status = vectis_lua_configure_script_package_paths(runtime, script_name);
   if (status != CPKT_LUA_RUNTIME_OK) {
     rc = vectis_lua_report_status(runtime, status);
-    cpkt_lua_runtime_free(runtime);
+    vectis_lua_runtime_close(&context);
     vectis_embedded_fs_close(context.embedded_fs);
     return rc;
   }
@@ -24973,7 +25118,7 @@ static int vectis_lua_run_buffer(
       runtime, load_script, load_size, script_name, argc > 0 ? argc - 1 : 0,
       argc > 0 ? (const char *const *)(argv + 1) : NULL, 0);
   rc = vectis_lua_report_status(runtime, status);
-  cpkt_lua_runtime_free(runtime);
+  vectis_lua_runtime_close(&context);
   vectis_embedded_fs_close(context.embedded_fs);
   return rc;
 }
@@ -24995,7 +25140,7 @@ static int vectis_lua_run_script(int argc, char **argv, int script_index,
       vectis_lua_configure_script_package_paths(runtime, argv[script_index]);
   if (status != CPKT_LUA_RUNTIME_OK) {
     rc = vectis_lua_report_status(runtime, status);
-    cpkt_lua_runtime_free(runtime);
+    vectis_lua_runtime_close(&context);
     return rc;
   }
 
@@ -25003,7 +25148,7 @@ static int vectis_lua_run_script(int argc, char **argv, int script_index,
       runtime, argv[script_index], argc - script_index - 1,
       (const char *const *)(argv + script_index + 1), 0);
   rc = vectis_lua_report_status(runtime, status);
-  cpkt_lua_runtime_free(runtime);
+  vectis_lua_runtime_close(&context);
   return rc;
 }
 
@@ -25139,6 +25284,7 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
   vectis_pack_embedded_payload payload;
   char self_path[4096];
   int rc;
+  int trace_enabled;
 
   if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0) {
     return -1;
@@ -25154,7 +25300,9 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
     vectis_pack_embedded_payload_cleanup(&payload);
     return rc;
   }
-  if (argc > 1 && strcmp(argv[1], "--vectis") == 0) {
+  trace_enabled = argc > 2 && strcmp(argv[1], "--vectis") == 0 &&
+                  strcmp(argv[2], "-x") == 0;
+  if (argc > 1 && strcmp(argv[1], "--vectis") == 0 && !trace_enabled) {
     rc = vectis_cli_packed_command(argc, argv, 2);
     vectis_pack_embedded_payload_cleanup(&payload);
     return rc;
@@ -25165,7 +25313,8 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
       payload.manifest_size > 0u ? payload.asset_payload : NULL,
       payload.asset_payload_size,
       payload.manifest_size > 0u ? payload.manifest : NULL,
-      payload.manifest_size, argc, argv, 0);
+      payload.manifest_size, trace_enabled ? argc - 2 : argc,
+      trace_enabled ? argv + 2 : argv, trace_enabled);
   vectis_pack_embedded_payload_cleanup(&payload);
   return rc;
 }

@@ -19,7 +19,7 @@ cmake --preset debug -S "$repo_root" -B "$build_dir" \
   -DVECTIS_INSTALL=OFF
 
 cmake --build "$build_dir"
-python3 "$script_dir/test_runtime_contract.py" "$build_dir"
+cmake -DBUILD="$build_dir" -P "$script_dir/test_runtime_contract.cmake"
 
 cat >"$tmp_script" <<'LUA'
 local vectis = require("vectis")

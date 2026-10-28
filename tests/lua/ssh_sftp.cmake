@@ -239,8 +239,8 @@ if(ssh_test_python)
                   RESULT_VARIABLE ssh_paramiko_result OUTPUT_QUIET ERROR_QUIET)
 endif()
 if(ssh_test_python AND ssh_paramiko_result EQUAL 0)
-  execute_process(COMMAND "${ssh_test_python}"
-                          "${CMAKE_CURRENT_LIST_DIR}/../ssh_output.py" "${VECTIS_BIN}"
+  execute_process(COMMAND bash "${CMAKE_CURRENT_LIST_DIR}/ssh_output.sh" "${VECTIS_BIN}"
+                          "${ssh_test_python}" "${WORK_DIR}/ssh-output"
                   RESULT_VARIABLE ssh_output_result
                   OUTPUT_VARIABLE ssh_output_stdout ERROR_VARIABLE ssh_output_stderr
                   TIMEOUT 60)

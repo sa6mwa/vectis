@@ -42,6 +42,9 @@ local dependency_modules = {
 }
 
 local workflow_modules = {
+  pg = "vectis.pg",
+  digest = "vectis.digest",
+  buffer = "vectis.buffer",
   auth = "vectis.auth",
   cert = "vectis.cert",
   embedded = "vectis.embedded",
@@ -65,6 +68,7 @@ local workflow_modules = {
   lockd = "vectis.lockd",
   supervisor = "vectis.supervisor",
   workflow = "vectis.workflow",
+  storage = "vectis.storage",
   dsv = "vectis.dsv",
   xml = "vectis.xml",
   kore = "vectis.kore",
@@ -73,7 +77,9 @@ local workflow_modules = {
 -- Only exact root absence or a known native core absent from a source-only
 -- rock is optional. Preserve loader exceptions, including table identities.
 local optional_native = {
+  ["vectis.pg"] = { ["vectis.pg.core"] = true },
   lockdc = { ["lockdc.core"] = true }, lonejson = { ["lonejson.core"] = true },
+  ["lockdc.postgres"] = { ["lockdc.core"] = true },
   pslog = { ["pslog.core"] = true }, lql = { ["lql.core"] = true },
   cai = { ["cai.core"] = true }, libmdf = { ["libmdf.core"] = true },
   softline = { ["softline.core"] = true },
@@ -81,6 +87,8 @@ local optional_native = {
   ["vectis.auth"] = { ["vectis.auth.core"] = true },
   ["vectis.dsv"] = { ["vectis.dsv.core"] = true },
   ["vectis.xml"] = { ["vectis.xml.core"] = true },
+  ["vectis.digest"] = { ["vectis.digest.core"] = true },
+  ["vectis.buffer"] = { ["vectis.buffer.core"] = true },
 }
 local helper_dependencies = {
   ["vectis.lockd"]={"lockdc"}, ["vectis.workflow"]={"lockdc"},
@@ -128,6 +136,7 @@ for _, name in ipairs(dependency_modules) do
     M.libs[name] = module
   end
 end
+M.libs.lockdc_postgres = optional_require("lockdc.postgres")
 
 for field, module_name in pairs(workflow_modules) do
   local module = optional_require(module_name)

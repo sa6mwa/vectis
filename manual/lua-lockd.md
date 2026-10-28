@@ -1,5 +1,20 @@
 # Vectis Lua Lockd
 
+`vectis.lockd.save_json(config, request, value, options)` forwards native update
+options, including `retention_seconds`: omission preserves the policy, zero
+clears expiry, and positive integer seconds replace it at commit. Negative or
+fractional values fail. The C `vectis_lockd_state_save*` and
+`vectis_lockd_state_update*` functions take `const lc_update_opts *` immediately
+before the error argument; initialize it with `lc_update_opts_init()` or pass
+NULL for native defaults. Retention eligibility is independent of lease TTL
+and does not guarantee immediate deletion. Read metadata to confirm support
+and the committed deadline.
+
+For app-owned collections and managed PostgreSQL transactions, see
+[storage and PostgreSQL XA](lua-storage.md). `save_json(config, request, value,
+options)` forwards native update options, including `retention_seconds`:
+omission preserves policy, zero clears it, and positive seconds start at commit.
+
 `require("vectis").lockd` is a thin Vectis-owned workflow layer over the
 dependency-native `lockdc` Lua module. It keeps the upstream module available as
 `vectis.lockd.native` while adding Vectis-specific config normalization for packed
@@ -183,10 +198,26 @@ App-level `lockd` settings use Vectis's native configuration: `endpoints`,
 `timeout_ms`, flat `pouch_crypto_key`, `pouch_crypto_key_file`,
 `pouch_crypto_generate_key_file`, `pouch_compression`, and `logger_disabled`.
 Unknown fields, malformed endpoint arrays and NUL strings are rejected.
-Use official endpoint query options for additional native app Pouch settings.
-Nested `pouch` tables and upstream-only transport controls belong in an explicit
-workflow/consumer `client` configuration; the app rejects them rather than
-opening storage with different settings. `logger_disabled=true` mutes native
+Prefer `lockd.pouch` for typed root-open settings. All 17 upstream fields are
+accepted: booleans `single_writer`, `durable_sync`, `background_compaction`,
+`disable_compaction_throttling`, `queue_watch`, `query_indexing`,
+`crypto_generate_key_file`; unsigned integers `fsync_batch_max_ops`,
+`segment_target_bytes`, `indexer_flush_docs`, `indexer_flush_interval_seconds`,
+`terminal_reclaim_min_bytes`; strings `query_engine`, `query_fallback_engine`,
+`crypto_key`, `crypto_key_file`, `compression`. Engine strings are `index`/`scan`,
+compression is `none`/`zlib`. Explicit zero retains upstream default/unbounded
+semantics. App integer settings also accept exact unsigned 32-bit `{high,low}`
+words. The direct upstream Lua integer domain is separately constrained by its
+binding; do not infer that every private workflow client accepts word records.
+
+Selected typed settings override endpoint query and flat fields per field.
+Vectis's explicit environment encryption override still applies. Configuration
+and selected strings are copied before startup. `app:set_pouch_settings(table)`
+replaces the typed capture before startup and before supervisor/workflow
+declarations; later changes fail. Legacy query options remain supported for the
+native app C path. Direct `lockdc.open` uses query-free endpoints and its typed
+`pouch` table. Upstream-only transport controls belong in an explicit
+workflow/consumer `client` configuration. `logger_disabled=true` mutes native
 app clients and inherited private clients independently of the log seed.
 
 ### Workflow and supervisor consumer client fields
@@ -205,7 +236,7 @@ accepts these root fields; unknown names are rejected:
 - logging: `disable_logger_sys_field`, `logger_disabled`.
 
 Canonical bundle names take precedence over aliases; the explicit bundle path
-selects a path source. Flat Pouch fields are normalized into the upstream
+selects a path source. Flat Pouch fields fill only absent typed fields in the upstream
 `pouch` table. The nested table follows upstream validation; app-owned clients
 require shared writer mode. Omitted `client` inherits the captured app selection.
 This list describes private workflow/consumer clients, not extra accepted fields

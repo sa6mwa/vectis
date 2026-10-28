@@ -36,7 +36,7 @@ HTML rendering is unaffected.
 time and returns `nil` at EOF; the writer receives output chunks as they are
 produced. Do not treat it as a buffered string helper.
 
-The bundled libmdf 0.14.0 preserves hyperlink labels, punctuation and enclosing
+The bundled libmdf 0.16.0 preserves hyperlink labels, punctuation and enclosing
 styles across fragmented ANSI input and wrapping. Escaped table pipes render
 as literal `|`, including inside inline code. HTML and deck output declare each
 default font style once, with a variable weight range of 400–700.

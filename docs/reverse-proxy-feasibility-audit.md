@@ -1157,9 +1157,17 @@ sustained cleartext and double-TLS exchanges pass; cleartext SSE delivery and
 idle RST cancellation pass. Tunnel TLS retries and general HTTP framing
 remain open.
 
+Historical wrapper workaround, superseded by the 2026-10-27 lifecycle upgrade:
+the `KORE_VECTIS_EMBEDDED_RUNTIME` guard had been omitted from CMake, disabling
+the implemented parent control timer. That guard is now enabled; native
+CMake/CTest executes probes and checks sanitizer files through
+[`tests/run_kore.cmake`](../tests/run_kore.cmake). Abrupt controller exit now
+shuts down Kore through its control socket. The former supervisor and its
+synthetic timeout tests were removed; they hid this integration defect.
+
 An assertion failure in a probe previously left its Kore parent and worker
 alive after the controller exited. The two Linux proxy probes now run through
-[a supervisor](../scripts/run_forked_kore_test.sh) in separate temporary build
+a now-removed supervisor in separate temporary build
 directories. It verifies the executable recorded in `kore.pid`, stops that
 exact parent and its known workers on exit, and removes the generated files.
 Dedicated tests force an immediate controller exit and a timeout after Kore

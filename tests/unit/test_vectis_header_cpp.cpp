@@ -1,11 +1,18 @@
 #include <cstring>
 
 #include <vectis/auth.h>
+#include <vectis/buffer.h>
+#include <vectis/digest.h>
+#include <vectis/gz.h>
+#include <vectis/pg.h>
 #include <vectis/proxy.h>
+#include <vectis/storage.h>
 #include <vectis/supervisor.h>
 #include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
+#include <vectis/zlib.h>
+#include <vectis/zlib_raw.h>
 
 int main() {
   vectis_app_config app_config;

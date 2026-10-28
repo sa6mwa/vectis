@@ -1,37 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ -n "${OSXCROSS_ROOT:-}" ]; then
-  osxcross_root=$OSXCROSS_ROOT
-else
-  osxcross_root=${HOME:?HOME is required when OSXCROSS_ROOT is not set}/.local/cross/osxcross
-fi
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+description=$("$script_dir/cpkt-toolchains.sh" discover arm64-apple-darwin) || exit 1
+grep -Fxq 'status=ready' <<<"$description" || exit 1
+compiler=$(sed -n 's/^cc=//p' <<<"$description")
+linker=$(sed -n 's/^ld=//p' <<<"$description")
+prefix=$(sed -n 's/^prefix=//p' <<<"$description")
+root=$(sed -n 's/^root=//p' <<<"$description")
+bin_dir="$root/bin"
+[ -x "$bin_dir/$prefix-install_name_tool" ] || exit 1
+compgen -G "$root/SDK/MacOSX*.sdk" >/dev/null || exit 1
 
-host=${VECTIS_OSXCROSS_HOST:-${CPKT_OSXCROSS_HOST:-arm64-apple-darwin25}}
-bin_dir="$osxcross_root/bin"
-
-for tool in clang clang++ ar ranlib nm ld otool strip; do
-  if [ ! -x "$bin_dir/$host-$tool" ]; then
-    exit 1
-  fi
-done
-
-if ! compgen -G "$osxcross_root/SDK/MacOSX*.sdk" >/dev/null; then
-  exit 1
-fi
-
-probe_dir=${TMPDIR:-/tmp}
-probe_c=$probe_dir/vectis-osxcross-probe-$$.c
-probe_bin=$probe_dir/vectis-osxcross-probe-$$
-cleanup() {
-  rm -f "$probe_c" "$probe_bin"
-}
-trap cleanup EXIT INT TERM
-
-cat >"$probe_c" <<'EOF'
-int main(void) { return 0; }
-EOF
-
-if ! PATH="$bin_dir:$PATH" "$bin_dir/$host-clang" "-fuse-ld=$bin_dir/$host-ld" "$probe_c" -o "$probe_bin" >/dev/null 2>&1; then
-  exit 1
-fi
+probe_parent=${TMPDIR:-"$script_dir/../build/osxcross-probes"}
+mkdir -p "$probe_parent"
+probe_dir=$(mktemp -d "$probe_parent/vectis-osxcross.XXXXXXXX")
+trap 'rm -rf -- "$probe_dir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+printf '%s\n' 'int main(void) { return 0; }' >"$probe_dir/probe.c"
+PATH="$bin_dir:$PATH" "$compiler" "--ld-path=$linker" \
+  "$probe_dir/probe.c" -o "$probe_dir/probe" >/dev/null 2>&1

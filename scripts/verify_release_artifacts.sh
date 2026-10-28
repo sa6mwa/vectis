@@ -176,16 +176,9 @@ verify_binary_sdk_manifest_target() {
   root=$1
   target_id=$2
   artifact_name=$3
-  manifest="$root/share/c.pkt.systems/manifest.txt"
-
-  [ -f "$manifest" ] ||
-    fail "binary SDK missing c.pkt.systems target manifest" "$artifact_name"
-  manifest_target=$(sed -n 's/^target_id=//p' "$manifest" | sed -n '1p')
-  [ -n "$manifest_target" ] ||
-    fail "binary SDK c.pkt.systems target manifest missing target_id" "$artifact_name"
-  [ "$manifest_target" = "$target_id" ] ||
-    fail "binary SDK c.pkt.systems target manifest mismatch" \
-      "$artifact_name: $manifest_target != $target_id"
+  "$cmake_bin" "-DROOT=$root" "-DTARGET_ID=$target_id" \
+    -P "$repo_root/cmake/verify_bundle_manifests.cmake" ||
+    fail "binary SDK independent bundle manifest mismatch" "$artifact_name"
 }
 
 verify_linux_elf_header_target() {
@@ -278,7 +271,7 @@ verify_linux_tree_elf_targets() {
     if header=$("$readelf_bin" -h "$file" 2>/dev/null); then
       verify_linux_elf_header_target "$file" "$target_id" "$header"
     fi
-  done < <(find "$root/bin" "$root/lib" -type f -print)
+  done < <(find "$root/bin" "$root/lib" "$root/deps" -type f -print)
 }
 
 verify_linux_sdk_consumer_build() {
@@ -302,7 +295,7 @@ verify_linux_sdk_consumer_build() {
   "$cmake_bin" --build "$build_dir"
   if [ "$target_id" = x86_64-linux-gnu ] &&
      [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
-    python3 "$script_dir/test_runtime_contract.py" --sdk "$build_dir"
+    "$cmake_bin" -DBUILD="$build_dir" -DSDK=ON -P "$script_dir/test_runtime_contract.cmake"
   fi
 }
 

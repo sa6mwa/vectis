@@ -3495,8 +3495,9 @@ static int vectis_auth_browser_session_secret_update(
   }
   vectis_auth_hex_encode(secret, sizeof(secret), record.secret);
   OPENSSL_cleanse(secret, sizeof(secret));
-  rc = update->lease->save(
-      update->lease, &vectis_auth_browser_session_secret_map, &record, error);
+  rc = update->lease->save(update->lease,
+                           &vectis_auth_browser_session_secret_map, &record,
+                           NULL, error);
   if (rc != LC_OK) {
     return rc;
   }
@@ -4181,7 +4182,7 @@ vectis_status vectis_auth_browser_session_issue(
   status = vectis_lockd_state_save_in_namespace(
       client, vectis_auth_browser_session_namespace(config), key,
       "vectis-auth-browser-session", 30L,
-      &vectis_auth_browser_session_record_map, &record, error);
+      &vectis_auth_browser_session_record_map, &record, NULL, error);
   if (status != VECTIS_OK) {
     return status;
   }

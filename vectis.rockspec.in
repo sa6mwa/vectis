@@ -12,6 +12,10 @@ description = {
 Vectis Lua helpers for applications that run the Vectis facade surface from a
 Lua 5.5 environment. Native dependency modules remain dependency-owned and must
 be provided by the embedding Vectis binary or separately installed facades.
+LQL requires the Vectis-adapted native lql.core contract documented in the manual;
+the stock liblql 0.3.0 binding does not provide the local ownership/OOM repairs.
+Stateful manual outbox renewal requires liblockdc 0.23.0 or later. Managed
+PostgreSQL XA also requires the matching linked provider and Vectis native core.
   ]],
   homepage = "https://github.com/sa6mwa/vectis",
   license = "MIT",
@@ -32,6 +36,8 @@ build = {
     ["vectis.kore"] = "lua/vectis/kore.lua",
     ["vectis.supervisor"] = "lua/vectis/supervisor.lua",
     ["vectis.workflow"] = "lua/vectis/workflow.lua",
+    ["vectis.storage"] = "lua/vectis/storage.lua",
+    ["vectis.pg"] = "lua/vectis/pg.lua",
     ["vectis.lockd"] = "lua/vectis/lockd.lua",
     ["vectis.log"] = "lua/vectis/log.lua",
     ["vectis.mqtt"] = "lua/vectis/mqtt.lua",
@@ -42,5 +48,7 @@ build = {
     ["vectis.version"] = "lua/vectis/version.lua",
     ["vectis.webdav"] = "lua/vectis/webdav.lua",
     ["vectis.xml"] = "lua/vectis/xml.lua",
+    ["vectis.digest"] = "lua/vectis/digest.lua",
+    ["vectis.buffer"] = "lua/vectis/buffer.lua",
   },
 }

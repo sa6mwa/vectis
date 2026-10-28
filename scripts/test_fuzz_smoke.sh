@@ -17,7 +17,7 @@ value() {
 }
 
 afl_showmap=$("$script_dir/cpkt-aflpp.sh" discover | value afl_showmap)
-python3 "$script_dir/test_runtime_contract.py" "$build_dir"
+cmake -DBUILD="$build_dir" -P "$script_dir/test_runtime_contract.cmake"
 json_target="$build_dir/tests/fuzz/vectis_fuzz_json_validate"
 kore_target="$build_dir/tests/fuzz/vectis_fuzz_kore_bridge"
 proxy_framing_target="$build_dir/tests/fuzz/vectis_fuzz_proxy_framing"

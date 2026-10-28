@@ -66,6 +66,11 @@ pslog calls when an application needs complete control over the final log call.
 native managed services inherit automatically. It is a Vectis convenience
 layer over pslog, not a replacement for direct `pslog` configuration.
 
+Typed native FILE outputs and callback-free native observers are accepted.
+Custom Lua output records or Lua failure notifications are rejected with
+`ERR_INVALID`, since managed services can log from native threads. Direct
+`log.new`/`log.from_env` and dependency-native pslog keep their Lua callback APIs.
+
 Configured file sinks stay open while derived app and service loggers use
 them, including after collection of temporary logger objects. WebSocket
 connect, message, and disconnect callback failures emit

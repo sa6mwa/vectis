@@ -6,7 +6,7 @@ local zlib = require("zlib")
 local lql_client = assert(lql.new())
 local capabilities = lql_client:capabilities()
 assert(capabilities.selector_parse == true)
-assert(capabilities.apply_string_spooled == true)
+assert(capabilities.stream_apply_spooled == true)
 assert(lql.path_is_regular_file(arg[0]) == true)
 
 local log_chunks = {}
@@ -17,12 +17,12 @@ local log = assert(pslog.new_json({
   disable_timestamp = true,
   no_color = true,
 })):with("service", "vectis-example")
-log:info("local data pipeline ready", "selector", "$.orders[*]", "fields", 2)
+log:info("local data pipeline ready", "selector", "/orders/*", "fields", 2)
 log:close()
 local log_payload = table.concat(log_chunks)
 assert(log_payload:find('"msg":"local data pipeline ready"', 1, true))
 assert(log_payload:find('"service":"vectis-example"', 1, true))
-assert(log_payload:find('"selector":"$.orders[*]"', 1, true))
+assert(log_payload:find('"selector":"/orders/*"', 1, true))
 
 local editor = assert(softline.new({ line_max_len = 64 }))
 assert(editor:set_buffer("vectis"))
@@ -33,8 +33,8 @@ assert(editor:insert(" local"))
 assert(editor:buffer() == "vectis local orders")
 editor:close()
 
-local compressed = assert(zlib.gzip("order report\n"))
-assert(assert(zlib.decompress(compressed)) == "order report\n")
+local compressed = assert(zlib.gzip_materialized("order report\n"))
+assert(assert(zlib.decompress_materialized(compressed)) == "order report\n")
 local zlib_input_path = os.tmpname()
 local zlib_gzip_path = os.tmpname()
 local zlib_output_path = os.tmpname()

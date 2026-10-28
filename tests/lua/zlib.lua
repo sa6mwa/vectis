@@ -23,11 +23,11 @@ local function run()
       assert(read(input) == original and read(alias) == original)
     end
   end
-  local empty = assert(zlib.gzip(""))
-  assert(zlib.gunzip(empty, {max_output_bytes = 0}) == "")
-  for _, decode in ipairs({zlib.gunzip, zlib.decompress}) do
+  local empty = assert(zlib.gzip_materialized(""))
+  assert(zlib.gunzip_materialized(empty, {max_output_bytes = 0}) == "")
+  for _, decode in ipairs({zlib.gunzip_materialized, zlib.decompress_materialized}) do
     local first, second = "first", ("second"):rep(1000)
-    local members = assert(zlib.gzip(first)) .. empty .. assert(zlib.gzip(second)) .. empty
+    local members = assert(zlib.gzip_materialized(first)) .. empty .. assert(zlib.gzip_materialized(second)) .. empty
     assert(decode(members, {max_output_bytes = #first + #second}) == first .. second)
     local value, err = decode(members, {max_output_bytes = #first + #second - 1})
     assert(value == nil and err.status == vectis.ERR_INVALID)
@@ -39,9 +39,9 @@ local function run()
   -- Stored blocks allow exact placement of member endings around input chunks.
   for _, first_size in ipairs({3, 32745, 32746, 32747, 65536}) do
     local first, second = ("a"):rep(first_size), ("b"):rep(70000)
-    local packed_first = assert(zlib.gzip(first, {level = 0}))
+    local packed_first = assert(zlib.gzip_materialized(first, {level = 0}))
     if first_size == 32745 then assert(#packed_first == 32768) end
-    local members = packed_first .. empty .. assert(zlib.gzip(second, {level = 0})) .. empty
+    local members = packed_first .. empty .. assert(zlib.gzip_materialized(second, {level = 0})) .. empty
     write(input, members)
     for _, decode in ipairs({zlib.gunzip_file, zlib.decompress_file}) do
       local result = assert(decode({input_path = input, output_path = output,
@@ -64,7 +64,7 @@ local function run()
   write(input, "short")
   write(output, ("stale"):rep(100))
   assert(zlib.gzip_file({input_path = input, output_path = output}).ok)
-  assert(zlib.gunzip(read(output)) == "short")
+  assert(zlib.gunzip_materialized(read(output)) == "short")
   print("zlib regression passed")
 end
 local ok, err = xpcall(run, function(err)

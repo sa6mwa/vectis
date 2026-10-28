@@ -75,8 +75,7 @@ if(NOT mqtt_result EQUAL 0)
   message(FATAL_ERROR "vectis MQTT Lua smoke failed: ${mqtt_stdout}${mqtt_stderr}")
 endif()
 
-execute_process(COMMAND "${PYTHON}" -B "${SOURCE_DIR}/tests/mqtt_publish.py"
-                        "${VECTIS_BIN}" "${WORK_DIR}"
+execute_process(COMMAND "${MQTT_WIRE}" "${VECTIS_BIN}" "${SOURCE_DIR}/tests/lua/mqtt_wire.lua"
                 RESULT_VARIABLE wire_result
                 OUTPUT_VARIABLE wire_stdout ERROR_VARIABLE wire_stderr)
 if(NOT wire_result EQUAL 0)
