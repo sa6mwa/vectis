@@ -188,3 +188,9 @@ LQL 0.4.0: released upstream facade unchanged; explicit/scoped handle close and
 paired file-reader cleanup are covered by `vectis_lua_lql_upgrade` and callback
 allocation faults by `vectis_unit_lql_lua_oom`. See `liblql-0.4.0-upgrade.md`
 for current verification status. No local provider extensions are introduced.
+
+Musl stack follow-up: `docs/musl-stack-review.md` records removal of oversized
+owned native/Lua stack workspaces and recursive filesystem stack growth. The
+native/Lua worker and allocation-failure tests pass on default musl pthread
+stacks for all three supported musl architectures. This is separate from the
+earlier main-thread and LQL-only worker evidence; no upstream facade is patched.

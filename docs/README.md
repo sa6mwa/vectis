@@ -22,6 +22,7 @@ an option is available or a release is approved.
 | [Service runtime lifecycle](service-runtime-lifecycle-spec.md) | Implemented topology, fork safety, delayed materialization and shutdown; concrete remaining worker extensions. |
 | [Supervisor/workflow specification](supervisor-workflow-spec.md) | Implemented serial scopes, channels and receipt dispatch; separately listed stronger remaining contracts. |
 | [Lua coverage](lua-coverage-matrix.md) | Supported native/convenience surfaces, behavior evidence and deliberate exclusions. |
+| [Musl worker-stack review](musl-stack-review.md) | Compiler frame inspection, owned workspaces and default pthread-stack regression. |
 | [LQL 0.4.0 upgrade](liblql-0.4.0-upgrade.md) | Released facade, cleanup contracts and integration verification. |
 | [Upstream Lua facade boundary](upstream-lua-facades.md) | Unmodified pslog/LQL/MDF, archived handoffs, preserved Vectis convenience APIs and exact upstream failure-contract gaps. |
 | [Useful dependency Lua specification](useful-dependency-lua-spec.md) | Reviewed scope for dependencies without upstream Lua; [review findings](useful-dependency-lua-review.md) and [implementation progress](useful-dependency-lua-progress.md). |

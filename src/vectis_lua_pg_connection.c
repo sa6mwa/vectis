@@ -397,9 +397,19 @@ static int pg_lua_readiness(lua_State *L) {
   lua_setfield(L, -2, "write");
   return 1;
 }
+static vectis_pg_parameter *pg_lua_parameter_scratch(lua_State *L, int index) {
+  size_t count;
+  luaL_checktype(L, index, LUA_TTABLE);
+  count = lua_rawlen(L, index);
+  luaL_argcheck(L, count <= VECTIS_SQL_MAX_PARAMETERS, index,
+                "too many PostgreSQL parameters");
+  /* Allocation may run a finalizer that grows the table before parsing. */
+  return (vectis_pg_parameter *)lua_newuserdatauv(
+      L, VECTIS_SQL_MAX_PARAMETERS * sizeof(vectis_pg_parameter), 0);
+}
 static int pg_lua_query(lua_State *L) {
   pg_lua_owner *parent = (pg_lua_owner *)lua_touserdata(L, 1), *owner;
-  vectis_pg_parameter parameters[VECTIS_SQL_MAX_PARAMETERS];
+  vectis_pg_parameter *parameters;
   vectis_pg_cursor *cursor = NULL;
   vectis_error error;
   vectis_status status;
@@ -410,9 +420,11 @@ static int pg_lua_query(lua_State *L) {
   if (parent->kind == PG_LUA_DB) {
     sql = pg_lua_string(L, 2, &size);
     timeout = pg_lua_query_timeout(L, 4);
+    parameters = pg_lua_parameter_scratch(L, 3);
     count = pg_lua_parameters(L, 3, parameters);
   } else {
     timeout = pg_lua_query_timeout(L, 3);
+    parameters = pg_lua_parameter_scratch(L, 2);
     count = pg_lua_parameters(L, 2, parameters);
     lua_getiuservalue(L, 1, 1);
     parent_index = lua_gettop(L);
@@ -435,12 +447,13 @@ static int pg_lua_query(lua_State *L) {
 }
 static int pg_lua_exec(lua_State *L) {
   pg_lua_owner *owner = pg_lua_check(L, PG_LUA_DB);
-  vectis_pg_parameter parameters[VECTIS_SQL_MAX_PARAMETERS];
+  vectis_pg_parameter *parameters;
   vectis_pg_command command;
   vectis_error error;
   size_t size, count;
   const char *sql = pg_lua_string(L, 2, &size);
   int64_t timeout = pg_lua_query_timeout(L, 4);
+  parameters = pg_lua_parameter_scratch(L, 3);
   count = pg_lua_parameters(L, 3, parameters);
   if (vectis_pg_connection_exec((vectis_pg_connection *)owner->native, sql,
                                 size, parameters, count, timeout, &command,

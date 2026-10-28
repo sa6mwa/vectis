@@ -9,9 +9,10 @@
 /* Model a finalizer running at an allocating userdata boundary. No provider
  * call is active here. Mutations use the real Lua state and real SQL engine. */
 static int mutate_userdata;
+static size_t mutate_size;
 static void *userdata_with_finalizer(lua_State *L, size_t size, int values) {
   void *result = lua_newuserdatauv(L, size, values);
-  if (mutate_userdata) {
+  if (mutate_userdata && (mutate_size == 0u || size == mutate_size)) {
     mutate_userdata = 0;
     lua_getglobal(L, "fixture_mutate");
     lua_call(L, 0, 0);
@@ -63,6 +64,21 @@ static void mutable_arguments(void) {
   mutate_userdata = 1;
   assert(lua_pcall(L, 0, 2, 0) == LUA_OK);
   assert(lua_isnil(L, -2) && lua_istable(L, -1));
+  lua_settop(L, 0);
+  assert(luaL_dostring(
+             L, "db=assert(s.open(':memory:')); params={1}; local fields={}; "
+                "for i=1,256 do fields[i]='?' end; sql='SELECT "
+                "'..table.concat(fields,','); "
+                "fixture_mutate=function() for i=2,256 do params[i]=i end; "
+                "collectgarbage('collect') end; "
+                "return function() local q <close> = "
+                "assert(db:query(sql,params)); return q:next()[256] end") ==
+         LUA_OK);
+  mutate_size = VECTIS_SQL_MAX_PARAMETERS * sizeof(vectis_sql_value);
+  mutate_userdata = 1;
+  assert(lua_pcall(L, 0, 1, 0) == LUA_OK);
+  assert(mutate_userdata == 0 && lua_tointeger(L, -1) == 256);
+  mutate_size = 0u;
   lua_close(L);
 }
 

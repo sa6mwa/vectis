@@ -5,6 +5,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vectis/pg.h>
+/* Model a finalizer mutating parameters at scratch allocation, before parse. */
+static int mutate_parameters;
+static void *pg_userdata_with_finalizer(lua_State *L, size_t size, int values) {
+  void *result = lua_newuserdatauv(L, size, values);
+  if (mutate_parameters &&
+      size == VECTIS_SQL_MAX_PARAMETERS * sizeof(vectis_pg_parameter)) {
+    mutate_parameters = 0;
+    lua_getglobal(L, "fixture_mutate");
+    lua_call(L, 0, 0);
+  }
+  return result;
+}
+#define lua_newuserdatauv pg_userdata_with_finalizer
+#include "../../src/vectis_lua_pg_connection.c"
+#undef lua_newuserdatauv
+
 typedef struct pg_fault {
   size_t remaining;
   int armed, fired;
@@ -79,6 +96,37 @@ int main(int argc, char **argv) {
     if (completed)
       break;
   }
+  L = luaL_newstate();
+  assert(L != NULL);
+  luaL_openlibs(L);
+  luaL_requiref(L, "vectis.pg.connection.core",
+                luaopen_vectis_pg_connection_core, 0);
+  lua_pop(L, 1);
+  lua_newtable(L);
+  lua_newtable(L);
+  option(L, "host", "127.0.0.1");
+  option(L, "port", port);
+  option(L, "user", "vectis");
+  option(L, "dbname", "vectis");
+  option(L, "password", password);
+  option(L, "sslmode", "disable");
+  lua_setfield(L, -2, "parameters");
+  lua_setglobal(L, "PG_TEST_OPTIONS");
+  assert(luaL_dostring(
+             L, "pg=require('vectis.pg.connection.core'); "
+                "db=assert(pg.connect(PG_TEST_OPTIONS)); "
+                "params={1}; local fields={}; for i=1,256 do "
+                "fields[i]='$'..i..'::int' end; "
+                "sql='SELECT '..table.concat(fields,','); "
+                "fixture_mutate=function() for i=2,256 do params[i]=i end; "
+                "collectgarbage('collect') end; "
+                "return function() local q <close> = "
+                "assert(db:query(sql,params)); return q:next()[256] end") ==
+         LUA_OK);
+  mutate_parameters = 1;
+  assert(lua_pcall(L, 0, 1, 0) == LUA_OK);
+  assert(mutate_parameters == 0 && strcmp(lua_tostring(L, -1), "256") == 0);
+  lua_close(L);
   memset(password, 0, sizeof(password));
   assert(failures > 0 && completed);
   printf("PostgreSQL Lua allocation failures: %d; clean execution completed\n",

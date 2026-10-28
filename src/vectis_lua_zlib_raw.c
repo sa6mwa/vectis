@@ -45,6 +45,7 @@ typedef struct raw_owner {
   int back_advanced;
   allocator_context *allocator;
   int allocator_attached;
+  unsigned char scratch[VECTIS_ZLIB_CHUNK_BYTES];
 } raw_owner;
 
 static int integer(lua_State *L, int index) {
@@ -1101,7 +1102,7 @@ static int process_driver(lua_State *L) {
   raw_owner *owner = userdata(L, 1);
   const char *input = NULL;
   size_t size = 0, capacity = (size_t)lua_tointeger(L, 3);
-  unsigned char output[VECTIS_ZLIB_CHUNK_BYTES];
+  unsigned char *output = owner->scratch;
   vectis_zlib_raw_step step;
   vectis_error error;
   if (!lua_isnil(L, 2))
@@ -1453,7 +1454,7 @@ static int control_driver(lua_State *L) {
   int op = (int)lua_tointeger(L, lua_upvalueindex(1)), code = Z_STREAM_ERROR;
   raw_owner *owner = userdata(L, 1);
   z_streamp stream = native(L, owner);
-  unsigned char dictionary[32768];
+  unsigned char *dictionary = owner->scratch;
   uInt length = 0;
   unsigned pending = 0;
   int bits = 0;

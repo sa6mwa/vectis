@@ -214,35 +214,78 @@ char *vectis_persistence_default_pouch_key_file(void) {
   return vectis_acme_state_strdup(path);
 }
 
-static int vectis_acme_state_remove_tree(const char *path) {
+typedef struct vectis_acme_remove_scan {
+  struct vectis_acme_remove_scan *parent;
   DIR *directory;
+  const char *path;
+  char child[4096];
+} vectis_acme_remove_scan;
+
+static vectis_acme_remove_scan *vectis_acme_remove_scan_new(const char *path) {
+  DIR *directory;
+  vectis_acme_remove_scan *scan;
+  directory = opendir(path);
+  if (directory == NULL)
+    return NULL;
+  scan = (vectis_acme_remove_scan *)malloc(sizeof(*scan));
+  if (scan == NULL) {
+    (void)closedir(directory);
+    return NULL;
+  }
+  scan->parent = NULL;
+  scan->directory = directory;
+  scan->path = path;
+  return scan;
+}
+
+static int vectis_acme_state_remove_tree(const char *path) {
+  vectis_acme_remove_scan *scan, *child, *parent;
   struct dirent *entry;
   struct stat st;
-  char child[4096];
-  int written;
-
-  if (path == NULL || lstat(path, &st) != 0) {
+  int written, ok;
+  if (path == NULL || lstat(path, &st) != 0)
     return path != NULL && errno == ENOENT;
-  }
-  if (!S_ISDIR(st.st_mode)) {
+  if (!S_ISDIR(st.st_mode))
     return unlink(path) == 0;
-  }
-  directory = opendir(path);
-  if (directory == NULL) {
+  scan = vectis_acme_remove_scan_new(path);
+  if (scan == NULL)
     return 0;
-  }
-  while ((entry = readdir(directory)) != NULL) {
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+  while (scan != NULL) {
+    entry = readdir(scan->directory);
+    if (entry == NULL) {
+      parent = scan->parent;
+      ok = closedir(scan->directory) == 0 && rmdir(scan->path) == 0;
+      free(scan);
+      scan = parent;
+      if (!ok)
+        goto failed;
       continue;
     }
-    written = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
-    if (written <= 0 || (size_t)written >= sizeof(child) ||
-        !vectis_acme_state_remove_tree(child)) {
-      (void)closedir(directory);
-      return 0;
-    }
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
+    written = snprintf(scan->child, sizeof(scan->child), "%s/%s", scan->path,
+                       entry->d_name);
+    if (written <= 0 || (size_t)written >= sizeof(scan->child) ||
+        lstat(scan->child, &st) != 0)
+      goto failed;
+    if (S_ISDIR(st.st_mode)) {
+      child = vectis_acme_remove_scan_new(scan->child);
+      if (child == NULL)
+        goto failed;
+      child->parent = scan;
+      scan = child;
+    } else if (unlink(scan->child) != 0)
+      goto failed;
   }
-  return closedir(directory) == 0 && rmdir(path) == 0;
+  return 1;
+failed:
+  while (scan != NULL) {
+    parent = scan->parent;
+    (void)closedir(scan->directory);
+    free(scan);
+    scan = parent;
+  }
+  return 0;
 }
 
 int vectis_acme_state_runtime_dir_remove(const char *path) {

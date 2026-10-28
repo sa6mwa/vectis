@@ -1140,13 +1140,18 @@ static vectis_status vectis_embedded_write_file_at(
   }
 }
 
-static vectis_status vectis_embedded_file_matches_entry_at(
+typedef struct vectis_embedded_file_matches_entry_at_scratch {
+  unsigned char buffer[64u * 1024u];
+} vectis_embedded_file_matches_entry_at_scratch;
+
+static vectis_status vectis_embedded_file_matches_entry_at_with_scratch(
     int parent_fd, const char *leaf, const char *asset_path,
     const vectis_embedded_fs_impl_entry *entry, int *matches,
-    vectis_error *error) {
+    vectis_error *error,
+    vectis_embedded_file_matches_entry_at_scratch *scratch) {
   EVP_MD_CTX *ctx;
   struct stat st;
-  unsigned char buffer[64u * 1024u];
+
   unsigned char digest[SHA256_DIGEST_LENGTH];
   unsigned int digest_size;
   ssize_t nread;
@@ -1193,8 +1198,9 @@ static vectis_status vectis_embedded_file_matches_entry_at(
   }
   nread = 0;
   failed = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1;
-  while (!failed && (nread = read(fd, buffer, sizeof(buffer))) > 0) {
-    if (EVP_DigestUpdate(ctx, buffer, (size_t)nread) != 1) {
+  while (!failed &&
+         (nread = read(fd, scratch->buffer, sizeof(scratch->buffer))) > 0) {
+    if (EVP_DigestUpdate(ctx, scratch->buffer, (size_t)nread) != 1) {
       failed = 1;
     }
   }
@@ -1220,6 +1226,27 @@ static vectis_status vectis_embedded_file_matches_entry_at(
       (st.st_mode & 0777u) == vectis_embedded_extract_mode(entry->mode) &&
       vectis_embedded_sha256_hex_matches(digest, entry->sha256);
   return VECTIS_OK;
+}
+
+static vectis_status vectis_embedded_file_matches_entry_at(
+    int parent_fd, const char *leaf, const char *asset_path,
+    const vectis_embedded_fs_impl_entry *entry, int *matches,
+    vectis_error *error) {
+  vectis_embedded_file_matches_entry_at_scratch *scratch;
+  vectis_status result;
+  scratch =
+      (vectis_embedded_file_matches_entry_at_scratch *)malloc(sizeof(*scratch));
+  if (scratch == NULL) {
+    if (matches != NULL)
+      *matches = 0;
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "allocating embedded asset verifier buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  result = vectis_embedded_file_matches_entry_at_with_scratch(
+      parent_fd, leaf, asset_path, entry, matches, error, scratch);
+  free(scratch);
+  return result;
 }
 
 static vectis_status

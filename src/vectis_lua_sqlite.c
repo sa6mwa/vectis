@@ -244,12 +244,22 @@ static int blob(lua_State *L) {
   lua_setiuservalue(L, -2, 1);
   return 1;
 }
+static vectis_sql_value *parameter_scratch(lua_State *L, int index) {
+  size_t count;
+  luaL_checktype(L, index, LUA_TTABLE);
+  count = lua_rawlen(L, index);
+  luaL_argcheck(L, count <= VECTIS_SQL_MAX_PARAMETERS, index,
+                "too many SQL parameters");
+  /* Allocation may run a finalizer that grows the table before parsing. */
+  return (vectis_sql_value *)lua_newuserdatauv(
+      L, VECTIS_SQL_MAX_PARAMETERS * sizeof(vectis_sql_value), 0);
+}
 static int prepare(lua_State *L) {
   lua_database *db = database(L);
   lua_statement *owner;
-  vectis_sql_value values[VECTIS_SQL_MAX_PARAMETERS];
+  vectis_sql_value *values = NULL;
   vectis_error error;
-  int cursor = lua_toboolean(L, lua_upvalueindex(1));
+  int cursor = lua_toboolean(L, lua_upvalueindex(1)), result;
   size_t size, count = 0u;
   const char *sql = checked_string(L, 2, &size);
   owner = (lua_statement *)lua_newuserdatauv(L, sizeof(*owner), 1);
@@ -258,8 +268,11 @@ static int prepare(lua_State *L) {
   luaL_setmetatable(L, STMT);
   lua_pushvalue(L, 1);
   lua_setiuservalue(L, -2, 1);
-  if (cursor)
+  result = lua_gettop(L);
+  if (cursor) {
+    values = parameter_scratch(L, 3);
     count = parameters(L, 3, values);
+  }
   if (vectis_sqlite_prepare(db->native, sql, size, cursor, &owner->native,
                             &error) != VECTIS_OK)
     return push_error(L, &error, "prepare");
@@ -269,13 +282,16 @@ static int prepare(lua_State *L) {
     owner->native = NULL;
     return push_error(L, &error, "bind");
   }
+  lua_pushvalue(L, result);
   return 1;
 }
 static int bind_values(lua_State *L) {
   lua_statement *owner = statement(L);
-  vectis_sql_value values[VECTIS_SQL_MAX_PARAMETERS];
+  vectis_sql_value *values = NULL;
   vectis_error error;
-  size_t count = parameters(L, 2, values);
+  size_t count;
+  values = parameter_scratch(L, 2);
+  count = parameters(L, 2, values);
   if (vectis_sqlite_bind(owner->native, values, count, &error) != VECTIS_OK)
     return push_error(L, &error, "bind");
   lua_settop(L, 1);
@@ -343,11 +359,12 @@ static int reset(lua_State *L) {
 }
 static int exec(lua_State *L) {
   lua_database *owner = database(L);
-  vectis_sql_value values[VECTIS_SQL_MAX_PARAMETERS];
+  vectis_sql_value *values = NULL;
   vectis_sqlite_exec_result result;
   vectis_error error;
   size_t size, count;
   const char *sql = checked_string(L, 2, &size);
+  values = parameter_scratch(L, 3);
   count = parameters(L, 3, values);
   if (vectis_sqlite_exec(owner->native, sql, size, values, count, &result,
                          &error) != VECTIS_OK)

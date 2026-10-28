@@ -182,15 +182,21 @@ static vectis_status digest_read_all(vectis_digest *receiver,
                                      vectis_digest_reader reader,
                                      void *userdata, vectis_digest_result *out,
                                      vectis_error *error) {
-  unsigned char buffer[VECTIS_DIGEST_CHUNK_BYTES];
+  unsigned char *buffer;
   vectis_status status;
   size_t size;
+  buffer = (unsigned char *)malloc(VECTIS_DIGEST_CHUNK_BYTES);
+  if (buffer == NULL) {
+    receiver->close(receiver);
+    return digest_error(error, VECTIS_ERR_NOMEM,
+                        "allocating digest input buffer");
+  }
   for (;;) {
     size = 0u;
-    status = reader(userdata, buffer, sizeof(buffer), &size, error);
+    status = reader(userdata, buffer, VECTIS_DIGEST_CHUNK_BYTES, &size, error);
     if (status != VECTIS_OK)
       break;
-    if (size > sizeof(buffer)) {
+    if (size > VECTIS_DIGEST_CHUNK_BYTES) {
       status = digest_error(error, VECTIS_ERR_INVALID,
                             "digest reader exceeded capacity");
       break;
@@ -203,6 +209,7 @@ static vectis_status digest_read_all(vectis_digest *receiver,
     if (status != VECTIS_OK)
       break;
   }
+  free(buffer);
   receiver->close(receiver);
   return status;
 }

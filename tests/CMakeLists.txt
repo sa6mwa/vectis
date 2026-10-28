@@ -1193,6 +1193,7 @@ if(VECTIS_BUILD_BINARY)
     vectis_audio_lua_validation)
   foreach(helper vectis_unit_fork_exit vectis_lua_http_behavior vectis_bench_fixture
       vectis_unit_lql_worker vectis_unit_lql_lua_oom
+      vectis_unit_stack_worker vectis_unit_webdav_stack_alloc
       vectis_unit_sqlite vectis_unit_sqlite_failures vectis_unit_sqlite_lua_oom
       vectis_unit_pdf vectis_unit_pdf_lua_oom vectis_unit_png vectis_unit_png_lua_oom
       vectis_unit_compression vectis_unit_compression_lua_oom

@@ -134,13 +134,15 @@ static int resource_size(lua_State *L) {
   return 1;
 }
 static int read_bytes(lua_State *L) {
-  buffer_owner *owner = check_owner(L);
+  buffer_owner *owner;
   size_t offset = size_arg(L, 2), size = size_arg(L, 3);
-  unsigned char bytes[VECTIS_BUFFER_CHUNK_BYTES];
+  unsigned char *bytes;
   vectis_error error;
   vectis_status status;
-  if (size > sizeof(bytes))
+  if (size > VECTIS_BUFFER_CHUNK_BYTES)
     return luaL_error(L, "byte copy exceeds 65536 bytes");
+  bytes = (unsigned char *)lua_newuserdatauv(L, size, 0);
+  owner = check_owner(L);
   status =
       owner->buffer
           ? vectis_buffer_read(owner->buffer, offset, bytes, size, &error)

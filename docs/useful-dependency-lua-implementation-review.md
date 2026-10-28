@@ -1,10 +1,12 @@
 # Useful dependency facade implementation review
 
-Working candidate: specification `9fb3265`, preserved prerequisite `cf0d818`,
-and the useful facade changes in the commit containing this review. The original
+Verified feature candidate: `1068b39`, specification `9fb3265`, and preserved
+prerequisite `cf0d818`. The original
 264 dirty paths were classified and committed separately without replacing their
 bytes with the later feature changes. This is implementation evidence, not a
-release approval. Current final verification is recorded below.
+release approval. The 279-test/platform/package results below apply to that
+feature candidate; the subsequent stack repair has its own scoped evidence in
+`musl-stack-review.md`.
 The user subsequently authorized LQL 0.4.0; its released facade remains unchanged.
 Other upstream Lua facades are unchanged; SSH/LZO remain deferred. The LQL
 upgrade review is in `liblql-0.4.0-upgrade.md`.
@@ -195,3 +197,9 @@ Final review: no unresolved Vectis implementation defect was found in the agreed
 surface. Archive/LZO and SSH are deliberate deferrals; the remaining LQL callback
 limit is an upstream contract limitation. No push, release, ABI change or local
 upstream facade patch is part of this completion.
+
+## Subsequent stack-budget review
+
+The user requested a full musl worker-stack review after this completion.
+[The follow-up review](musl-stack-review.md) supersedes any inference that these
+main-thread and LQL-specific checks proved every libvectis/Lua stack budget.

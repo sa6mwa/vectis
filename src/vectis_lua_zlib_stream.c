@@ -10,6 +10,7 @@ typedef struct lua_zlib_owner {
   vectis_zlib_options options;
   int busy;
   int cancelled;
+  unsigned char output[VECTIS_ZLIB_CHUNK_BYTES];
 } lua_zlib_owner;
 
 static void owner_release(lua_zlib_owner *owner) {
@@ -167,7 +168,7 @@ static int stream_driver(lua_State *lua) {
   lua_zlib_owner *owner;
   vectis_error error;
   vectis_zlib_result result;
-  unsigned char output[VECTIS_ZLIB_CHUNK_BYTES];
+  unsigned char *output;
   const char *input;
   size_t size;
   size_t offset;
@@ -178,6 +179,7 @@ static int stream_driver(lua_State *lua) {
   vectis_zlib_flush flush;
   vectis_status status;
   owner = (lua_zlib_owner *)luaL_checkudata(lua, 1, ZLIB_OWNER);
+  output = owner->output;
   sync_flush = lua_toboolean(lua, 4);
   status = vectis_zlib_new(&owner->options, &owner->receiver, &error);
   if (status != VECTIS_OK)
@@ -210,7 +212,7 @@ static int stream_driver(lua_State *lua) {
     for (;;) {
       status = vectis_zlib_process(
           owner->receiver, input == NULL ? NULL : input + offset, size - offset,
-          &consumed, output, sizeof(output), &produced, flush, &error);
+          &consumed, output, VECTIS_ZLIB_CHUNK_BYTES, &produced, flush, &error);
       if (status != VECTIS_OK)
         return stream_error(lua, status, error.message);
       offset += consumed;
@@ -234,7 +236,7 @@ static int stream_driver(lua_State *lua) {
         push_result(lua, &result);
         return 1;
       }
-      if (!eof && offset == size && produced < sizeof(output))
+      if (!eof && offset == size && produced < VECTIS_ZLIB_CHUNK_BYTES)
         break;
     }
   }
@@ -275,12 +277,13 @@ static int step_driver(lua_State *lua) {
   size_t size;
   size_t consumed;
   size_t produced;
-  unsigned char output[VECTIS_ZLIB_CHUNK_BYTES];
+  unsigned char *output;
   vectis_zlib_flush flush;
   vectis_zlib_result result;
   vectis_error error;
   vectis_status status;
   owner = (lua_zlib_owner *)luaL_checkudata(lua, 1, ZLIB_OWNER);
+  output = owner->output;
   (void)owner_check_live(lua, owner);
   luaL_checktype(lua, 2, LUA_TSTRING);
   input = lua_tolstring(lua, 2, &size);
@@ -292,8 +295,9 @@ static int step_driver(lua_State *lua) {
     flush = VECTIS_ZLIB_FINISH;
   else if (strcmp(flush_name, "none") != 0)
     return luaL_error(lua, "zlib flush must be none, sync or finish");
-  status = vectis_zlib_process(owner->receiver, input, size, &consumed, output,
-                               sizeof(output), &produced, flush, &error);
+  status =
+      vectis_zlib_process(owner->receiver, input, size, &consumed, output,
+                          VECTIS_ZLIB_CHUNK_BYTES, &produced, flush, &error);
   if (status != VECTIS_OK) {
     owner->cancelled = 1;
     return stream_error(lua, status, error.message);

@@ -67,6 +67,12 @@ add_test(NAME vectis_unit_lql_worker COMMAND vectis_unit_lql_worker)
 add_test(NAME vectis_unit_lql_worker_small COMMAND vectis_unit_lql_worker small)
 set_tests_properties(vectis_unit_lql_worker vectis_unit_lql_worker_small PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 5 RUN_SERIAL TRUE)
 
+add_executable(vectis_unit_webdav_stack_alloc test_webdav_stack_alloc.c)
+target_link_libraries(vectis_unit_webdav_stack_alloc PRIVATE ${vectis_test_link_target})
+target_include_directories(vectis_unit_webdav_stack_alloc PRIVATE "${CMAKE_SOURCE_DIR}/src")
+vectis_configure_c89_target(vectis_unit_webdav_stack_alloc)
+add_test(NAME vectis_unit_webdav_stack_alloc COMMAND vectis_unit_webdav_stack_alloc "${CMAKE_CURRENT_BINARY_DIR}/webdav-stack-alloc")
+set_tests_properties(vectis_unit_webdav_stack_alloc PROPERTIES LABELS "unit;local;failure-fast;stack" TIMEOUT 15 RUN_SERIAL TRUE)
 vectis_add_unit_test(vectis_unit_supervisor test_vectis_supervisor.c)
 vectis_add_unit_test(vectis_unit_lua_trace_observer test_lua_trace_observer.c)
 target_link_libraries(vectis_unit_lua_trace_observer PRIVATE cpkt::lua_runtime)
@@ -97,6 +103,24 @@ add_test(NAME vectis_storage_c_behavior COMMAND "${CMAKE_COMMAND}"
   -P "${CMAKE_SOURCE_DIR}/tests/storage.cmake")
 set_tests_properties(vectis_storage_c_behavior PROPERTIES LABELS "unit;local;failure-fast" TIMEOUT 6)
 if(VECTIS_BUILD_BINARY)
+  add_executable(vectis_unit_stack_worker test_vectis_stack_worker.c
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_compression.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_curl.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_buffer.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_zlib_raw.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_zlib_stream.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_gz.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_sqlite.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_pdf.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_png.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_crypto.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_xml_objects.c")
+  target_include_directories(vectis_unit_stack_worker PRIVATE "${CMAKE_SOURCE_DIR}/src")
+  target_link_libraries(vectis_unit_stack_worker PRIVATE ${vectis_test_link_target} cpkt::lua_runtime)
+  vectis_configure_c89_target(vectis_unit_stack_worker)
+  add_test(NAME vectis_unit_stack_worker COMMAND vectis_unit_stack_worker
+    "${CMAKE_SOURCE_DIR}/tests/lua/stack_worker.lua" "${CMAKE_CURRENT_BINARY_DIR}/stack-worker")
+  set_tests_properties(vectis_unit_stack_worker PROPERTIES LABELS "unit;lua;local;failure-fast;stack" TIMEOUT 30 RUN_SERIAL TRUE)
   add_executable(vectis_unit_lql_lua_oom test_lql_lua_oom.c $<TARGET_OBJECTS:vectis_liblql_lua>)
   target_link_libraries(vectis_unit_lql_lua_oom PRIVATE liblql::lql_static cpkt::lua_runtime)
   vectis_configure_c89_target(vectis_unit_lql_lua_oom)
@@ -121,7 +145,7 @@ if(VECTIS_BUILD_BINARY)
   vectis_configure_c89_target(vectis_unit_crypto_lua_oom)
   add_test(NAME vectis_unit_crypto_lua_oom COMMAND vectis_unit_crypto_lua_oom "${CMAKE_SOURCE_DIR}/tests/lua/crypto_oom.lua")
   set_tests_properties(vectis_unit_crypto_lua_oom PROPERTIES LABELS "unit;lua;local;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
-  add_executable(vectis_test_pg_connection_lua_oom test_pg_connection_lua_oom.c "${CMAKE_SOURCE_DIR}/src/vectis_lua_pg_connection.c")
+  add_executable(vectis_test_pg_connection_lua_oom test_pg_connection_lua_oom.c)
   target_include_directories(vectis_test_pg_connection_lua_oom PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/include")
   target_link_libraries(vectis_test_pg_connection_lua_oom PRIVATE ${vectis_test_link_target} cpkt::lua_runtime)
   vectis_configure_c89_target(vectis_test_pg_connection_lua_oom)
@@ -675,3 +699,5 @@ vectis_add_unit_test(vectis_unit_gz test_vectis_gz.c "${CMAKE_SOURCE_DIR}/src/ve
 target_link_libraries(vectis_unit_gz PRIVATE cpkt::lua_runtime)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tests/gz-unit")
 set_tests_properties(vectis_unit_gz PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/tests/gz-unit")
+add_test(NAME vectis_unit_gz_lua_oom COMMAND vectis_unit_gz --oom)
+set_tests_properties(vectis_unit_gz_lua_oom PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/tests/gz-unit" LABELS "unit;lua;local;failure-fast;stack" TIMEOUT 5 RUN_SERIAL TRUE)

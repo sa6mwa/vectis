@@ -7,6 +7,7 @@
 typedef struct gz_owner {
   vectis_gz *g;
   int advanced;
+  unsigned char buffer[VECTIS_GZ_CHUNK_BYTES];
 } gz_owner;
 static const char *const names[] = {
     "read",      "write",   "fread",   "fwrite", "gets",   "puts",  "buffer",
@@ -63,9 +64,10 @@ static int driver(lua_State *L) {
   int64_t after;
   const char *s;
   const char *mode;
-  unsigned char buffer[VECTIS_GZ_CHUNK_BYTES];
+  unsigned char *buffer = NULL;
   op = (int)lua_tointeger(L, lua_upvalueindex(1));
   o = (gz_owner *)luaL_checkudata(L, lua_upvalueindex(2), OWNER);
+  buffer = o->buffer;
   memset(&e, 0, sizeof(e));
   result = 0;
   n = 0;

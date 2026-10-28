@@ -42269,10 +42269,14 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
-                                          const char *local_path,
-                                          const char *remote_path,
-                                          vectis_error *error) {
+typedef struct vectis_ssh_sftp_upload_file_scratch {
+  char buffer[32768];
+} vectis_ssh_sftp_upload_file_scratch;
+
+static vectis_status vectis_ssh_sftp_upload_file_with_scratch(
+    const vectis_ssh_config *config, const char *local_path,
+    const char *remote_path, vectis_error *error,
+    vectis_ssh_sftp_upload_file_scratch *scratch) {
   vectis_ssh_config effective;
   int fd;
   int rc;
@@ -42280,7 +42284,7 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
   LIBSSH2_SESSION *session;
   LIBSSH2_SFTP *sftp;
   LIBSSH2_SFTP_HANDLE *remote;
-  char buffer[32768];
+
   size_t nread;
   char *cursor;
   size_t remaining;
@@ -42399,8 +42403,9 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
     }
     return VECTIS_ERR_STATE;
   }
-  while ((nread = fread(buffer, 1u, sizeof(buffer), local)) > 0u) {
-    cursor = buffer;
+  while ((nread = fread(scratch->buffer, 1u, sizeof(scratch->buffer), local)) >
+         0u) {
+    cursor = scratch->buffer;
     remaining = nread;
     while (remaining > 0u) {
       nwritten = libssh2_sftp_write(remote, cursor, remaining);
@@ -42448,10 +42453,31 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
   return status;
 }
 
-vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
-                                            const char *remote_path,
-                                            const char *local_path,
-                                            vectis_error *error) {
+vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
+                                          const char *local_path,
+                                          const char *remote_path,
+                                          vectis_error *error) {
+  vectis_ssh_sftp_upload_file_scratch *scratch;
+  vectis_status result;
+  scratch = (vectis_ssh_sftp_upload_file_scratch *)malloc(sizeof(*scratch));
+  if (scratch == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "allocating SSH transfer buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  result = vectis_ssh_sftp_upload_file_with_scratch(
+      config, local_path, remote_path, error, scratch);
+  free(scratch);
+  return result;
+}
+
+typedef struct vectis_ssh_sftp_download_file_scratch {
+  char buffer[32768];
+} vectis_ssh_sftp_download_file_scratch;
+
+static vectis_status vectis_ssh_sftp_download_file_with_scratch(
+    const vectis_ssh_config *config, const char *remote_path,
+    const char *local_path, vectis_error *error,
+    vectis_ssh_sftp_download_file_scratch *scratch) {
   vectis_ssh_config effective;
   int fd;
   int rc;
@@ -42459,7 +42485,7 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
   LIBSSH2_SESSION *session;
   LIBSSH2_SFTP *sftp;
   LIBSSH2_SFTP_HANDLE *remote;
-  char buffer[32768];
+
   ssize_t nread;
   vectis_status status;
 
@@ -42574,15 +42600,15 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
     return VECTIS_ERR_STATE;
   }
   status = VECTIS_OK;
-  nread = libssh2_sftp_read(remote, buffer, sizeof(buffer));
+  nread = libssh2_sftp_read(remote, scratch->buffer, sizeof(scratch->buffer));
   while (nread > 0) {
-    if (fwrite(buffer, 1u, (size_t)nread, local) != (size_t)nread) {
+    if (fwrite(scratch->buffer, 1u, (size_t)nread, local) != (size_t)nread) {
       status = VECTIS_ERR_STATE;
       vectis_set_error(error, VECTIS_ERR_STATE,
                        "failed to write local SFTP download file");
       break;
     }
-    nread = libssh2_sftp_read(remote, buffer, sizeof(buffer));
+    nread = libssh2_sftp_read(remote, scratch->buffer, sizeof(scratch->buffer));
   }
   if (status == VECTIS_OK && nread < 0) {
     status = VECTIS_ERR_STATE;
@@ -42607,6 +42633,23 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
     vectis_error_clear(error);
   }
   return status;
+}
+
+vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
+                                            const char *remote_path,
+                                            const char *local_path,
+                                            vectis_error *error) {
+  vectis_ssh_sftp_download_file_scratch *scratch;
+  vectis_status result;
+  scratch = (vectis_ssh_sftp_download_file_scratch *)malloc(sizeof(*scratch));
+  if (scratch == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "allocating SSH transfer buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  result = vectis_ssh_sftp_download_file_with_scratch(
+      config, remote_path, local_path, error, scratch);
+  free(scratch);
+  return result;
 }
 
 static void vectis_ssh_session_close(LIBSSH2_SESSION *session, int fd) {
@@ -43816,16 +43859,20 @@ void vectis_ssh_sftp_dir_close(vectis_ssh_sftp_dir *dir) {
   free(dir);
 }
 
-vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
-                                         const char *local_path,
-                                         const char *remote_path,
-                                         vectis_error *error) {
+typedef struct vectis_ssh_scp_upload_file_scratch {
+  char buffer[32768];
+} vectis_ssh_scp_upload_file_scratch;
+
+static vectis_status vectis_ssh_scp_upload_file_with_scratch(
+    const vectis_ssh_config *config, const char *local_path,
+    const char *remote_path, vectis_error *error,
+    vectis_ssh_scp_upload_file_scratch *scratch) {
   vectis_ssh_config effective;
   LIBSSH2_SESSION *session;
   LIBSSH2_CHANNEL *channel;
   struct stat st;
   FILE *local;
-  char buffer[32768];
+
   char *cursor;
   size_t nread;
   size_t remaining;
@@ -43883,8 +43930,9 @@ vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
     return VECTIS_ERR_STATE;
   }
   status = VECTIS_OK;
-  while ((nread = fread(buffer, 1u, sizeof(buffer), local)) > 0u) {
-    cursor = buffer;
+  while ((nread = fread(scratch->buffer, 1u, sizeof(scratch->buffer), local)) >
+         0u) {
+    cursor = scratch->buffer;
     remaining = nread;
     while (remaining > 0u) {
       nwritten = libssh2_channel_write(channel, cursor, remaining);
@@ -43953,16 +44001,37 @@ vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
   return status;
 }
 
-vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
-                                           const char *remote_path,
-                                           const char *local_path,
-                                           vectis_error *error) {
+vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
+                                         const char *local_path,
+                                         const char *remote_path,
+                                         vectis_error *error) {
+  vectis_ssh_scp_upload_file_scratch *scratch;
+  vectis_status result;
+  scratch = (vectis_ssh_scp_upload_file_scratch *)malloc(sizeof(*scratch));
+  if (scratch == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "allocating SSH transfer buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  result = vectis_ssh_scp_upload_file_with_scratch(config, local_path,
+                                                   remote_path, error, scratch);
+  free(scratch);
+  return result;
+}
+
+typedef struct vectis_ssh_scp_download_file_scratch {
+  char buffer[32768];
+} vectis_ssh_scp_download_file_scratch;
+
+static vectis_status vectis_ssh_scp_download_file_with_scratch(
+    const vectis_ssh_config *config, const char *remote_path,
+    const char *local_path, vectis_error *error,
+    vectis_ssh_scp_download_file_scratch *scratch) {
   vectis_ssh_config effective;
   LIBSSH2_SESSION *session;
   LIBSSH2_CHANNEL *channel;
   libssh2_struct_stat st;
   FILE *local;
-  char buffer[32768];
+
   libssh2_struct_stat_size remaining;
   size_t want;
   ssize_t nread;
@@ -44015,10 +44084,10 @@ vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
   status = VECTIS_OK;
   remaining = st.st_size;
   while (remaining > 0) {
-    want = remaining > (libssh2_struct_stat_size)sizeof(buffer)
-               ? sizeof(buffer)
+    want = remaining > (libssh2_struct_stat_size)sizeof(scratch->buffer)
+               ? sizeof(scratch->buffer)
                : (size_t)remaining;
-    nread = libssh2_channel_read(channel, buffer, want);
+    nread = libssh2_channel_read(channel, scratch->buffer, want);
     if (nread < 0) {
       status = VECTIS_ERR_STATE;
       vectis_set_error(error, VECTIS_ERR_STATE,
@@ -44035,7 +44104,7 @@ vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
                        "remote SCP file ended before expected size");
       break;
     }
-    if (fwrite(buffer, 1u, (size_t)nread, local) != (size_t)nread) {
+    if (fwrite(scratch->buffer, 1u, (size_t)nread, local) != (size_t)nread) {
       status = VECTIS_ERR_STATE;
       vectis_set_error(error, VECTIS_ERR_STATE,
                        "failed to write local SCP download file");
@@ -44057,6 +44126,23 @@ vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
     vectis_error_clear(error);
   }
   return status;
+}
+
+vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
+                                           const char *remote_path,
+                                           const char *local_path,
+                                           vectis_error *error) {
+  vectis_ssh_scp_download_file_scratch *scratch;
+  vectis_status result;
+  scratch = (vectis_ssh_scp_download_file_scratch *)malloc(sizeof(*scratch));
+  if (scratch == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "allocating SSH transfer buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  result = vectis_ssh_scp_download_file_with_scratch(
+      config, remote_path, local_path, error, scratch);
+  free(scratch);
+  return result;
 }
 
 void vectis_mqtt_config_init(vectis_mqtt_config *config) {

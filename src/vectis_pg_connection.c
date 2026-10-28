@@ -13,8 +13,15 @@
 typedef struct pg_connection_state pg_connection_state;
 typedef struct pg_cursor_state pg_cursor_state;
 typedef struct pg_statement_state pg_statement_state;
+typedef struct pg_parameter_scratch {
+  char *copies[VECTIS_SQL_MAX_PARAMETERS];
+  const char *values[VECTIS_SQL_MAX_PARAMETERS];
+  cpkt_postgres_oid types[VECTIS_SQL_MAX_PARAMETERS];
+  int lengths[VECTIS_SQL_MAX_PARAMETERS], formats[VECTIS_SQL_MAX_PARAMETERS];
+} pg_parameter_scratch;
 struct pg_connection_state {
   vectis_pg_connection receiver;
+  pg_parameter_scratch parameters;
   cpkt_postgres_connection *native;
   pg_cursor_state *cursor;
   const char *keywords[130], *values[130];
@@ -933,10 +940,8 @@ pg_send(pg_connection_state *state, const char *sql, size_t sql_size,
         int preparing, int64_t timeout, pg_cursor_state **out,
         vectis_error *error) {
   pg_cursor_state *cursor;
-  char *command = NULL, *copies[VECTIS_SQL_MAX_PARAMETERS];
-  const char *values[VECTIS_SQL_MAX_PARAMETERS];
-  cpkt_postgres_oid types[VECTIS_SQL_MAX_PARAMETERS];
-  int lengths[VECTIS_SQL_MAX_PARAMETERS], formats[VECTIS_SQL_MAX_PARAMETERS];
+  char *command = NULL;
+  pg_parameter_scratch *scratch;
   size_t i, total = 0u;
   int sent;
   vectis_status status;
@@ -964,7 +969,8 @@ pg_send(pg_connection_state *state, const char *sql, size_t sql_size,
                       "manual transaction control is forbidden in owned "
                       "PostgreSQL callbacks");
   }
-  memset(copies, 0, sizeof(copies));
+  scratch = &state->parameters;
+  memset(scratch->copies, 0, sizeof(scratch->copies));
   for (i = 0u; i < count; ++i) {
     if ((parameters[i].binary != 0 && parameters[i].binary != 1) ||
         (parameters[i].is_null != 0 && parameters[i].is_null != 1) ||
@@ -980,23 +986,24 @@ pg_send(pg_connection_state *state, const char *sql, size_t sql_size,
       goto cleanup;
     }
     total += parameters[i].size;
-    types[i] = parameters[i].oid;
-    lengths[i] = (int)parameters[i].size;
-    formats[i] = parameters[i].binary;
-    values[i] = parameters[i].is_null ? NULL : (const char *)parameters[i].data;
+    scratch->types[i] = parameters[i].oid;
+    scratch->lengths[i] = (int)parameters[i].size;
+    scratch->formats[i] = parameters[i].binary;
+    scratch->values[i] =
+        parameters[i].is_null ? NULL : (const char *)parameters[i].data;
     if (!parameters[i].is_null && !parameters[i].binary) {
-      copies[i] = (char *)malloc(parameters[i].size + 1u);
-      if (copies[i] == NULL) {
+      scratch->copies[i] = (char *)malloc(parameters[i].size + 1u);
+      if (scratch->copies[i] == NULL) {
         status = pg_failure(error, VECTIS_ERR_NOMEM,
                             "copying PostgreSQL text parameter");
         goto cleanup;
       }
       if (parameters[i].size != 0u)
-        memcpy(copies[i], parameters[i].data, parameters[i].size);
-      copies[i][parameters[i].size] = '\0';
-      values[i] = copies[i];
-    } else if (!parameters[i].is_null && values[i] == NULL)
-      values[i] = "";
+        memcpy(scratch->copies[i], parameters[i].data, parameters[i].size);
+      scratch->copies[i][parameters[i].size] = '\0';
+      scratch->values[i] = scratch->copies[i];
+    } else if (!parameters[i].is_null && scratch->values[i] == NULL)
+      scratch->values[i] = "";
   }
   if (sql != NULL) {
     command = (char *)malloc(sql_size + 1u);
@@ -1029,10 +1036,12 @@ pg_send(pg_connection_state *state, const char *sql, size_t sql_size,
                                       (int)prepare_count, prepare_types);
   else if (name != NULL)
     sent = cpkt_postgres_send_query_prepared(state->native, name, (int)count,
-                                             values, lengths, formats, 0);
+                                             scratch->values, scratch->lengths,
+                                             scratch->formats, 0);
   else
-    sent = cpkt_postgres_send_query_params(state->native, command, (int)count,
-                                           types, values, lengths, formats, 0);
+    sent = cpkt_postgres_send_query_params(
+        state->native, command, (int)count, scratch->types, scratch->values,
+        scratch->lengths, scratch->formats, 0);
   if (!sent ||
       (!preparing && !cpkt_postgres_set_single_row_mode(state->native))) {
     free(cursor);
@@ -1046,7 +1055,7 @@ pg_send(pg_connection_state *state, const char *sql, size_t sql_size,
   status = VECTIS_OK;
 cleanup:
   for (i = 0u; i < count; ++i)
-    free(copies[i]);
+    free(scratch->copies[i]);
   free(command);
   return status;
 }

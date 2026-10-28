@@ -1691,3 +1691,11 @@ on `init`; these records are component evidence only.
 The current upgrade specification and native/Lua/packaging seam review are in
 `liblql-0.4.0-upgrade.md`. Earlier LQL 0.3.0 findings and counts are historical;
 this consumes the released 0.4.0 facade without the withdrawn local extensions.
+
+## Musl worker-stack follow-up
+
+See [the stack review](musl-stack-review.md) for the review after `1068b39`.
+The prior main-thread and LQL-only worker evidence did not establish stack bounds
+for every owned binding or filesystem workflow. This follow-up checks compiled
+frames and representative native/Lua call chains on default musl pthread stacks;
+it changes no public ABI and patches no upstream facade.

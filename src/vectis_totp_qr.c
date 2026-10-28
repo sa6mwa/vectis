@@ -655,16 +655,20 @@ static unsigned long vectis_qr_penalty(const unsigned char *modules,
   return result;
 }
 
-static vectis_totp_qr_status vectis_qr_encode_ecc(vectis_qr *qr,
-                                                  const unsigned char *text,
-                                                  size_t text_len,
-                                                  vectis_qr_ecc ecc) {
+typedef struct vectis_qr_encode_ecc_scratch {
   unsigned char modules[VECTIS_QR_MATRIX_MAX];
   unsigned char function[VECTIS_QR_MATRIX_MAX];
   unsigned char data[VECTIS_QR_CODEWORDS_MAX];
   unsigned char blocks[9][VECTIS_QR_CODEWORDS_MAX];
   unsigned char correction[9][30];
   unsigned char interleaved[VECTIS_QR_CODEWORDS_MAX];
+} vectis_qr_encode_ecc_scratch;
+
+static vectis_totp_qr_status
+vectis_qr_encode_ecc_with_scratch(vectis_qr *qr, const unsigned char *text,
+                                  size_t text_len, vectis_qr_ecc ecc,
+                                  vectis_qr_encode_ecc_scratch *scratch) {
+
   unsigned int version;
   unsigned int size;
   unsigned int data_len;
@@ -700,23 +704,24 @@ static vectis_totp_qr_status vectis_qr_encode_ecc(vectis_qr *qr,
   ecc_len = vectis_qr_ecc_words[ecc][version];
   short_data = data_len / block_count;
   short_blocks = block_count - data_len % block_count;
-  memset(data, 0, sizeof(data));
+  memset(scratch->data, 0, sizeof(scratch->data));
   bit_len = 0u;
-  vectis_qr_append_bits(data, &bit_len, 4u, 4u);
-  vectis_qr_append_bits(data, &bit_len, (unsigned int)text_len,
+  vectis_qr_append_bits(scratch->data, &bit_len, 4u, 4u);
+  vectis_qr_append_bits(scratch->data, &bit_len, (unsigned int)text_len,
                         version < 10u ? 8u : 16u);
   for (i = 0u; i < text_len; i++)
-    vectis_qr_append_bits(data, &bit_len, text[i], 8u);
+    vectis_qr_append_bits(scratch->data, &bit_len, text[i], 8u);
   bit_len += bit_len + 4u <= data_len * 8u ? 4u : data_len * 8u - bit_len;
   while ((bit_len & 7u) != 0u)
     bit_len++;
   for (i = bit_len / 8u; i < data_len; i++)
-    data[i] = (i & 1u) == 0u ? 0xecu : 0x11u;
+    scratch->data[i] = (i & 1u) == 0u ? 0xecu : 0x11u;
   index = 0u;
   for (i = 0u; i < block_count; i++) {
     unsigned int length = short_data + (i >= short_blocks ? 1u : 0u);
-    memcpy(blocks[i], data + index, length);
-    vectis_qr_remainder(blocks[i], length, correction[i], ecc_len);
+    memcpy(scratch->blocks[i], scratch->data + index, length);
+    vectis_qr_remainder(scratch->blocks[i], length, scratch->correction[i],
+                        ecc_len);
     index += length;
   }
   index = 0u;
@@ -724,17 +729,17 @@ static vectis_totp_qr_status vectis_qr_encode_ecc(vectis_qr *qr,
     for (i = 0u; i < block_count; i++) {
       unsigned int length = short_data + (i >= short_blocks ? 1u : 0u);
       if (j < length)
-        interleaved[index++] = blocks[i][j];
+        scratch->interleaved[index++] = scratch->blocks[i][j];
     }
   for (j = 0u; j < ecc_len; j++)
     for (i = 0u; i < block_count; i++)
-      interleaved[index++] = correction[i][j];
+      scratch->interleaved[index++] = scratch->correction[i][j];
   if (index != raw_len)
     return VECTIS_TOTP_QR_INVALID;
   size = vectis_qr_matrix_size(version);
-  memset(modules, 0, sizeof(modules));
-  memset(function, 0, sizeof(function));
-  vectis_qr_functions(modules, function, version);
+  memset(scratch->modules, 0, sizeof(scratch->modules));
+  memset(scratch->function, 0, sizeof(scratch->function));
+  vectis_qr_functions(scratch->modules, scratch->function, version);
   index = 0u;
   column = size - 1u;
   while (column > 0u) {
@@ -745,9 +750,9 @@ static vectis_totp_qr_status vectis_qr_encode_ecc(vectis_qr *qr,
       y = upward ? size - 1u - i : i;
       for (j = 0u; j < 2u; j++) {
         x = column - j;
-        if (function[y * size + x] == 0u && index < raw_len * 8u) {
-          modules[y * size + x] =
-              (interleaved[index >> 3u] >> (7u - (index & 7u))) & 1u;
+        if (scratch->function[y * size + x] == 0u && index < raw_len * 8u) {
+          scratch->modules[y * size + x] =
+              (scratch->interleaved[index >> 3u] >> (7u - (index & 7u))) & 1u;
           index++;
         }
       }
@@ -763,25 +768,40 @@ static vectis_totp_qr_status vectis_qr_encode_ecc(vectis_qr *qr,
   best_mask = 0u;
   best_penalty = ULONG_MAX;
   for (mask = 0u; mask < 8u; mask++) {
-    vectis_qr_apply_mask(modules, function, size, mask);
-    vectis_qr_format(modules, function, size, ecc, mask);
-    penalty = vectis_qr_penalty(modules, size);
+    vectis_qr_apply_mask(scratch->modules, scratch->function, size, mask);
+    vectis_qr_format(scratch->modules, scratch->function, size, ecc, mask);
+    penalty = vectis_qr_penalty(scratch->modules, size);
     if (penalty < best_penalty) {
       best_penalty = penalty;
       best_mask = mask;
     }
-    vectis_qr_apply_mask(modules, function, size, mask);
+    vectis_qr_apply_mask(scratch->modules, scratch->function, size, mask);
   }
-  vectis_qr_apply_mask(modules, function, size, best_mask);
-  vectis_qr_format(modules, function, size, ecc, best_mask);
+  vectis_qr_apply_mask(scratch->modules, scratch->function, size, best_mask);
+  vectis_qr_format(scratch->modules, scratch->function, size, ecc, best_mask);
   memset(qr, 0, sizeof(*qr));
   qr->size = size;
   for (y = 0u; y < size; y++)
     for (x = 0u; x < size; x++)
-      if (modules[y * size + x])
+      if (scratch->modules[y * size + x])
         qr->modules[(y * size + x) >> 3u] |=
             (unsigned char)(1u << (7u - ((y * size + x) & 7u)));
   return VECTIS_TOTP_QR_OK;
+}
+
+static vectis_totp_qr_status vectis_qr_encode_ecc(vectis_qr *qr,
+                                                  const unsigned char *text,
+                                                  size_t text_len,
+                                                  vectis_qr_ecc ecc) {
+  vectis_qr_encode_ecc_scratch *scratch;
+  vectis_totp_qr_status result;
+  scratch = (vectis_qr_encode_ecc_scratch *)malloc(sizeof(*scratch));
+  if (scratch == NULL) {
+    return VECTIS_TOTP_QR_NOMEM;
+  }
+  result = vectis_qr_encode_ecc_with_scratch(qr, text, text_len, ecc, scratch);
+  free(scratch);
+  return result;
 }
 
 vectis_totp_qr_status vectis_qr_encode(vectis_qr *qr, const unsigned char *text,

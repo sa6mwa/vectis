@@ -93,6 +93,10 @@ int main(int argc, char **argv) {
   const char *path = "gz-unit-fixture.gz";
   if (argc == 2 && strcmp(argv[1], "--native-tell") == 0)
     return native_tell_probe();
+  if (argc == 2 && strcmp(argv[1], "--oom") == 0) {
+    oom_test();
+    return 0;
+  }
   assert(vectis_gz_open(path, "wb", &g, &e) == VECTIS_OK);
   assert(g->buffer(g, 32, &e) == 0);
   assert(g->write(g, "a\0b", 3, &e) == 3);
