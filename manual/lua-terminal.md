@@ -49,3 +49,7 @@ assert(editor:insert(" terminal"))
 assert(editor:buffer() == "vectis terminal")
 editor:close()
 ```
+
+The bundled MDF 0.18.0 includes the upstream callback, result-copy and font/token
+ownership fixes from 0.17.0. Options still pass through unchanged. Native palette
+lookup is available in the C SDK; the upstream Lua facade has no palette API.

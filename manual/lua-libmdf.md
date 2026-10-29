@@ -36,7 +36,7 @@ HTML rendering is unaffected.
 time and returns `nil` at EOF; the writer receives output chunks as they are
 produced. Do not treat it as a buffered string helper.
 
-The bundled libmdf 0.16.0 preserves hyperlink labels, punctuation and enclosing
+The bundled libmdf 0.18.0 preserves hyperlink labels, punctuation and enclosing
 styles across fragmented ANSI input and wrapping. Escaped table pipes render
 as literal `|`, including inside inline code. HTML and deck output declare each
 default font style once, with a variable weight range of 400–700.
@@ -78,3 +78,14 @@ assert(table.concat(output):find("Stream", 1, true))
 This module is intentionally dependency-native. Do not add a broader
 Vectis-owned Markdown API unless the workflow crosses Vectis concepts such as
 server responses, packed assets, service logging, or terminal prompt handling.
+
+MDF 0.17's upstream Lua lifetime fixes are included: source/sink/trace failures
+unwind through native cleanup, materialized result copying keeps its owner alive,
+and configured font/token bytes remain pinned through mutation and GC. Direct
+MDF calls preserve the original callback error object; Vectis terminal helpers
+retain their documented `nil, err` translation. C-string options require actual
+NUL-free strings; length-aware font byte strings remain binary-safe.
+
+MDF 0.18's allocation-free theme palette and heading lookups are public C APIs
+in the SDK. The released Lua facade does not expose them, and Vectis adds no
+local provider extension. Existing `theme` render options remain available.

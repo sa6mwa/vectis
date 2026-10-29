@@ -24,6 +24,7 @@ an option is available or a release is approved.
 | [Lua coverage](lua-coverage-matrix.md) | Supported native/convenience surfaces, behavior evidence and deliberate exclusions. |
 | [Musl worker-stack review](musl-stack-review.md) | Compiler frame inspection, owned workspaces and default pthread-stack regression. |
 | [liblockdc 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md) | Core/provider ABI, append writers, count retention, compression and verification. |
+| [MDF 0.18.0 upgrade](libmdf-0.18.0-upgrade.md) | Released callback/ownership fixes and native palette boundary. |
 | [LQL 0.4.0 upgrade](liblql-0.4.0-upgrade.md) | Released facade, cleanup contracts and integration verification. |
 | [Upstream Lua facade boundary](upstream-lua-facades.md) | Unmodified pslog/LQL/MDF, archived handoffs, preserved Vectis convenience APIs and exact upstream failure-contract gaps. |
 | [Useful dependency Lua specification](useful-dependency-lua-spec.md) | Reviewed scope for dependencies without upstream Lua; [review findings](useful-dependency-lua-review.md) and [implementation progress](useful-dependency-lua-progress.md). |

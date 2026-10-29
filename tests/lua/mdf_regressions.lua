@@ -1,5 +1,6 @@
 local mdf = require("libmdf")
 local terminal = require("vectis.terminal")
+assert(mdf.version == "0.18.0")
 assert(require("vectis").libs.libmdf == mdf)
 assert(terminal.libs.libmdf == mdf)
 
@@ -99,4 +100,79 @@ ok, err = terminal.markdown_stream(function() error("reader failure") end,
   function() end)
 assert(ok == nil and type(err) == "table" and type(err.message) == "string")
 assert(assert(terminal.markdown("healthy\n")):find("healthy", 1, true))
+-- Upstream 0.17 ownership fixes remain visible through the existing surface.
+local marker = {}
+local function same_error(fn)
+  local success, failure = pcall(fn)
+  assert(not success and failure == marker)
+end
+same_error(function() mdf.render_stream(function() error(marker) end,function() end) end)
+same_error(function()
+  local input='# callback\n'
+  mdf.render_stream(function() local text=input;input=nil;return text end,
+    function() error(marker) end)
+end)
+same_error(function() mdf.render('trace\n',{write_trace=function() error(marker) end}) end)
+assert(not pcall(mdf.new,{theme=12}))
+assert(not pcall(mdf.new,{format='html\0ansi'}))
+local invalid, problem=terminal.markdown('bad',{theme=12})
+assert(not invalid and problem.status==require('vectis.status').ERR_INVALID)
+local font={format='html',html_font={family='Retained',regular_format='woff2',regular_data='a\0b'}}
+local expected_font=mdf.render('font',font)
+local handle=mdf.new(font)
+font.html_font.regular_data=nil;font.html_font.family='mutated';font.html_font=nil
+collectgarbage('collect')
+assert(handle:render('font')==expected_font and expected_font:find('YQBi',1,true))
+handle:close();handle:close()
+-- Replacing a sink commits the new binding even if old-sink cleanup fails.
+for _,document in ipairs({false,true}) do
+  local armed, output=false,{}
+  local function previous() if armed then error(marker) end end
+  local h=document and mdf.document_stream({ansi_mode='on'},previous)
+    or mdf.new({ansi_mode='on'})
+  if not document then h:set_sink(previous) end
+  armed=true
+  same_error(function() h:set_sink(function(chunk)output[#output+1]=chunk end) end)
+  if document then h:write('healthy\n') else h:feed('healthy\n') end
+  h:finish_document();assert(table.concat(output):find('healthy',1,true));h:close()
+end
+local weak=setmetatable({}, {__mode='v'})
+for i=1,8 do
+  local retained={};weak[i]=retained
+  assert(not pcall(mdf.new,{font_uri={},write_trace=function()return retained~=nil end}))
+end
+collectgarbage('collect');collectgarbage('collect');assert(next(weak)==nil)
+-- Getter-created bytes remain rooted while the level getter collects.
+local tokens=mdf.new({width=1200});local token_bytes=0
+assert(tokens:set_sink(function(text)token_bytes=token_bytes+#text end))
+assert(tokens:write_token(setmetatable({}, {__index=function(_,field)
+  if field=='type' then return 'text' end
+  if field=='text' then return string.rep('x',1000) end
+  if field=='level' then collectgarbage('collect');return 0 end
+end})))
+assert(tokens:finish() and token_bytes>=1000);tokens:close()
+-- Materialized result adoption cannot let GC close the active native owner.
+do
+  local owner=mdf.new({format='html'})
+  local active, attempted, closed, failure=false,false,nil,nil
+  collectgarbage('collect')
+  local mode=collectgarbage('incremental')
+  local pause=collectgarbage('param','pause',0)
+  local stepmul=collectgarbage('param','stepmul',100000)
+  local stepsize=collectgarbage('param','stepsize',0)
+  collectgarbage('stop')
+  setmetatable({}, {__gc=function()
+    attempted=active
+    closed,failure=pcall(owner.close,owner)
+  end})
+  active=true;collectgarbage('restart')
+  assert(owner:render('healthy'):find('healthy',1,true))
+  active=false
+  assert(attempted and not closed and failure:find('active callback',1,true))
+  collectgarbage('param','pause',pause)
+  collectgarbage('param','stepmul',stepmul)
+  collectgarbage('param','stepsize',stepsize)
+  collectgarbage(mode);owner:close()
+end
+assert(terminal.markdown('healthy\n'))
 print("upgrade seam behavior ok: libmdf " .. mdf.version)

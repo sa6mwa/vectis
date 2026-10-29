@@ -1,4 +1,5 @@
 #include <lc/lc.h>
+#include <libmdf.h>
 #include <lql/lql.h>
 #include <stdio.h>
 #include <string.h>
@@ -42,6 +43,7 @@ static vectis_status configure(CURL *easy, void *context, vectis_error *error) {
              : VECTIS_ERR_STATE;
 }
 int vectis_install_useful_facades(void) {
+  mdf_theme_palette palette;
   vectis_error error;
   lql *lql_client = NULL;
   lql_error lql_err;
@@ -74,6 +76,10 @@ int vectis_install_useful_facades(void) {
   unsigned long id;
   int row;
   CHECK(strcmp(lc_version_string(), "0.24.0") == 0);
+  CHECK(strcmp(LIBMDF_VERSION, "0.18.0") == 0);
+  CHECK(mdf_theme_get_palette("default", &palette) == MDF_OK);
+  CHECK(strcmp(palette.name, "default") == 0 &&
+        palette.heading[0][0] == '\033');
   CHECK(lql_new(&lql_client, &lql_err) == LQL_STATUS_OK);
   CHECK(strcmp(lql_client->version(lql_client), "0.4.0") == 0);
   CHECK(lql_client->selector_parse(lql_client, "/x=1", &lql_selection,

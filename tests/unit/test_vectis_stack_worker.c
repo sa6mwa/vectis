@@ -37,6 +37,7 @@ typedef struct worker_case {
   const char *root, *script;
   int failed;
 } worker_case;
+int luaopen_libmdf_core(lua_State *lua);
 
 static vectis_status read_lua(void *context, unsigned char *buffer,
                               size_t capacity, size_t *size,
@@ -78,6 +79,8 @@ static int lua_case(const worker_case *test) {
   L = luaL_newstate();
   CHECK(L != NULL);
   luaL_openlibs(L);
+  luaL_requiref(L, "libmdf.core", luaopen_libmdf_core, 0);
+  lua_setglobal(L, "stack_mdf");
   luaL_requiref(L, "vectis.buffer.core", luaopen_vectis_buffer_core, 0);
   lua_pop(L, 1);
   luaL_requiref(L, "vectis.sqlite.core", luaopen_vectis_sqlite_core, 0);

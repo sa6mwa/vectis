@@ -1,5 +1,13 @@
 # Vectis Lua upgrade seam audit
 
+## MDF 0.18.0, 2026-10-29
+
+[Upgrade specification and evidence](libmdf-0.18.0-upgrade.md) supersede older MDF
+pins/findings below. Upstream 0.17 cleanup fixes are consumed unchanged; 0.18
+adds native-only palette lookup, retains ABI 6 and the existing Lua surface.
+Vectis terminal and Smith workflows keep their existing ownership and streaming
+contracts; no provider facade expansion or convenience wrapper is added.
+
 ## liblockdc 0.24.0 and retained LQL 0.4.0, 2026-10-29
 
 [Upgrade specification and evidence](liblockdc-0.24.0-upgrade.md) supersede the

@@ -17,22 +17,23 @@ local chunks = {
   "- direct sink writes\n",
 }
 local index = 1
-local streamed = {}
+-- Deliver chunks immediately; retain only a bounded suffix for example checks.
+local tail, saw_heading, saw_body = '', false, false
 
 local ok = libmdf.render_stream(function()
   local chunk = chunks[index]
   index = index + 1
   return chunk
 end, function(chunk)
-  streamed[#streamed + 1] = chunk
+  io.write(chunk)
+  tail = (tail .. chunk):sub(-1024)
+  saw_heading = saw_heading or tail:find('Streaming',1,true) ~= nil
+  saw_body = saw_body or tail:find('bounded reads',1,true) ~= nil
 end, {
   format = "html",
   width = 72,
 })
 
 assert(ok == true)
-local rendered = table.concat(streamed)
-assert(rendered:match("Streaming"))
-assert(rendered:match("bounded reads"))
-io.write(rendered)
+assert(saw_heading and saw_body)
 print("lua mdf render example ok")

@@ -67,3 +67,10 @@ Historical restoration evidence (before LQL 0.4.0): 19 affected CTest checks pas
 execution and source-byte verification. Lua-only rock smoke, repository format,
 shell syntax and whitespace checks passed. Five embedded manuals match their
 current source files, and all 117 archived handoff files were reverified.
+
+MDF follow-up, 2026-10-29: the [0.18.0 upgrade](libmdf-0.18.0-upgrade.md) consumes
+upstream 0.17's callback/result-copy and string ownership fixes unchanged.
+The MDF 0.16 failure measurements above are historical. No archived API expansion
+is restored. Native 0.18 palette lookup does not require a current Vectis Lua
+workflow. A dependency-facade palette extension belongs upstream; Vectis-owned
+convenience workflows may independently use the public C API when warranted.

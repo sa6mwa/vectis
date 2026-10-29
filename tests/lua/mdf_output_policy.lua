@@ -1,6 +1,6 @@
 local libmdf = require("libmdf")
 local terminal = require("vectis.terminal")
-assert(libmdf.version == "0.16.0")
+assert(libmdf.version == "0.18.0")
 
 local ansi_markdown = "# UTF-8 café\n\n**styled** [link](https://example.test)\n"
 local plain_markdown = libmdf.render(ansi_markdown, { osc8 = true })

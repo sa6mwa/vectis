@@ -6,6 +6,23 @@ function stack_read(capacity)
   assert(capacity == 65536)
   calls = calls + 1
   if calls > 1 then return nil end
+  local phase, emitted, offset = 0, 0, 1
+  local markdown = string.rep('bounded ',1024)..'\n'
+  assert(stack_mdf.version == '0.18.0')
+  assert(stack_mdf.render_stream(function(cap)
+    phase=phase+1
+    if phase==1 then return '# Stack\n\n' end
+    assert(emitted>0, 'MDF must emit before producer EOF')
+    if offset<=#markdown then
+      local last=math.min(#markdown,offset+cap-1)
+      local chunk=markdown:sub(offset,last);offset=last+1;return chunk
+    end
+    return nil
+  end,function(chunk)
+    local copy=assert(buffer.from_materialized(chunk))
+    assert(copy:read_materialized(0,#chunk)==chunk)
+    emitted=emitted+#chunk;copy:close();return true
+  end,{format='html',disable_embedded_font=true}))
   local b <close> = assert(buffer.from_materialized(payload))
   local compressed, sent = {}, false
   assert(z.gzip_stream(function()
