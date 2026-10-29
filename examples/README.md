@@ -91,6 +91,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 ## `lua/`
 
+- `lua/storage_writer.lua`: app-owned bounded incremental collection append,
+  parent renewal and count-retention configuration.
+
 Lua examples follow the same rule as the C examples: they are self-contained
 scripts and keep facade calls visible at the call site. Inline callbacks are
 used where the demonstrated API requires a callback, but local helper layers are

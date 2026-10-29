@@ -1,3 +1,4 @@
+#include <lc/lc.h>
 #include <lql/lql.h>
 #include <stdio.h>
 #include <string.h>
@@ -72,6 +73,7 @@ int vectis_install_useful_facades(void) {
   size_t i, running;
   unsigned long id;
   int row;
+  CHECK(strcmp(lc_version_string(), "0.24.0") == 0);
   CHECK(lql_new(&lql_client, &lql_err) == LQL_STATUS_OK);
   CHECK(strcmp(lql_client->version(lql_client), "0.4.0") == 0);
   CHECK(lql_client->selector_parse(lql_client, "/x=1", &lql_selection,

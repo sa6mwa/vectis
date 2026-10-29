@@ -15,7 +15,8 @@ function M.await_blocking(operation)
   end
 end
 local resource_methods = {
-  collection = {'describe','metadata','append','append_status','entry_metadata','read','delete_entry','drop'},
+  collection = {'describe','metadata','append','append_begin','append_status','entry_metadata','read','delete_entry','drop'},
+  collection_writer = {'write','commit','abort'},
   coordinator = {'register_start','begin_start','adopt_start','recover_start','retire_start','resource'},
   operation = {'advance','wait','result','cancel','take_transaction','take_lease'},
   transaction = {'id','enroll_start','acquire_start','renew_start','commit_start','rollback_start','borrow'},
@@ -29,6 +30,7 @@ local resource_methods = {
   branch = {'record','prepare_start','resolve_start','borrow'},
 }
 local result_kinds = {
+  collection = {append_begin='collection_writer'},
   postgres = {execute_materialized='postgres_result'},
   coordinator = {register_start='operation',begin_start='operation',adopt_start='operation',
     recover_start='operation',retire_start='operation',resource='resource'},

@@ -1,5 +1,15 @@
 # Vectis Lua upgrade seam audit
 
+## liblockdc 0.24.0 and retained LQL 0.4.0, 2026-10-29
+
+[Upgrade specification and evidence](liblockdc-0.24.0-upgrade.md) supersede the
+0.23.0 core ABI/pin status below. Core ABI is 7, PostgreSQL provider ABI 0;
+cpkt is 0.6.1 and LQL remains 0.4.0. Released Lua sources are consumed unchanged.
+Vectis app storage owns incremental append writers and closes them on stop;
+count limits and parent-retention directives pass through to upstream. Explicit
+compression changes convert synchronously during open. Verification is recorded
+against this upgrade, independently of historical candidate results below.
+
 ## Useful dependency facade goal, 2026-10-28
 
 The new [reviewed specification](useful-dependency-lua-spec.md) replaces exhaustive
@@ -192,7 +202,7 @@ preserved. The cpkt 0.6.0 full native log records 265/265 passing checks; the
 old trace blocker is resolved. The broader public-API ledger still contains
 unfinished components, so that suite does not establish full surface coverage.
 SSH remote execution is indefinitely parked on the future roadmap. The known
-libssh2 memory finding is with cpkt upstream and awaits a new release; no further
+Historical status at cpkt 0.6.0: the libssh2 memory finding awaited a new release; no further
 investigation is part of this continuation.
 
 The pslog 0.12.0 local adaptation now exposes native constants and fresh defaults,

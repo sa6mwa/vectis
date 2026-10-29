@@ -192,6 +192,17 @@ Native Pouch single-writer policy is preserved: explicitly use
 `single_writer=false` when the app and its workflow clients share an opened root.
 The app default selects shared-writer storage and encryption consistently.
 
+With liblockdc 0.24.0, omitted `pouch.compression` inherits the stored mode
+(`none` for a new root). Explicit `none` or `zlib` requests synchronous whole-root
+conversion before open returns, preserving states, attachments, collections and
+continuations. Allow startup time and disk room for the replacement tree.
+Another live writer prevents conversion: upstream logs a warning and uses the
+stored mode for that open. Conversion errors fail open; interrupted publication
+is recovered at the next open. Request conversion while peer apps are stopped.
+App declarations copy options without opening storage; materialization remains
+after the applicable process/fork boundary. Existing typed-over-query precedence
+also applies to an explicit compression request.
+
 App-level `lockd` settings use Vectis's native configuration: `endpoints`,
 `unix_socket_path`, `client_bundle="embedded"` (or `bundle`),
 `client_bundle_path` (or `bundle_path`), `default_namespace` (or `namespace`),

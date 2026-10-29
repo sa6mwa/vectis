@@ -4,7 +4,8 @@ Status: original migration contract, reviewed 2026-10-27.
 The upstream facade policies and LQL pin in its historical input table are
 superseded by `upstream-lua-facades.md`, `useful-dependency-lua-spec.md` and the
 user-authorized `liblql-0.4.0-upgrade.md`. No withdrawn provider adaptation is
-retained or reintroduced.
+retained or reintroduced. Current lockdc/cpkt pins and verification supersede
+this historical input table in [the 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md).
 
 Original review: This supersedes the
 monolithic c.pkt.systems dependency layout and the previous hosted Darwin gate.

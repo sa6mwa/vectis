@@ -42,8 +42,9 @@ No full API, cross-platform or release approval follows from those results.
 
 SSH remote execution is indefinitely deferred to the future roadmap; existing
 SSH workflows and public dependency bindings remain distinct concerns. The
-libssh2 memory finding awaits an upstream cpkt release and is not under further
-investigation here.
+Historical status at cpkt 0.6.0: the libssh2 memory finding awaited a release.
+The current [liblockdc upgrade](liblockdc-0.24.0-upgrade.md) consumes cpkt 0.6.1
+with the upstream fix; no local vendor patch or SSH feature expansion is made.
 
 This declaration inventory predates the active split-bundle upgrade. Current
 versions and semantic evidence are in `lua-upgrade-seam-audit.md` and

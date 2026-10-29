@@ -16,6 +16,8 @@ LQL uses the released liblql 0.4.0 native facade unchanged, including scoped
 cleanup and protected callback ownership.
 Stateful manual outbox renewal requires liblockdc 0.23.0 or later. Managed
 PostgreSQL XA also requires the matching linked provider and Vectis native core.
+Incremental app-owned collection writers, count retention and synchronous
+compression conversion use the released liblockdc 0.24.0 surface unchanged.
   ]],
   homepage = "https://github.com/sa6mwa/vectis",
   license = "MIT",

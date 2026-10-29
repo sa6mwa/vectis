@@ -14,6 +14,7 @@
 #include "vectis_lua_zlib_raw.h"
 #include "vectis_lua_zlib_stream.h"
 #include <lauxlib.h>
+#include <lc/lc.h>
 #include <lualib.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -122,6 +123,90 @@ static int lua_case(const worker_case *test) {
   lua_close(L);
   return 0;
 }
+static int lockdc_case(const char *root) {
+  lc_client_config config;
+  lc_pouch_settings settings;
+  lc_collection_config collection_config;
+  lc_collection_append_req request;
+  lc_collection_append_res result;
+  lc_collection_read_opts options;
+  lc_collection_read_res progress;
+  lc_client *client = NULL;
+  lc_collection *collection = NULL;
+  lc_collection_writer *writer = NULL;
+  lc_source *source = NULL;
+  lc_sink *sink = NULL;
+  lc_error error;
+  const char *endpoints[1];
+  char *endpoint, *chunk;
+  size_t written, index;
+  endpoint = (char *)malloc(strlen(root) + 32u);
+  chunk = (char *)malloc(65536u);
+  CHECK(endpoint != NULL && chunk != NULL);
+  sprintf(endpoint, "pouch://%s/lockdc", root);
+  memset(chunk, 'x', 65536u);
+  endpoints[0] = endpoint;
+  lc_error_init(&error);
+  lc_client_config_init(&config);
+  lc_pouch_settings_init(&settings);
+  settings.set_mask =
+      LC_POUCH_SETTING_BACKGROUND_COMPACTION | LC_POUCH_SETTING_COMPRESSION |
+      LC_POUCH_SETTING_QUERY_ENGINE | LC_POUCH_SETTING_QUERY_INDEXING;
+  settings.background_compaction_enabled = 0;
+  settings.compression = "zlib";
+  settings.query_engine = "scan";
+  settings.query_indexing_enabled = 0;
+  config.endpoints = endpoints;
+  config.endpoint_count = 1u;
+  config.pouch_settings = &settings;
+  CHECK(lc_client_open(&config, &client, &error) == LC_OK);
+  lc_collection_config_init(&collection_config);
+  collection_config.name = "worker";
+  collection_config.has_max_entries = 1;
+  collection_config.max_entries = 2u;
+  CHECK(lc_client_create_collection(client, &collection_config, &collection,
+                                    &error) == LC_OK);
+  lc_collection_append_req_init(&request);
+  request.append_id = "worker-push";
+  request.has_collection_retention_seconds = 1;
+  request.collection_retention_seconds = 3600L;
+  CHECK(lc_collection_append_begin(collection, &request, &writer, &error) ==
+        LC_OK);
+  CHECK(lc_collection_writer_write(writer, "{\"data\":\"", 9u, &error) ==
+        LC_OK);
+  for (index = 0u; index < 64u; ++index)
+    CHECK(lc_collection_writer_write(writer, chunk, 4096u, &error) == LC_OK);
+  CHECK(lc_collection_writer_write(writer, "\"}", 2u, &error) == LC_OK);
+  CHECK(lc_collection_writer_commit(writer, &result, &error) == LC_OK &&
+        result.position == 1u &&
+        result.has_collection_retention_expires_at_unix);
+  lc_collection_writer_close(writer);
+  CHECK(lc_sink_to_discard(&sink, &error) == LC_OK);
+  lc_collection_read_opts_init(&options);
+  lc_collection_read_res_init(&progress);
+  CHECK(lc_collection_read(collection, &options, sink, &progress, &error) ==
+            LC_OK &&
+        progress.completed_records == 1u);
+  lc_collection_read_res_cleanup(&progress);
+  lc_collection_read_res_init(&progress);
+  options.selector_lql = "exists{/data}";
+  CHECK(lc_collection_read(collection, &options, sink, &progress, &error) ==
+            LC_OK &&
+        progress.completed_records == 1u);
+  lc_collection_read_res_cleanup(&progress);
+  /* Exercise the newly heap-backed bulk copy in the same default-stack worker.
+   */
+  CHECK(lc_source_from_memory(chunk, 65536u, &source, &error) == LC_OK);
+  CHECK(lc_copy(source, sink, &written, &error) == LC_OK && written == 65536u);
+  lc_source_close(source);
+  lc_sink_close(sink);
+  lc_collection_close(collection);
+  lc_client_close(client);
+  lc_error_cleanup(&error);
+  free(chunk);
+  free(endpoint);
+  return 0;
+}
 static int embedded_case(const char *root) {
   static const unsigned char payload[] = "app\n";
   static const char manifest[] =
@@ -158,8 +243,8 @@ static int webdav_case(const char *root, int direct) {
   entry = (vectis_webdav_entry *)malloc(sizeof(*entry));
   CHECK(entry != NULL);
   vectis_webdav_config_init(&config);
-  cache = (char *)malloc(4096u);
-  disk = (char *)malloc(4096u);
+  cache = (char *)malloc(65536u);
+  disk = (char *)malloc(65536u);
   path = (char *)malloc(1025u);
   copied = (char *)malloc(1025u);
   CHECK(cache && disk && path && copied);
@@ -214,7 +299,7 @@ static void *worker(void *context) {
          (unsigned long)stack_size);
   pthread_attr_destroy(&attributes);
 #endif
-  if (lua_case(test) || embedded_case(test->root) ||
+  if (lua_case(test) || lockdc_case(test->root) || embedded_case(test->root) ||
       webdav_case(test->root, 0) || webdav_case(test->root, 1))
     return NULL;
   qr = (vectis_qr *)malloc(sizeof(*qr));

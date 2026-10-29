@@ -25,13 +25,41 @@ assert(app:stop())
 app:close()
 ```
 
-Collections expose native `describe`, `metadata`, `append`, `append_status`,
+Collections expose native `describe`, `metadata`, `append`, `append_begin`, `append_status`,
 `entry_metadata`, `read`, `delete_entry`, `drop` and `close` methods.
 `store:open_collection`, `store:list_collections(options, visitor)` and
 `store:collection_capabilities()` use the same app storage lifecycle. Positions
 and counts are exact decimal uint64 strings. Deletes leave permanent position
 gaps. Append IDs support idempotency/status lookup; an ambiguous source-backed
 append must be retried with a fresh source and the same ID.
+
+`collection:append_begin(request)` returns an app-owned incremental writer.
+Call `writer:write(raw_json_fragment)` for bounded fragments of one JSON object,
+then `writer:commit()` and `writer:close()`. Empty writes are not EOF. Commit
+returns the same exact position/ETag/retention observations as pull `append`.
+`writer:abort()` is idempotent; abort and close never publish unfinished data.
+Always close after success or failure. A commit error may follow publication:
+reconcile using `append_status` and the original append ID. The writer retains
+its native collection after explicit collection close; app stop closes writers
+and rejects subsequent calls through retained proxies. No producer thread,
+whole-value buffer or intermediate spool is introduced. Push commit publishes
+one canonical segment per item; pull append retains its shared-segment path.
+See [the incremental storage example](../examples/lua/storage_writer.lua).
+
+Creation and collection `metadata` accept `max_entries="1000"`; describe/list
+return the limit as an exact decimal uint64 string. Omission preserves the
+setting, `"0"` disables it, and opening or entry metadata cannot set it.
+Maintenance eventually removes oldest live entries independently of age expiry.
+Append does not trim synchronously, so counts can temporarily exceed the limit.
+Disabling background compaction also disables automatic trimming. This is not
+a disk cap; increasing the limit does not restore deleted entries.
+
+Both append forms accept `collection_retention_seconds`, separately from entry
+`retention_seconds`. Only a new append renews the parent's deadline; omission
+preserves it, zero clears it and positive seconds start at commit. Identical
+retries retain the original `collection_retention_expires_at_unix` observation
+without renewing again. Use `describe` for the current parent deadline. No
+inactivity timeout is imposed by Vectis or liblockdc.
 
 `read` preserves bounded raw JSONL delivery and separate metadata callbacks.
 Options include native LQL filtering, exclusive `after`, inclusive `through`,

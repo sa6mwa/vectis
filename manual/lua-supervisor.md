@@ -291,7 +291,7 @@ completion. Job payload and renewal methods become invalid after the handler;
 `job:state()` returns nil in stateless mode. `with_state=true` supports
 checkpoint read/update/completion; its borrowed checkpoint cannot be released,
 closed or used after handler return. Manual renewal works before and after
-checkpoint writes, including repeated renewal, with liblockdc 0.23.0.
+checkpoint writes, including repeated renewal, with liblockdc 0.23.0 and later.
 Complete/retry/dead-letter decisions preserve the upstream version/fencing
 contract. Retry and dead-letter retain the checkpoint for a later delivery or
 replay; successful completion retires that private sidecar. Store durable

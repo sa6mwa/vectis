@@ -59,13 +59,13 @@ Release archives are fetched through the shared verified
 `${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cpkt/deps}`
 archive cache. The current expected dependency set is:
 
-- `cpkt` 0.6.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
+- `cpkt` 0.6.1 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
   the C89 Lua runtime facade, libxml2 and supporting core package metadata.
 - `cpktdb` 0.3.1 for the PostgreSQL and SQLite C89 facades.
 - `cpktmisc` 0.2.1 for OPC UA, audio/miniaudio, SUS/whisper and the optional
   data/compression/PDF/PNG/FFI facades. Each bundle keeps its own SDK prefix.
-- `liblockdc` 0.23.0 plus its separate PostgreSQL XA provider for lockd C and
-  Lua surfaces, Pouch collections, state retention and transactional workflows.
+- `liblockdc` 0.24.0 plus its separate PostgreSQL XA provider for lockd C and
+  Lua surfaces, incremental Pouch collections, count/state retention and transactional workflows.
 - `lonejson` 0.45.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
 - `cai` 0.6.0 for OpenAI API, agent runtime, Smith preset, tool, MCP, and Lua
@@ -86,7 +86,7 @@ The selected split-bundle shared GNU/Linux dependency set requires **glibc 2.44
 or newer**, verified from the selected SDKs' versioned ELF imports. This applies to
 shared SDK consumers on x86_64, aarch64 and armhf. Upgrade older deployment
 runtimes before adopting those shared dependencies. liblockdc core now uses
-ABI 6; its separate PostgreSQL provider uses ABI 0. The shipped, fully static Linux CLI does not acquire this
+ABI 7; its separate PostgreSQL provider uses ABI 0. The shipped, fully static Linux CLI does not acquire this
 dynamic-glibc requirement; linking a static SDK archive into an otherwise
 dynamic application does not remove it.
 

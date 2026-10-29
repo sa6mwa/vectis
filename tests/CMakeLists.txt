@@ -77,6 +77,8 @@ if(VECTIS_BUILD_TESTS AND VECTIS_BUILD_BINARY)
       "-Dpslog_core=${vectis_pslog_lua_source}" "-Dpslog_module=${vectis_pslog_lua_source_dir}/lua/pslog/init.lua"
       "-Dlql_core=${vectis_liblql_lua_source}" "-Dlql_module=${vectis_liblql_lua_source_dir}/lua/lql/init.lua"
       "-Dmdf_core=${vectis_libmdf_lua_source}" "-Dmdf_module=${vectis_libmdf_lua_source_dir}/lua/libmdf.lua"
+      "-Dlockdc_core=${vectis_lockdc_lua_source_dir}/src/lua/lockdc_collections_lua.c"
+      "-Dlockdc_module=${vectis_lockdc_lua_source_dir}/lua/lockdc/init.lua"
       -P "${CMAKE_SOURCE_DIR}/tests/lua/upstream_sources.cmake")
   set_tests_properties(vectis_lua_upstream_sources PROPERTIES LABELS "lua;local;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
 endif()
@@ -145,6 +147,12 @@ if(VECTIS_BUILD_BINARY)
       # must use the host session, while database/test payloads remain owned.
       ENVIRONMENT "XDG_RUNTIME_DIR=$ENV{XDG_RUNTIME_DIR};XDG_CONFIG_HOME=$ENV{XDG_CONFIG_HOME};XDG_CACHE_HOME=$ENV{XDG_CACHE_HOME}")
   endif()
+  add_test(NAME vectis_lua_lockdc_upgrade
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/lockdc-upgrade"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/lockdc_upgrade.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_lockdc_upgrade PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 20 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_storage
     COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
       "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/storage"
