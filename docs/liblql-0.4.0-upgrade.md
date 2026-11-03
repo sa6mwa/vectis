@@ -1,5 +1,9 @@
 # liblql 0.4.0 upgrade
 
+Historical upgrade evidence. Current selection is described in the
+[0.4.1 review](liblql-0.4.1-upgrade.md); runtime sources are unchanged and the
+persistent-OOM closer-entry limitation below remains applicable.
+
 ## Specification and pre-implementation review
 
 Authorized by the user on 2026-10-28 alongside the useful dependency facade goal.

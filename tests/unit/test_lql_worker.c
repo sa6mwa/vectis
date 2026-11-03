@@ -41,7 +41,7 @@ static void *worker(void *user) {
     return NULL;
   if (lql_new(&f->client, &f->error) != LQL_STATUS_OK)
     goto done;
-  if (strcmp(f->client->version(f->client), "0.4.0") != 0)
+  if (strcmp(f->client->version(f->client), "0.4.1") != 0)
     goto done;
   if (f->client->selector_parse(f->client, "/.../kind=\"commit\"", &f->selector,
                                 &f->error) != LQL_STATUS_OK)
@@ -106,6 +106,6 @@ int main(int argc, char **argv) {
     if (pthread_join(threads[i], NULL) != 0 || failed[i])
       return 1;
   pthread_attr_destroy(&attributes);
-  puts("LQL 0.4.0 worker streaming and spooled cleanup passed");
+  puts("LQL 0.4.1 worker streaming and spooled cleanup passed");
   return 0;
 }

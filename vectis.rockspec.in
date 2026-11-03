@@ -13,7 +13,7 @@ Vectis Lua helpers for applications that run the Vectis facade surface from a
 Lua 5.5 environment. Native dependency modules remain dependency-owned and must
 be provided by the embedding Vectis binary or separately installed facades.
 MDF uses the released 0.19.0 facade with upstream callback/GC ownership fixes.
-LQL uses the released liblql 0.4.0 native facade unchanged, including scoped
+LQL uses the released liblql 0.4.1 native facade unchanged, including scoped
 cleanup and protected callback ownership.
 Stateful manual outbox renewal requires liblockdc 0.23.0 or later. Managed
 PostgreSQL XA also requires the matching linked provider and Vectis native core.

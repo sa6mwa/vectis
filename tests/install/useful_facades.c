@@ -92,7 +92,7 @@ int vectis_install_useful_facades(void) {
   CHECK(strcmp(palette.name, "default") == 0 &&
         palette.heading[0][0] == '\033');
   CHECK(lql_new(&lql_client, &lql_err) == LQL_STATUS_OK);
-  CHECK(strcmp(lql_client->version(lql_client), "0.4.0") == 0);
+  CHECK(strcmp(lql_client->version(lql_client), "0.4.1") == 0);
   CHECK(lql_client->selector_parse(lql_client, "/x=1", &lql_selection,
                                    &lql_err) == LQL_STATUS_OK);
   lql_client->selector_destroy(lql_client, lql_selection);

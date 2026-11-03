@@ -1,6 +1,6 @@
 local lql = require('lql')
 assert(lql == require('lql.core') and require('vectis').libs.lql == lql)
-assert(lql.version() == '0.4.0', lql.version())
+assert(lql.version() == '0.4.1', lql.version())
 local function expired(h, method)
   assert(not pcall(h[method], h), 'closed handle remained usable')
 end
@@ -8,7 +8,7 @@ for _, throwing in ipairs({false, true}) do
   local saved, sentinel = {}, {}
   local ok, err = pcall(function()
     local c <close> = assert(lql.new())
-    assert(c:version() == '0.4.0')
+    assert(c:version() == '0.4.1')
     local s <close> = assert(c:selector_parse('/x=1'))
     local p <close> = assert(c:projection_parse('/x'))
     local m <close> = assert(c:mutation_parse('/y=2'))

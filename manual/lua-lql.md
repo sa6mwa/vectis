@@ -1,9 +1,9 @@
 # Lua lql
 
-`require("lql")` is the released liblql 0.4.0 Lua facade. It is the same table as
+`require("lql")` is the released liblql 0.4.1 Lua facade. It is the same table as
 `require("lql.core")` and `require("vectis").libs.lql`. Vectis consumes it unchanged.
 See the [upstream boundary](../docs/upstream-lua-facades.md) and
-[upgrade review](../docs/liblql-0.4.0-upgrade.md).
+[upgrade review](../docs/liblql-0.4.1-upgrade.md).
 
 ## Handles and cleanup
 
@@ -83,5 +83,5 @@ allocation failures are cleaned up inside the released upstream facade.
 
 Under persistent Lua allocator failure, protected cleanup may fail before entering
 a reader's Lua closer. Vectis does not guarantee execution of Lua cleanup code
-when Lua cannot allocate its call frame. The 0.4.0 integration fault test records
+when Lua cannot allocate its call frame. The 0.4.1 integration fault test records
 this remaining upstream limit; see the upgrade review for the reproduction.

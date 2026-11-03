@@ -27,7 +27,8 @@ an option is available or a release is approved.
 | [liblockdc 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md) | Historical append-writer/count-retention upgrade evidence. |
 | [MDF 0.19.0 upgrade](libmdf-0.19.0-upgrade.md) | C89 systems repository migration and natural terminal URL wrapping. |
 | [MDF 0.18.0 upgrade](libmdf-0.18.0-upgrade.md) | Historical callback/ownership and palette upgrade evidence. |
-| [LQL 0.4.0 upgrade](liblql-0.4.0-upgrade.md) | Released facade, cleanup contracts and integration verification. |
+| [LQL 0.4.1 upgrade](liblql-0.4.1-upgrade.md) | Repository/lifecycle alignment with unchanged runtime and Lua surface. |
+| [LQL 0.4.0 upgrade](liblql-0.4.0-upgrade.md) | Historical cleanup upgrade evidence and retained OOM limit. |
 | [Upstream Lua facade boundary](upstream-lua-facades.md) | Unmodified pslog/LQL/MDF, archived handoffs, preserved Vectis convenience APIs and exact upstream failure-contract gaps. |
 | [Useful dependency Lua specification](useful-dependency-lua-spec.md) | Reviewed scope for dependencies without upstream Lua; [review findings](useful-dependency-lua-review.md) and [implementation progress](useful-dependency-lua-progress.md). |
 | [SUS/audio contract](lua-sus-audio-contract.md) | Implemented receiver/worker surfaces, streaming ownership and opt-in model/device gates. |

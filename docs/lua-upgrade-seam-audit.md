@@ -1,5 +1,13 @@
 # Vectis Lua upgrade seam audit
 
+## LQL 0.4.1, 2026-11-03
+
+[Reviewed upgrade and evidence](liblql-0.4.1-upgrade.md) supersede older LQL pin
+status below. All assets now come from `c89systems/liblql`. Native/public/Lua
+sources are unchanged from 0.4.0; ABI remains 0. The patch aligns version/archive
+ownership, release checks and repository attribution. No convenience or provider
+extension is required; existing OOM closer-entry limits remain unchanged.
+
 ## liblockdc 0.27.0, 2026-11-03
 
 [Reviewed upgrade specification and evidence](liblockdc-0.27.0-upgrade.md)
