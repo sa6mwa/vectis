@@ -93,6 +93,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 - `lua/storage_writer.lua`: app-owned bounded incremental collection append,
   parent renewal and count-retention configuration.
+- `lua/pouch_collections.lua`: app-owned private collection lease, explicit
+  renewal, streamed atomic replacement/recovery marker and head-validated read.
 
 Lua examples follow the same rule as the C examples: they are self-contained
 scripts and keep facade calls visible at the call site. Inline callbacks are

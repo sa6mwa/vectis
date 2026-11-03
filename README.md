@@ -64,7 +64,7 @@ archive cache. The current expected dependency set is:
 - `cpktdb` 0.3.1 for the PostgreSQL and SQLite C89 facades.
 - `cpktmisc` 0.2.1 for OPC UA, audio/miniaudio, SUS/whisper and the optional
   data/compression/PDF/PNG/FFI facades. Each bundle keeps its own SDK prefix.
-- `liblockdc` 0.24.0 plus its separate PostgreSQL XA provider for lockd C and
+- `liblockdc` 0.27.0 plus its separate PostgreSQL XA provider for lockd C and
   Lua surfaces, incremental Pouch collections, count/state retention and transactional workflows.
 - `lonejson` 0.45.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
@@ -86,7 +86,7 @@ The selected split-bundle shared GNU/Linux dependency set requires **glibc 2.44
 or newer**, verified from the selected SDKs' versioned ELF imports. This applies to
 shared SDK consumers on x86_64, aarch64 and armhf. Upgrade older deployment
 runtimes before adopting those shared dependencies. liblockdc core now uses
-ABI 7; its separate PostgreSQL provider uses ABI 0. The shipped, fully static Linux CLI does not acquire this
+ABI 9; its separate PostgreSQL provider uses ABI 0. The shipped, fully static Linux CLI does not acquire this
 dynamic-glibc requirement; linking a static SDK archive into an otherwise
 dynamic application does not remove it.
 

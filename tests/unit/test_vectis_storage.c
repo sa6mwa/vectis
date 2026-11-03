@@ -135,7 +135,8 @@ int main(int argc, char **argv) {
   retained_state(app);
   assert(vectis_app_collection_capabilities(app, &capabilities, &error) ==
              VECTIS_OK &&
-         capabilities.collections);
+         capabilities.collections && capabilities.leases &&
+         capabilities.append_staged && capabilities.atomic_edit);
   assert(vectis_app_create_collection(app, &collection_config, &collection,
                                       &error) == VECTIS_OK);
   lc_collection_append_req_init(&request);

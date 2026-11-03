@@ -15,7 +15,9 @@ function M.await_blocking(operation)
   end
 end
 local resource_methods = {
-  collection = {'describe','metadata','append','append_begin','append_status','entry_metadata','read','delete_entry','drop'},
+  collection = {'describe','metadata','append','append_staged','append_begin','append_status',
+    'entry_metadata','read','delete_entry','drop','acquire','takeover','keepalive','release',
+    'head','edit','edit_status'},
   collection_writer = {'write','commit','abort'},
   coordinator = {'register_start','begin_start','adopt_start','recover_start','retire_start','resource'},
   operation = {'advance','wait','result','cancel','take_transaction','take_lease'},
@@ -30,7 +32,7 @@ local resource_methods = {
   branch = {'record','prepare_start','resolve_start','borrow'},
 }
 local result_kinds = {
-  collection = {append_begin='collection_writer'},
+  collection = {append_begin='collection_writer',acquire='collection',takeover='collection'},
   postgres = {execute_materialized='postgres_result'},
   coordinator = {register_start='operation',begin_start='operation',adopt_start='operation',
     recover_start='operation',retire_start='operation',resource='resource'},
@@ -120,6 +122,9 @@ function M.declare(app, options)
           local result = table.pack(native[name](native,table.unpack(args,1,args.n)))
           local next_kind = result_kinds[kind] and result_kinds[kind][name]
           if next_kind and result[1] then result[1] = own(result[1],next_kind) end
+          -- Successful native release closes the credentialed receiver. Failed
+          -- release retains it for diagnosis/retry; local close never releases.
+          if kind=='collection' and name=='release' and result[1] then owned[proxy]=nil end
           return table.unpack(result,1,result.n)
         end)
       end

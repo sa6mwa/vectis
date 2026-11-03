@@ -75,7 +75,18 @@ int vectis_install_useful_facades(void) {
   size_t i, running;
   unsigned long id;
   int row;
-  CHECK(strcmp(lc_version_string(), "0.24.0") == 0);
+  lc_collection_read_opts collection_read;
+  lc_collection_edit_req collection_edit;
+  lc_collection_lease_req collection_lease;
+  CHECK(strcmp(lc_version_string(), "0.27.0") == 0);
+  CHECK(LC_COLLECTION_EDIT_MAX_RANGES == 64U);
+  lc_collection_read_opts_init(&collection_read);
+  CHECK(collection_read.expected_head == NULL);
+  lc_collection_edit_req_init(&collection_edit);
+  CHECK(collection_edit.range_count == 0 &&
+        collection_edit.replacement == NULL);
+  lc_collection_lease_req_init(&collection_lease);
+  CHECK(collection_lease.ttl_seconds == 30 && !collection_lease.private_read);
   CHECK(strcmp(LIBMDF_VERSION, "0.19.0") == 0);
   CHECK(mdf_theme_get_palette("default", &palette) == MDF_OK);
   CHECK(strcmp(palette.name, "default") == 0 &&

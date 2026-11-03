@@ -242,12 +242,16 @@ liblockdc, never logs it, and does not create a key file. Supply the same key
 on every start that must reopen the same root; an empty environment value is a
 configuration error.
 
-Existing Pouch roots are never migrated or reinitialized by Vectis. A legacy
+Vectis does not change existing Pouch encryption policy or keys. A legacy
 plaintext root, or a root encrypted with a different key, fails to open with
 the configured encryption and is left intact. For pre-release data that may be
 discarded, deliberately provision a new empty root; for retained data, restore
 the original key. Vectis never falls back to plaintext and provides no force or
 automatic-overwrite option.
+
+The upstream collection-head upgrade is separate from encryption policy. Stop
+all root clients for the first 0.27 open and use upgraded binaries afterward;
+see [Pouch collections and storage](lua-storage.md).
 
 To add a canonical cleartext-to-HTTPS redirect listener without registering a
 route, enable it explicitly inside `tls`. `http_redirect` defaults to false;

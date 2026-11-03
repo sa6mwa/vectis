@@ -35,6 +35,38 @@ function stack_read(capacity)
     tail=(tail..copy:read_materialized(0,#chunk)):sub(-256)
   end,{width=20,margin_left=2,margin_right=0,ansi_mode='on',osc8=false}))
   assert(tail:find(address,1,true))
+  do
+    -- Keep the native digest frame active across released collection callbacks.
+    assert(stack_lockdc.version_string()=='0.27.0')
+    local client=assert(stack_lockdc.open({endpoints={'pouch://'..stack_root..'/lua-collections'},
+      logger_disabled=true,pouch={background_compaction=false,compression='zlib',
+        crypto_key=assert(stack_lockdc.pouch_crypto_generate_key())}}))
+    local c=assert(client:create_collection({name='worker',lease={owner='worker',private_read=true}}))
+    assert(c:append({append_id='before'},'{}'))
+    local phase,remaining=0,262144
+    local result=assert(c:edit({operation_id='worker-edit',expected_head=c:head().etag,
+      ranges={{after='0',through='1'}},replacement={append_id='body'},
+      recovery='worker',recovery_anchor='replacement'}, {read=function(cap)
+      local piece
+      if phase==0 then piece='{"data":"';phase=1
+      elseif remaining>0 then
+        local n=math.min(cap,4096,remaining);remaining=remaining-n;piece=string.rep('x',n)
+      elseif phase==1 then piece='"}';phase=2
+      else return nil end
+      local copy <close> = assert(buffer.from_materialized(piece))
+      return copy:read_materialized(0,#piece)
+    end}))
+    assert(result.deleted_count=='1' and result.replacement.position=='2')
+    local bytes=0
+    local _,progress,code=c:read({expected_head=result.head_etag},{write=function(piece)
+      assert(#piece<=65536)
+      local copy <close> = assert(buffer.from_materialized(piece))
+      bytes=bytes+#copy:read_materialized(0,#piece);return true
+    end})
+    assert(code==nil and progress.complete and bytes==262156)
+    assert(c:edit_status('worker-edit').found and c:head().recovery=='worker')
+    assert(c:release());client:close()
+  end
   local b <close> = assert(buffer.from_materialized(payload))
   local compressed, sent = {}, false
   assert(z.gzip_stream(function()

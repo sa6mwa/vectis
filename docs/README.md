@@ -23,7 +23,8 @@ an option is available or a release is approved.
 | [Supervisor/workflow specification](supervisor-workflow-spec.md) | Implemented serial scopes, channels and receipt dispatch; separately listed stronger remaining contracts. |
 | [Lua coverage](lua-coverage-matrix.md) | Supported native/convenience surfaces, behavior evidence and deliberate exclusions. |
 | [Musl worker-stack review](musl-stack-review.md) | Compiler frame inspection, owned workspaces and default pthread-stack regression. |
-| [liblockdc 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md) | Core/provider ABI, append writers, count retention, compression and verification. |
+| [liblockdc 0.27.0 upgrade](liblockdc-0.27.0-upgrade.md) | Pouch collection leases/edits, staged append, ABI 9 and resumable conversion. |
+| [liblockdc 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md) | Historical append-writer/count-retention upgrade evidence. |
 | [MDF 0.19.0 upgrade](libmdf-0.19.0-upgrade.md) | C89 systems repository migration and natural terminal URL wrapping. |
 | [MDF 0.18.0 upgrade](libmdf-0.18.0-upgrade.md) | Historical callback/ownership and palette upgrade evidence. |
 | [LQL 0.4.0 upgrade](liblql-0.4.0-upgrade.md) | Released facade, cleanup contracts and integration verification. |

@@ -38,6 +38,7 @@ typedef struct worker_case {
   int failed;
 } worker_case;
 int luaopen_libmdf_core(lua_State *lua);
+int luaopen_lockdc_core(lua_State *lua);
 
 static vectis_status read_lua(void *context, unsigned char *buffer,
                               size_t capacity, size_t *size,
@@ -81,6 +82,8 @@ static int lua_case(const worker_case *test) {
   luaL_openlibs(L);
   luaL_requiref(L, "libmdf.core", luaopen_libmdf_core, 0);
   lua_setglobal(L, "stack_mdf");
+  luaL_requiref(L, "lockdc.core", luaopen_lockdc_core, 0);
+  lua_setglobal(L, "stack_lockdc");
   luaL_requiref(L, "vectis.buffer.core", luaopen_vectis_buffer_core, 0);
   lua_pop(L, 1);
   luaL_requiref(L, "vectis.sqlite.core", luaopen_vectis_sqlite_core, 0);
@@ -126,6 +129,55 @@ static int lua_case(const worker_case *test) {
   lua_close(L);
   return 0;
 }
+static int lockdc_edit_case(lc_collection *collection, lc_error *error) {
+  lc_collection_head_res *head;
+  lc_collection_lease_req lease;
+  lc_collection_lease_info ownership;
+  lc_collection_edit_req edit;
+  lc_collection_edit_range range;
+  lc_collection_edit_res result;
+  lc_collection_edit_status_res status;
+  lc_collection_append_req replacement;
+  lc_collection *owner = NULL;
+  lc_source *source = NULL;
+  head = (lc_collection_head_res *)malloc(sizeof(*head));
+  CHECK(head != NULL);
+  lc_collection_lease_req_init(&lease);
+  lease.owner = "worker";
+  lease.private_read = 1;
+  CHECK(lc_collection_acquire(collection, &lease, &owner, error) == LC_OK);
+  CHECK(lc_collection_keepalive(owner, 60L, &ownership, error) == LC_OK &&
+        ownership.active);
+  CHECK(lc_collection_head(owner, head, error) == LC_OK);
+  lc_collection_append_req_init(&replacement);
+  replacement.append_id = "worker-edit-body";
+  lc_collection_edit_req_init(&edit);
+  edit.operation_id = "worker-edit";
+  edit.expected_head = head->etag;
+  range.after = 0u;
+  range.through = head->upper_position;
+  edit.ranges = &range;
+  edit.range_count = 1u;
+  edit.replacement = &replacement;
+  edit.has_recovery = 1;
+  edit.recovery = "checkpoint";
+  edit.recovery_anchor = UINT64_MAX;
+  CHECK(lc_source_from_memory("{}", 2u, &source, error) == LC_OK);
+  CHECK(lc_collection_edit(owner, &edit, source, &result, error) == LC_OK &&
+        result.published && result.deleted_count == 1u &&
+        result.live_count == 1u);
+  lc_source_close(source);
+  CHECK(lc_collection_edit_status(owner, "worker-edit", &status, error) ==
+            LC_OK &&
+        status.found);
+  CHECK(lc_collection_head(owner, head, error) == LC_OK &&
+        !strcmp(head->recovery, "checkpoint") &&
+        head->recovery_anchor_available);
+  CHECK(lc_collection_release(owner, error) == LC_OK);
+  free(head);
+  return 0;
+}
+
 static int lockdc_case(const char *root) {
   lc_client_config config;
   lc_pouch_settings settings;
@@ -202,6 +254,7 @@ static int lockdc_case(const char *root) {
   CHECK(lc_source_from_memory(chunk, 65536u, &source, &error) == LC_OK);
   CHECK(lc_copy(source, sink, &written, &error) == LC_OK && written == 65536u);
   lc_source_close(source);
+  CHECK(lockdc_edit_case(collection, &error) == 0);
   lc_sink_close(sink);
   lc_collection_close(collection);
   lc_client_close(client);

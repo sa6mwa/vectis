@@ -114,9 +114,11 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/src/vectis_lua_pdf.c"
     "${CMAKE_SOURCE_DIR}/src/vectis_lua_png.c"
     "${CMAKE_SOURCE_DIR}/src/vectis_lua_crypto.c"
+    "${CMAKE_SOURCE_DIR}/src/vectis_lua_lockdc.c"
     "${CMAKE_SOURCE_DIR}/src/vectis_lua_xml_objects.c")
   target_include_directories(vectis_unit_stack_worker PRIVATE "${CMAKE_SOURCE_DIR}/src")
-  target_sources(vectis_unit_stack_worker PRIVATE $<TARGET_OBJECTS:vectis_libmdf_lua>)
+  target_sources(vectis_unit_stack_worker PRIVATE $<TARGET_OBJECTS:vectis_libmdf_lua>
+    $<TARGET_OBJECTS:vectis_lockdc_lua>)
   target_link_libraries(vectis_unit_stack_worker PRIVATE ${vectis_test_link_target} cpkt::lua_runtime)
   vectis_configure_c89_target(vectis_unit_stack_worker)
   add_test(NAME vectis_unit_stack_worker COMMAND vectis_unit_stack_worker

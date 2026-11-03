@@ -25,8 +25,11 @@ assert(app:stop())
 app:close()
 ```
 
-Collections expose native `describe`, `metadata`, `append`, `append_begin`, `append_status`,
-`entry_metadata`, `read`, `delete_entry`, `drop` and `close` methods.
+Collections expose native `describe`, `metadata`, `append`, `append_staged`,
+`append_begin`, `append_status`, `entry_metadata`, `read`, `delete_entry`, `drop`,
+`acquire`, `takeover`, `keepalive`, `release`, `head`, `edit`, `edit_status` and
+`close` methods. The same methods remain directly available on upstream
+`require('lockdc')` collection receivers.
 `store:open_collection`, `store:list_collections(options, visitor)` and
 `store:collection_capabilities()` use the same app storage lifecycle. Positions
 and counts are exact decimal uint64 strings. Deletes leave permanent position
@@ -41,10 +44,54 @@ returns the same exact position/ETag/retention observations as pull `append`.
 Always close after success or failure. A commit error may follow publication:
 reconcile using `append_status` and the original append ID. The writer retains
 its native collection after explicit collection close; app stop closes writers
-and rejects subsequent calls through retained proxies. No producer thread,
-whole-value buffer or intermediate spool is introduced. Push commit publishes
-one canonical segment per item; pull append retains its shared-segment path.
+and rejects subsequent calls through retained proxies. No whole-value Lua
+buffer or producer thread is introduced. Native push writers
+stage up to 64 KiB of encoded data in heap memory, then spill to an anonymous
+file; encrypted roots spill ciphertext. Commit copies to shared rolling
+segments. This is staged publication, not end-to-end streaming.
 See [the incremental storage example](../examples/lua/storage_writer.lua).
+
+`append_staged(request, source)` explicitly consumes one source through that
+same staged writer, without publication locks during input. It never resets or
+automatically replays the source. Lua closes the source adapter on success and
+failure. Direct `append` retains streaming validation/encoding under append
+authority; use it for finite input that does not wait for external work.
+
+`collection:acquire({owner='journal', ttl_seconds=30, private_read=false})`
+returns another app-owned collection receiver with credentials. Equal owner
+labels do not share credentials. Creation can instead set `lease={...}` to
+establish ownership atomically. Unleased collections remain multiwriter.
+`takeover(request, describe().lease.lease_id)` replaces only the observed lease;
+stale owners/writers are fenced. Private ownership denies payload reads by other
+receivers, while describe/list/append-status remain available.
+
+Use `keepalive({ttl_seconds=30})` explicitly; renewal changes ownership expiry,
+not retention or the content head. `release()` releases ownership and closes
+the receiver on success; failure leaves it available for diagnosis/retry.
+Local close, GC and app stop do not release durable ownership. App stop aborts
+unfinished writers before closing their local owners. On restart acquire or
+explicitly take over using the current observation. No automatic renewal,
+takeover or retries are added.
+
+`head()` returns an opaque `etag`, exact decimal upper/live counts and bounded
+recovery metadata. `edit(request, source?)` atomically removes up to 64 sorted,
+disjoint `(after, through]` ranges and optionally publishes a streamed
+replacement plus recovery marker. Set `operation_id` and `expected_head` from
+`head().etag`; `replacement={append_id=...}` requires a raw JSON object source.
+The direct edit path streams without whole-value collection or spooling.
+Recovery text is at most 1024 UTF-8 bytes; omit to preserve or use `''` to clear.
+`recovery_anchor='replacement'` binds the new entry; anchors never pin payloads.
+
+`edit_status(operation_id)` returns the original receipt. Identical retries
+return that original outcome even after later mutations; changed requests
+conflict. A stale head reports native `error.current_head`; errors after
+publication carry `uncertain=true` and `result`. Reconcile using status or the
+identical original request. Vectis never rebases or retries automatically.
+`read({expected_head=...}, sink)` rejects a stale head before output; admitted
+readers retain their captured generation. Positions never renumber after edits,
+and edit receipts persist until collection drop.
+
+See [the leased collection/edit example](../examples/lua/pouch_collections.lua).
 
 Creation and collection `metadata` accept `max_entries="1000"`; describe/list
 return the limit as an exact decimal uint64 string. Omission preserves the

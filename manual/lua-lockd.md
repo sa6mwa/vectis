@@ -192,16 +192,28 @@ Native Pouch single-writer policy is preserved: explicitly use
 `single_writer=false` when the app and its workflow clients share an opened root.
 The app default selects shared-writer storage and encryption consistently.
 
-With liblockdc 0.24.0, omitted `pouch.compression` inherits the stored mode
+With liblockdc 0.27.0, omitted `pouch.compression` inherits the stored mode
 (`none` for a new root). Explicit `none` or `zlib` requests synchronous whole-root
 conversion before open returns, preserving states, attachments, collections and
-continuations. Allow startup time and disk room for the replacement tree.
+continuations. Conversion replaces one canonical segment/snapshot at a time;
+allow startup time, room for the largest replacement file and recovery/index
+metadata, plus final decompression growth. It no longer duplicates the root.
 Another live writer prevents conversion: upstream logs a warning and uses the
 stored mode for that open. Conversion errors fail open; interrupted publication
-is recovered at the next open. Request conversion while peer apps are stopped.
+is recovered at the next open even with compression omitted. Correct the cause
+and reopen; do not remove conversion intent/work metadata to bypass recovery.
+Request conversion while peer apps are stopped.
 App declarations copy options without opening storage; materialization remains
 after the applicable process/fork boundary. Existing typed-over-query precedence
 also applies to an explicit compression request.
+
+Pouch collections are available directly through `lockdc` and through
+[`app:storage()`](lua-storage.md), including leases, staged append and atomic
+edits. Stop all clients before first opening an older collection root: the
+upstream head upgrade requires exclusive access and returns
+`collection_upgrade_busy` if blocked. After upgrade, do not downgrade or mix
+older binaries with the root. Core ABI is 9; the matching PostgreSQL provider
+keeps ABI 0. Remote collections remain unsupported.
 
 App-level `lockd` settings use Vectis's native configuration: `endpoints`,
 `unix_socket_path`, `client_bundle="embedded"` (or `bundle`),

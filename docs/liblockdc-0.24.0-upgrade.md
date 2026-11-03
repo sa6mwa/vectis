@@ -1,5 +1,8 @@
 # liblockdc 0.24.0 upgrade
 
+Historical evidence for 0.24.0. Current collection capabilities, ABI and staged
+writer behavior are described in the [0.27.0 upgrade](liblockdc-0.27.0-upgrade.md).
+
 ## Specification and semantic review
 
 Baseline: `60bd3a3`, liblockdc/core and PostgreSQL provider 0.23.0,

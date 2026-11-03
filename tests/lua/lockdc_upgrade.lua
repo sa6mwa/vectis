@@ -143,4 +143,4 @@ assert(native:describe().live_count=='3' and native:append_status('push-1').entr
 local held=must(native:append_begin({append_id='direct-owned'}))
 native:close();direct:close();must(held:write('{}'));must(held:commit());held:close()
 collectgarbage('collect')
-print('upgrade seam behavior ok: liblockdc 0.24.0')
+print('upgrade seam behavior ok: liblockdc 0.27.0')

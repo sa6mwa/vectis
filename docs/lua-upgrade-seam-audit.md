@@ -1,5 +1,16 @@
 # Vectis Lua upgrade seam audit
 
+## liblockdc 0.27.0, 2026-11-03
+
+[Reviewed upgrade specification and evidence](liblockdc-0.27.0-upgrade.md)
+supersede older lockdc pins, ABI and push-publication descriptions below. Core
+ABI is 9/provider ABI 0; artifacts come from `c89systems/liblockdc`. Both direct
+Lua and Vectis-owned storage expose Pouch collections, leased receivers,
+explicit staged append, atomic edits/status and head-validated reads. App-owned
+descendants close on stop; durable ownership requires explicit release. The
+released Lua facade remains unchanged. Native conversion now resumes per-file
+replacement before client admission; older collection heads upgrade exclusively.
+
 ## MDF 0.19.0, 2026-11-03
 
 [Upgrade specification and evidence](libmdf-0.19.0-upgrade.md) supersede the MDF

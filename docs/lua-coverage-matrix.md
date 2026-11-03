@@ -5,10 +5,13 @@ at zero right margin and the released Lua lifetime fixes from 0.17.0.
 Native palette lookup remains upstream C-only. See the
 [upgrade review](libmdf-0.19.0-upgrade.md) for actual integration evidence.
 
-Current liblockdc 0.24.0 integration: released core ABI 7/provider ABI 0 and
-unchanged upstream Lua sources; app storage owns bounded push append writers.
-Collection count limits and atomic parent renewal propagate unchanged. See
-[upgrade review and verification](liblockdc-0.24.0-upgrade.md). LQL remains 0.4.0.
+Current liblockdc 0.27.0 integration: released core ABI 9/provider ABI 0 and
+unchanged upstream Lua sources; app storage owns collection/leased receivers and
+push writers. Staged append, lease control, atomic edits/status and head-validated
+reads are available directly and through app storage. Count limits and atomic
+parent renewal propagate unchanged. Push publication uses explicit native encoded
+staging/spill; direct append/edit/read retain streaming. See
+[upgrade review and verification](liblockdc-0.27.0-upgrade.md). LQL remains 0.4.0.
 
 The active split-bundle upgrade adds app-owned collections/XA storage and
 `vectis.pg` to both embedded Lua and public C receiver surfaces. Its focused
@@ -68,7 +71,7 @@ Archive linkage awaits an upstream no-LZO variant; LZO is explicitly deferred.
 | dep:sqlite | cpkt SQLite | yes | yes | yes | yes | n/a | Standalone open/prepare/bind/row iteration/reset/exec/transactions and copied `app:sqlite` declarations use public C89 APIs. Exact integers, NULL/text/blob, errors, parent closure, process/thread ownership and allocation failures have focused checks. App declarations open after startup/fork, invalidate children on stop/restart and detach on app close. See `manual/lua-sqlite.md`. |
 | dep:lockdc-postgres | Separate liblockdc PostgreSQL XA driver | yes | yes | yes | yes | yes | Official `require("lockdc.postgres")` and `vectis.libs.lockdc_postgres` register the linked participant. `vectis.pg` adapts its exact managed borrow through public C89 APIs. Real rootless Podman Kube tests prove commit, abort, poisoned SQL errors, binary/text/NULL parameters and retained commit recovery after coordinator restart without SQL replay. This remains the distinct XA ownership path alongside standalone SQL receivers. |
 | dep:lua-runtime | cpkt Lua 5.5 runtime facade | yes | yes | yes | yes | n/a | Runtime is embedded; not a user module. |
-| dep:lockdc | liblockdc / lockdc Lua module | yes | partial | yes | yes | n/a | `require("lockdc")` and `vectis.lockd`; JSON passthroughs, embedded bundle config DX, one-shot state save/load, and queue enqueue helpers are documented in `manual/lua-lockd.md`; official Pouch endpoint helpers preserve decoded grammar. App C/Lua captures all 17 typed Pouch settings with copied ownership; typed writer/encryption precedence and rejection are tested normal/packed. Workflow clients preserve typed-over-flat precedence and native app logger defaults. App storage owns incremental append writers; count limits and atomic parent renewal pass through unchanged, and compression conversion/inheritance passes normal/packed tests. Broader public APIs and direct upstream uint64 binding domains remain under the separate complete-facade specification; outbox gaps remain recorded below. |
+| dep:lockdc | liblockdc / lockdc Lua module | yes | partial | yes | yes | n/a | `require("lockdc")` and `vectis.lockd`; JSON passthroughs, embedded bundle config DX, one-shot state save/load, and queue enqueue helpers are documented in `manual/lua-lockd.md`; official Pouch endpoint helpers preserve decoded grammar. App C/Lua captures all 17 typed Pouch settings with copied ownership; typed writer/encryption precedence and rejection are tested normal/packed. Workflow clients preserve typed-over-flat precedence and native app logger defaults. App storage owns collection/leased receivers and staged push writers; direct and owned Lua expose acquire/takeover/keepalive/release, explicit staged append, head/edit/status and head-validated streaming reads. Count limits, parent renewal and resumable compression conversion pass normal/packed tests. Local close/stop retain durable lease ownership until explicit release/expiry. Broader public APIs and direct upstream uint64 binding domains remain under the separate complete-facade specification; outbox gaps remain recorded below. |
 | dep:lonejson | LoneJSON Lua module | yes | partial | yes | yes | n/a | Authoritative upstream facade auto-imported under `lonejson.upstream`; minimal root schema/rewrite overlay; runtime schemas, visitors, binary Base64, malformed JWT and PKCE behavior tested normal/packed; provider compile closure enabled. See `manual/lua-lonejson.md`. |
 | dep:pslog | Released libpslog Lua module | yes | yes | yes | yes | n/a | Upstream 0.12.0 C binding and Lua module are consumed unchanged. Existing constructors, fields, `with` and official C native-sink interop support Vectis logging. Local field/output/format/palette extensions were archived and removed; omitted C APIs are not Vectis gaps. Upstream OOM reports remain separate. See `docs/upstream-lua-facades.md`. |
 | dep:lql | Released liblql Lua module | yes | n/a | yes | yes | n/a | Upstream 0.4.0 binding and module are consumed unchanged, including scoped close and paired reader cleanup. Existing selector, streaming and spooled APIs retain upstream contracts. Local callback/AST/value/naming expansions remain removed. Native callback-memory regression passes; persistent-OOM closer-entry limits are recorded in `docs/liblql-0.4.0-upgrade.md`. No Vectis convenience workflow requires an extra mirror. |
@@ -135,8 +138,10 @@ Archive linkage awaits an upstream no-LZO variant; LZO is explicitly deferred.
 ## Completion Rules
 
 Current storage workflows also include `app:storage()` collection creation,
-opening, capabilities and listing; incremental append/read/resume with bounded
-JSON chunks and separate metadata; retention controls; managed XA operations
+opening, capabilities and listing; staged append/push writers and direct
+streaming append/read/resume with separate metadata; owned leases and explicit
+renewal/release/takeover; atomic edits/status and head-validated reads;
+retention controls; managed XA operations
 and exact PostgreSQL borrows. Public C equivalents are in `<vectis/storage.h>`
 and `<vectis/pg.h>`. C and normal/packed Lua tests cover cleanup, stop/restart,
 callback/source/sink failures, cancelled resume, native positions, poison/abort,

@@ -153,6 +153,18 @@ if(VECTIS_BUILD_BINARY)
       "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/lockdc_upgrade.lua"
       -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
   set_tests_properties(vectis_lua_lockdc_upgrade PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 20 RUN_SERIAL TRUE)
+  add_test(NAME vectis_lua_pouch_collections
+    COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+      "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/pouch-collections"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/pouch_collections.lua"
+      -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
+  set_tests_properties(vectis_lua_pouch_collections PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 20 RUN_SERIAL TRUE)
+  add_test(NAME vectis_example_pouch_collections
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "XDG_STATE_HOME=${CMAKE_BINARY_DIR}/tests/pouch-collection-example/state"
+      "XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/tests/pouch-collection-example/config"
+      "$<TARGET_FILE:vectis_bin>" "${CMAKE_SOURCE_DIR}/examples/lua/pouch_collections.lua")
+  set_tests_properties(vectis_example_pouch_collections PROPERTIES LABELS "lua;example-smoke;local" TIMEOUT 10 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_storage
     COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
       "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/storage"
