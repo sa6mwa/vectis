@@ -1,6 +1,6 @@
 local mdf = require("libmdf")
 local terminal = require("vectis.terminal")
-assert(mdf.version == "0.18.0")
+assert(mdf.version == "0.19.0")
 assert(require("vectis").libs.libmdf == mdf)
 assert(terminal.libs.libmdf == mdf)
 
@@ -30,6 +30,41 @@ local function streamed(render, text, opts, fragment)
 end
 
 local table_md = "| value |\n| --- |\n| `left\\|right` |\n"
+-- 0.19 keeps full URI bytes while terminal autowrap accounts for the cursor.
+local url = 'https://example.com/abcdefghijklmnopqrstuvwxyz'
+local url_cases = {
+  {url .. ' after\n', url},
+  {'[report](' .. url .. ') after\n', url},
+  {'- [report](' .. url .. ') after\n', url},
+  {'> - [report](' .. url .. ') after\n', url},
+  {'**' .. url .. '** after\n', url},
+  {'**https://example**.com/abcdefghijklmnopqrstuvwxyz after\n', url},
+  {'//localhost/abcdefghijklmnopqrstuvwxyz a b c d e f\n', '//localhost/abcdefghijklmnopqrstuvwxyz'},
+}
+for _, case in ipairs(url_cases) do
+  for _, left in ipairs({0, 2}) do
+    for _, mode in ipairs({'on', 'off'}) do
+      local options = {width=20, margin_left=left, margin_right=0, osc8=false, ansi_mode=mode}
+      local rendered = mdf.render(case[1], options)
+      assert(rendered:find(case[2], 1, true), 'URI must contain no newline, margin or style reset')
+      assert(terminal.markdown(case[1], options) == rendered)
+      for _, fragment in ipairs({1, 3, 64}) do
+        for _, render in ipairs({mdf.render_stream, terminal.markdown_stream}) do
+          local traced = {}
+          options.write_trace = function(_, chunk) traced[#traced+1]=chunk end
+          assert(streamed(render, case[1], options, fragment) == rendered)
+          assert(table.concat(traced) == rendered, 'trace and sink decisions agree')
+        end
+      end
+    end
+  end
+end
+local hard = mdf.render(url..'\n', {width=20,margin_right=2,ansi_mode='off'})
+assert(not hard:find(url,1,true), 'positive margin keeps hard URL wraps')
+-- Exact right edge: the next word must use the delayed-wrap cursor state.
+local edge = '//abcdefghijklmnopqr' -- exactly 20 columns
+assert(mdf.render(edge..' a b\n',{width=20,ansi_mode='off'}) == edge..'\na b\n')
+
 for _, format in ipairs({"html", "deck"}) do
   local opts = {format = format}
   local html = mdf.render(table_md, opts)

@@ -76,7 +76,7 @@ int vectis_install_useful_facades(void) {
   unsigned long id;
   int row;
   CHECK(strcmp(lc_version_string(), "0.24.0") == 0);
-  CHECK(strcmp(LIBMDF_VERSION, "0.18.0") == 0);
+  CHECK(strcmp(LIBMDF_VERSION, "0.19.0") == 0);
   CHECK(mdf_theme_get_palette("default", &palette) == MDF_OK);
   CHECK(strcmp(palette.name, "default") == 0 &&
         palette.heading[0][0] == '\033');

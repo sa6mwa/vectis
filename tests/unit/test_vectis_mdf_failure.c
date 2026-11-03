@@ -9,7 +9,7 @@ static void palette_contract(void) {
   mdf *renderer = NULL;
   char heading[MDF_THEME_FOREGROUND_SIZE], *output = NULL;
   int level;
-  assert(strcmp(LIBMDF_VERSION, "0.18.0") == 0);
+  assert(strcmp(LIBMDF_VERSION, "0.19.0") == 0);
   memset(&palette, 0xa5, sizeof(palette));
   assert(mdf_theme_get_palette("DEFAULT", &palette) == MDF_OK);
   assert(strcmp(palette.name, "default") == 0);
@@ -43,6 +43,31 @@ static void palette_contract(void) {
   renderer->destroy(renderer);
 }
 
+static void terminal_url_contract(void) {
+  mdf_options options;
+  mdf *renderer = NULL;
+  char *output = NULL;
+  int right;
+  const char *url = "https://example.com/abcdefghijklmnopqrstuvwxyz";
+  for (right = 0; right <= 2; right += 2) {
+    mdf_options_init(&options);
+    options.ansi_mode = MDF_ANSI_ON;
+    options.width = 20;
+    options.margin_left = 2;
+    options.margin_right = right;
+    options.osc8 = 0;
+    assert(mdf_create(MDF_FORMAT_ANSI, &options, &renderer) == MDF_OK);
+    assert(renderer->render_cstr(
+               renderer,
+               "- [report](https://example.com/abcdefghijklmnopqrstuvwxyz) "
+               "after\n",
+               &output) == MDF_OK);
+    assert((strstr(output, url) != NULL) == (right == 0));
+    renderer->string_free(renderer, output);
+    renderer->destroy(renderer);
+  }
+}
+
 int main(void) {
   mdf_options options;
   mdf *renderer;
@@ -52,6 +77,7 @@ int main(void) {
   int mode;
 
   palette_contract();
+  terminal_url_contract();
   for (mode = 0; mode < 3; ++mode) {
     mdf_options_init(&options);
     options.ansi_mode = MDF_ANSI_ON;

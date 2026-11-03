@@ -337,7 +337,15 @@ static void test_render_destination(int terminal) {
   int saved_stdout;
   char output[1024];
   ssize_t length;
-  const char *markdown = "# Destination\n\n**styled** UTF-8: café\n";
+  const char *url = "https://example.com/abcdefghijklmnopqrstuvwxyz/"
+                    "abcdefghijklmnopqrstuvwxyz/"
+                    "abcdefghijklmnopqrstuvwxyz";
+  const char *markdown =
+      "# Destination\n\n**styled** UTF-8: café\n\n"
+      "- "
+      "[report](https://example.com/abcdefghijklmnopqrstuvwxyz/"
+      "abcdefghijklmnopqrstuvwxyz/"
+      "abcdefghijklmnopqrstuvwxyz) after\n";
 
   memset(&render, 0, sizeof(render));
   render.notify_fd = -1;
@@ -366,6 +374,7 @@ static void test_render_destination(int terminal) {
   output[length] = '\0';
   assert(strstr(output, "Destination") != NULL);
   assert(strstr(output, "café") != NULL);
+  assert(strstr(output, url) != NULL);
   if (terminal) {
     assert(strstr(output, "\033[") != NULL);
   } else {

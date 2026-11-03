@@ -8,7 +8,7 @@ function stack_read(capacity)
   if calls > 1 then return nil end
   local phase, emitted, offset = 0, 0, 1
   local markdown = string.rep('bounded ',1024)..'\n'
-  assert(stack_mdf.version == '0.18.0')
+  assert(stack_mdf.version == '0.19.0')
   assert(stack_mdf.render_stream(function(cap)
     phase=phase+1
     if phase==1 then return '# Stack\n\n' end
@@ -23,6 +23,18 @@ function stack_read(capacity)
     assert(copy:read_materialized(0,#chunk)==chunk)
     emitted=emitted+#chunk;copy:close();return true
   end,{format='html',disable_embedded_font=true}))
+  local address='https://example.com/abcdefghijklmnopqrstuvwxyz'
+  local position,tail=1,''
+  local text='- **'..address..'** after\n'
+  assert(stack_mdf.render_stream(function(cap)
+    if position>#text then return nil end
+    local last=math.min(#text,position+math.min(cap,3)-1)
+    local chunk=text:sub(position,last);position=last+1;return chunk
+  end,function(chunk)
+    local copy <close> = assert(buffer.from_materialized(chunk))
+    tail=(tail..copy:read_materialized(0,#chunk)):sub(-256)
+  end,{width=20,margin_left=2,margin_right=0,ansi_mode='on',osc8=false}))
+  assert(tail:find(address,1,true))
   local b <close> = assert(buffer.from_materialized(payload))
   local compressed, sent = {}, false
   assert(z.gzip_stream(function()

@@ -1,5 +1,14 @@
 # Vectis Lua upgrade seam audit
 
+## MDF 0.19.0, 2026-11-03
+
+[Upgrade specification and evidence](libmdf-0.19.0-upgrade.md) supersede the MDF
+pin status below. All MDF assets now come from `c89systems/libmdf`. ABI remains
+6; released Lua files are unchanged. Zero-right-margin ANSI URLs remain
+contiguous through natural terminal wraps, including styled and list input.
+Existing terminal helpers, Smith and native docs paging consume this behavior
+through their current interfaces; no provider extension is added.
+
 ## MDF 0.18.0, 2026-10-29
 
 [Upgrade specification and evidence](libmdf-0.18.0-upgrade.md) supersede older MDF

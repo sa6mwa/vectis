@@ -1,5 +1,8 @@
 # MDF 0.18.0 upgrade
 
+Historical verification for the 0.18.0 upgrade; current MDF selection and new
+rendering behavior are recorded in the [0.19.0 review](libmdf-0.19.0-upgrade.md).
+
 ## Reviewed specification
 
 Baseline `14c425e` selects MDF 0.16.0. Upgrade all seven SDK pins and the released

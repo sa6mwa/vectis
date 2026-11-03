@@ -50,6 +50,12 @@ assert(editor:buffer() == "vectis terminal")
 editor:close()
 ```
 
-The bundled MDF 0.18.0 includes the upstream callback, result-copy and font/token
+The bundled MDF 0.19.0 includes the upstream callback, result-copy and font/token
 ownership fixes from 0.17.0. Options still pass through unchanged. Native palette
 lookup is available in the C SDK; the upstream Lua facade has no palette API.
+
+With OSC8 off and a zero right margin, MDF preserves contiguous visible URLs
+using natural terminal wraps, including styled and list URLs. Set `width` to
+the physical terminal columns. Continuation rows add no left-margin bytes;
+positive right margins retain hard wrapping. These options pass through both
+`markdown` and `markdown_stream`.

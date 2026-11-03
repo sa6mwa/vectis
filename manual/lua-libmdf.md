@@ -22,6 +22,8 @@ Common options:
 - `format = "html"` for HTML output.
 - `format = "deck"` for HTML slides.
 - `width = n` to constrain wrapping where the renderer supports it.
+- `margin_left = n` and `margin_right = n` to set ANSI margins.
+- `osc8 = true` to request explicit terminal hyperlinks when ANSI is enabled.
 - `ansi_mode = "auto"|"on"|"off"` to control ANSI escapes independently of
   decoration. The default `auto` enables styling only for a known terminal.
 - `output_fd = libmdf.file_descriptor(io.stdout)` to detect the actual output
@@ -36,10 +38,18 @@ HTML rendering is unaffected.
 time and returns `nil` at EOF; the writer receives output chunks as they are
 produced. Do not treat it as a buffered string helper.
 
-The bundled libmdf 0.18.0 preserves hyperlink labels, punctuation and enclosing
+The bundled libmdf 0.19.0 preserves hyperlink labels, punctuation and enclosing
 styles across fragmented ANSI input and wrapping. Escaped table pipes render
 as literal `|`, including inside inline code. HTML and deck output declare each
 default font style once, with a variable weight range of 400–700.
+
+With OSC8 off and `margin_right = 0`, visible URLs outside table cells remain
+byte-contiguous, including styled URLs and list destinations. The terminal
+wraps them naturally; continuation rows have no inserted left margin. Set
+`width` to the physical terminal column count so following text starts at the
+correct cursor position. A positive right margin retains hard URL wrapping.
+Click detection belongs to the terminal/multiplexer; OSC8 is an optional
+alternative for supporting terminals and tmux configurations.
 
 For incremental documents, use dependency-native
 `libmdf.document_stream(opts, writer)` and its `write`, `finish_document` and
