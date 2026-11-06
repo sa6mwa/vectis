@@ -5,13 +5,16 @@ at zero right margin and the released Lua lifetime fixes from 0.17.0.
 Native palette lookup remains upstream C-only. See the
 [upgrade review](libmdf-0.19.0-upgrade.md) for actual integration evidence.
 
-Current liblockdc 0.27.0 integration: released core ABI 9/provider ABI 0 and
-unchanged upstream Lua sources; app storage owns collection/leased receivers and
+Current liblockdc 0.28.0 integration: released core ABI 9/provider ABI 0 and
+unmodified upstream Lua sources; app storage owns collection/leased receivers and
 push writers. Staged append, lease control, atomic edits/status and head-validated
 reads are available directly and through app storage. Count limits and atomic
-parent renewal propagate unchanged. Push publication uses explicit native encoded
-staging/spill; direct append/edit/read retain streaming. See
-[upgrade review and verification](liblockdc-0.27.0-upgrade.md). LQL remains 0.4.1.
+parent renewal propagate unchanged. Push and `append_staged` now stream bounded
+codec chunks directly into canonical storage without whole-entry staging/spill;
+direct append/edit/read retain streaming. Every shared-root client must upgrade
+before chunked writes; older clients cannot read them. See
+[upgrade review and verification](liblockdc-0.28.0-upgrade.md). LoneJSON is 0.46.0
+(ABI 26), pslog is 0.13.0, and LQL remains 0.4.1. Upstream facades are unmodified.
 
 The active split-bundle upgrade adds app-owned collections/XA storage and
 `vectis.pg` to both embedded Lua and public C receiver surfaces. Its focused

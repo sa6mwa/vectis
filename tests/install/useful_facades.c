@@ -78,7 +78,7 @@ int vectis_install_useful_facades(void) {
   lc_collection_read_opts collection_read;
   lc_collection_edit_req collection_edit;
   lc_collection_lease_req collection_lease;
-  CHECK(strcmp(lc_version_string(), "0.27.0") == 0);
+  CHECK(strcmp(lc_version_string(), "0.28.0") == 0);
   CHECK(LC_COLLECTION_EDIT_MAX_RANGES == 64U);
   lc_collection_read_opts_init(&collection_read);
   CHECK(collection_read.expected_head == NULL);

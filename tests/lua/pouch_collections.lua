@@ -1,6 +1,6 @@
 local v,lc=require('vectis'),require('lockdc')
 local root=assert(os.getenv('VECTIS_UPGRADE_TEST_ROOT'))
-assert(lc.version_string()=='0.27.0')
+assert(lc.version_string()=='0.28.0')
 assert(v.libs.lockdc==lc)
 local function must(value,err)
   assert(value~=nil,debug.traceback(type(err)=='table' and err.message or tostring(err),2))
@@ -21,7 +21,7 @@ for _,owned in ipairs({false,true}) do
   for _,encrypted in ipairs({false,true}) do
     local config={endpoints={'pouch://'..root..'/'..tostring(owned)..'-'..tostring(encrypted)},
       logger_disabled=true,pouch={single_writer=false,background_compaction=false,
-        compression=encrypted and 'zlib' or 'none',
+        compression=encrypted and 'zlib' or 'none',segment_target_bytes=131072,
         crypto_key=(owned or encrypted) and must(lc.pouch_crypto_generate_key()) or nil}}
     local app,store
     if owned then
@@ -33,6 +33,34 @@ for _,owned in ipairs({false,true}) do
     local caps=must(store:collection_capabilities())
     assert(caps.collections and caps.append_staged and caps.append_writer and caps.leases
       and caps.lease_takeover and caps.private_reads and caps.atomic_edit)
+    -- Interleave a producer larger than the native codec chunk with another
+    -- publication. Pending chunks stay invisible until the final entry commit.
+    local streaming=must(store:create_collection({namespace='stream',name='chunks'}))
+    local pending=must(streaming:append_begin({append_id='large-push'}))
+    must(pending:write('{"data":"'))
+    local expected=must(v.digest.new('sha256'))
+    must(expected:update('{"data":"'))
+    for n=1,32 do
+      local piece=string.rep('x',4096)
+      must(pending:write(piece));must(expected:update(piece))
+      if n==16 then
+        assert(read(streaming)=='')
+        assert(must(streaming:append({append_id='peer'},'{"first":true}')).position=='1')
+      end
+    end
+    assert(read(streaming)=='{"first":true}\n')
+    must(pending:write('"}'));must(expected:update('"}\n'))
+    local published=must(pending:commit());pending:close()
+    assert(published.position=='2' and published.bytes=='131083')
+    local observed=must(v.digest.new('sha256'))
+    local count,pieces=0,0
+    local _,done,rc=streaming:read({after='1'},{write=function(piece)
+      assert(#piece<=65536);count=count+#piece;pieces=pieces+1
+      must(observed:update(piece));return true
+    end})
+    assert(rc==nil and done.complete and count==131084 and pieces>1)
+    assert(observed:final_hex()==expected:final_hex())
+    observed:close();expected:close();streaming:close()
     local owner=must(store:create_collection({namespace='journal',name='events',max_entries='100',
       lease={owner='initial',ttl_seconds=60,private_read=true}}))
     local public=must(store:open_collection({namespace='journal',name='events'}))
@@ -61,7 +89,8 @@ for _,owned in ipairs({false,true}) do
     rejected(owner:keepalive({ttl_seconds=60}));rejected(owner:release())
     owner:close()
     assert(public:append_status('fenced').state=='absent')
-    -- Explicit staged pull is single-pass, closes its adapter, and never resets.
+    -- The named staged pull streams through the canonical writer, closes its
+    -- adapter exactly once, and never resets or replays input.
     local function source(fail)
       local part,closed=0,0
       return {read=function(cap)

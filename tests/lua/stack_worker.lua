@@ -37,7 +37,7 @@ function stack_read(capacity)
   assert(tail:find(address,1,true))
   do
     -- Keep the native digest frame active across released collection callbacks.
-    assert(stack_lockdc.version_string()=='0.27.0')
+    assert(stack_lockdc.version_string()=='0.28.0')
     local client=assert(stack_lockdc.open({endpoints={'pouch://'..stack_root..'/lua-collections'},
       logger_disabled=true,pouch={background_compaction=false,compression='zlib',
         crypto_key=assert(stack_lockdc.pouch_crypto_generate_key())}}))

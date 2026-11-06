@@ -45,17 +45,24 @@ Always close after success or failure. A commit error may follow publication:
 reconcile using `append_status` and the original append ID. The writer retains
 its native collection after explicit collection close; app stop closes writers
 and rejects subsequent calls through retained proxies. No whole-value Lua
-buffer or producer thread is introduced. Native push writers
-stage up to 64 KiB of encoded data in heap memory, then spill to an anonymous
-file; encrypted roots spill ciphertext. Commit copies to shared rolling
-segments. This is staged publication, not end-to-end streaming.
+buffer or producer thread is introduced. With liblockdc 0.28.0, bounded native
+codec chunks flow directly into shared canonical segments, including compression
+and encryption. Commit atomically publishes the entry without copying its
+payload. No whole-entry buffer or temporary spool is used.
 See [the incremental storage example](../examples/lua/storage_writer.lua).
 
 `append_staged(request, source)` explicitly consumes one source through that
-same staged writer, without publication locks during input. It never resets or
+same streaming writer, without publication locks during input. The retained
+`append_staged` name does not imply whole-entry staging. It never resets or
 automatically replays the source. Lua closes the source adapter on success and
 failure. Direct `append` retains streaming validation/encoding under append
 authority; use it for finite input that does not wait for external work.
+
+Upgrade every client sharing a Pouch root to 0.28.0 before using push or
+`append_staged`. Existing contiguous entries remain readable, but these paths
+can write chunk/index records older libraries cannot read. Do not downgrade
+after writing them. This storage commitment is independent of the unchanged
+core ABI 9 and PostgreSQL provider ABI 0.
 
 `collection:acquire({owner='journal', ttl_seconds=30, private_read=false})`
 returns another app-owned collection receiver with credentials. Equal owner

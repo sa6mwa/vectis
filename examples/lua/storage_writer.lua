@@ -8,8 +8,8 @@ local collection = assert(store:create_collection({
 local writer = assert(collection:append_begin({
   append_id=require('lockdc').xid_new(),collection_retention_seconds=7776000,
 }))
--- Native encoded staging stays in bounded memory, spilling large items to an
--- anonymous file. Publication into a shared segment happens only at commit.
+-- Bounded native codec chunks flow directly into shared canonical segments.
+-- Commit atomically publishes the entry; it does not copy a whole staged body.
 assert(writer:write('{"message":"'))
 assert(writer:write('hello'))
 assert(writer:write('"}'))

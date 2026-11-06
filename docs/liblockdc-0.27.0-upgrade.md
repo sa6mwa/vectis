@@ -1,5 +1,9 @@
 # liblockdc 0.27.0 upgrade
 
+Historical evidence for 0.27.0. The [0.28.0 upgrade](liblockdc-0.28.0-upgrade.md)
+supersedes its current-version and encoded staging/spill descriptions; push and
+staged append now stream directly into canonical segments.
+
 ## Reviewed specification
 
 Baseline `c10a03e` selects liblockdc 0.24.0. Upgrade the seven core SDKs,

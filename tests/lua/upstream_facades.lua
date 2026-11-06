@@ -10,6 +10,19 @@ local child = root:with('operation','upstream facade','attempt',1)
 child:info('existing derivation')
 assert(child:close() and root:close())
 assert(table.concat(chunks):find('"operation":"upstream facade"',1,true))
+-- A callback/output/owner cycle must be collectable in the embedded VM.
+local weak=setmetatable({}, {__mode='v'})
+do
+  local owner={}
+  owner.logger=assert(pslog.new_json({output=function(chunk)
+    owner.last=chunk
+  end,disable_timestamp=true,no_color=true}))
+  weak[1]=owner;weak[2]=owner.logger
+  owner.logger:info('callback owner cycle')
+  assert(owner.last:find('callback owner cycle',1,true))
+end
+collectgarbage('collect');collectgarbage('collect')
+assert(weak[1]==nil and weak[2]==nil)
 assert(vectis.log.native == pslog)
 local client <close> = assert(lql.new())
 assert(client:capabilities().stream_apply_spooled == true)

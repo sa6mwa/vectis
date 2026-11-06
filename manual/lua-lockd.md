@@ -192,7 +192,7 @@ Native Pouch single-writer policy is preserved: explicitly use
 `single_writer=false` when the app and its workflow clients share an opened root.
 The app default selects shared-writer storage and encryption consistently.
 
-With liblockdc 0.27.0, omitted `pouch.compression` inherits the stored mode
+With liblockdc 0.28.0, omitted `pouch.compression` inherits the stored mode
 (`none` for a new root). Explicit `none` or `zlib` requests synchronous whole-root
 conversion before open returns, preserving states, attachments, collections and
 continuations. Conversion replaces one canonical segment/snapshot at a time;
@@ -214,6 +214,12 @@ upstream head upgrade requires exclusive access and returns
 `collection_upgrade_busy` if blocked. After upgrade, do not downgrade or mix
 older binaries with the root. Core ABI is 9; the matching PostgreSQL provider
 keeps ABI 0. Remote collections remain unsupported.
+
+For 0.28.0, upgrade all clients sharing a root before push or `append_staged`
+writes. These now stream bounded codec chunks directly into canonical segments
+and can publish chunk/index records unreadable by older clients. Existing
+contiguous entries remain readable; do not downgrade after writing chunked
+entries. Vectis adds no format migration or automatic producer replay.
 
 App-level `lockd` settings use Vectis's native configuration: `endpoints`,
 `unix_socket_path`, `client_bundle="embedded"` (or `bundle`),

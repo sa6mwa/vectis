@@ -64,9 +64,9 @@ archive cache. The current expected dependency set is:
 - `cpktdb` 0.3.1 for the PostgreSQL and SQLite C89 facades.
 - `cpktmisc` 0.2.1 for OPC UA, audio/miniaudio, SUS/whisper and the optional
   data/compression/PDF/PNG/FFI facades. Each bundle keeps its own SDK prefix.
-- `liblockdc` 0.27.0 plus its separate PostgreSQL XA provider for lockd C and
+- `liblockdc` 0.28.0 plus its separate PostgreSQL XA provider for lockd C and
   Lua surfaces, incremental Pouch collections, count/state retention and transactional workflows.
-- `lonejson` 0.45.0 for typed JSON parsing, serialization, streaming arrays,
+- `lonejson` 0.46.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
 - `cai` 0.6.0 for OpenAI API, agent runtime, Smith preset, tool, MCP, and Lua
   binding sources.
@@ -75,7 +75,7 @@ archive cache. The current expected dependency set is:
   binding sources.
 - `softline` 0.13.0 for line editing, terminal prompt UX, and Lua binding
   sources.
-- `libpslog` 0.12.0 for structured logging and Lua binding sources.
+- `libpslog` 0.13.0 for structured logging and Lua binding sources.
 - `libpid0` 0.5.0 for Linux PID 1 behavior in the `vectis` executable.
 
 Vectis validates the dependency manifest during CMake configure. A stale or

@@ -1,5 +1,18 @@
 # Vectis Lua upgrade seam audit
 
+## liblockdc 0.28.0, LoneJSON 0.46.0 and pslog 0.13.0, 2026-11-06
+
+[Upgrade specification and evidence](liblockdc-0.28.0-upgrade.md) supersede
+the older pins and native staging/spill descriptions below. Core ABI remains
+9/provider ABI 0, LoneJSON ABI 26; public dependency interfaces remain unchanged.
+Push and `append_staged` now stream bounded codec chunks into canonical segments
+and publish atomically without a whole-entry spool or commit-time payload copy.
+Existing contiguous entries remain readable. All shared-root clients must upgrade
+before chunked writes; do not downgrade afterward. Direct and app-owned Lua
+collection ownership and explicit source/cancellation contracts remain intact.
+Released dependency Lua facades are consumed unchanged. Vectis retains its
+convenience APIs without adding provider methods or a second storage engine.
+
 ## LQL 0.4.1, 2026-11-03
 
 [Reviewed upgrade and evidence](liblql-0.4.1-upgrade.md) supersede older LQL pin

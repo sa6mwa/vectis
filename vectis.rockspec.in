@@ -19,7 +19,7 @@ Stateful manual outbox renewal requires liblockdc 0.23.0 or later. Managed
 PostgreSQL XA also requires the matching linked provider and Vectis native core.
 App-owned Pouch collections, leases, atomic edits, staged append writers,
 count retention and resumable compression conversion use the released
-liblockdc 0.27.0 surface unchanged.
+liblockdc 0.28.0 surface unchanged.
   ]],
   homepage = "https://github.com/sa6mwa/vectis",
   license = "MIT",
