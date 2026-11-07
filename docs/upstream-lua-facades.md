@@ -4,6 +4,12 @@ Current LQL selection is [0.4.1](liblql-0.4.1-upgrade.md) from
 `c89systems/liblql`. Its runtime and Lua sources are identical to 0.4.0; the
 cleanup contracts and persistent-OOM closer-entry limit below remain unchanged.
 
+Current MDF selection is [0.23.0](libmdf-0.23.0-upgrade.md). Its released facade
+now supplies literal writes, escaping, word-buffer controls and cancellable
+bounded file paging. Vectis consumes those APIs unchanged; its embedded-docs
+pager separately uses the public seekable C source interface. Native palette
+lookup remains C-only and does not require a current Vectis Lua workflow.
+
 Vectis consumes the released pslog, LQL and MDF Lua facades unchanged. Their
 omitted C operations may be deliberate API or performance choices. Native C
 declaration parity is not a reason to extend, rename or patch these facades.

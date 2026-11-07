@@ -1,7 +1,39 @@
 #include <libmdf.h>
 
 #include <assert.h>
+#include <stdlib.h>
 #include <string.h>
+
+static void terminal_detection_contract(void) {
+  assert(unsetenv("DOMTERM") == 0 && unsetenv("WT_SESSION") == 0);
+  assert(unsetenv("TERM_PROGRAM") == 0 && unsetenv("VTE_VERSION") == 0);
+  assert(unsetenv("OSC8") == 0 && setenv("TERM", "xterm-256color", 1) == 0);
+  assert(mdf_detect_osc8_support() == 1);
+  assert(setenv("OSC8", "0", 1) == 0);
+  assert(mdf_detect_osc8_support() == 0);
+  assert(unsetenv("OSC8") == 0 && setenv("VTE_VERSION", "4000", 1) == 0);
+  assert(mdf_detect_osc8_support() == 0);
+}
+
+static void literal_contract(void) {
+  mdf_options options;
+  mdf *renderer = NULL;
+  char *escaped = NULL, *output = NULL;
+  mdf_options_init(&options);
+  options.ansi_mode = MDF_ANSI_OFF;
+  assert(mdf_create(MDF_FORMAT_ANSI, &options, &renderer) == MDF_OK);
+  assert(renderer->set_word_buffer(renderer, 8u, 1) == MDF_OK);
+  assert(renderer->set_word_buffer(renderer, 65537u, 0) == MDF_ERROR_INVALID);
+  assert(renderer->set_word_buffer(renderer, 4096u, 0) == MDF_OK);
+  assert(renderer->escape_markdown(renderer, "**literal**", &escaped) ==
+         MDF_OK);
+  assert(strcmp(escaped, "\\*\\*literal\\*\\*") == 0);
+  assert(renderer->render_cstr(renderer, escaped, &output) == MDF_OK);
+  assert(strcmp(output, "**literal**\n") == 0);
+  renderer->string_free(renderer, output);
+  renderer->string_free(renderer, escaped);
+  renderer->destroy(renderer);
+}
 
 static void palette_contract(void) {
   mdf_theme_palette palette, saved, configured;
@@ -9,7 +41,7 @@ static void palette_contract(void) {
   mdf *renderer = NULL;
   char heading[MDF_THEME_FOREGROUND_SIZE], *output = NULL;
   int level;
-  assert(strcmp(LIBMDF_VERSION, "0.19.0") == 0);
+  assert(strcmp(LIBMDF_VERSION, "0.23.0") == 0);
   memset(&palette, 0xa5, sizeof(palette));
   assert(mdf_theme_get_palette("DEFAULT", &palette) == MDF_OK);
   assert(strcmp(palette.name, "default") == 0);
@@ -78,6 +110,8 @@ int main(void) {
 
   palette_contract();
   terminal_url_contract();
+  terminal_detection_contract();
+  literal_contract();
   for (mode = 0; mode < 3; ++mode) {
     mdf_options_init(&options);
     options.ansi_mode = MDF_ANSI_ON;

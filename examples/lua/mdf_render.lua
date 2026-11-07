@@ -36,4 +36,10 @@ end, {
 
 assert(ok == true)
 assert(saw_heading and saw_body)
+-- Literal fragments share normal wrapping without interpreting Markdown.
+local literal = libmdf.new({ansi_mode='off'})
+assert(literal:set_sink(function(chunk)io.write(chunk)end))
+assert(literal:set_word_buffer(4096,false)) -- larger words may use bounded backing
+assert(literal:write_literal('**literal punctuation** foo_bar\n'))
+assert(literal:finish());literal:close()
 print("lua mdf render example ok")

@@ -1,5 +1,17 @@
 # Vectis Lua upgrade seam audit
 
+## MDF 0.23.0, 2026-11-07
+
+The [upgrade review](libmdf-0.23.0-upgrade.md) supersedes MDF pins, ABI and pager
+and table-retention descriptions below. Consume the released ABI 7 SDKs and Lua
+facade unchanged. Docs paging borrows seekable embedded bytes, eliminating the
+forward-only API's new 1 MiB input ceiling without a materialized/spooled manual.
+Default rendered cache is 1 MiB, with separate bounded search/index workspace.
+Existing terminal render helpers forward options; literal/escape/word-buffer
+and cancellable file-pager operations remain directly available upstream.
+Full ANSI/HTML tables switch to row output at retention limits. Word storage
+has explicit memory, optional file-backing and truncation limits in the manual.
+
 ## liblockdc 0.28.0, LoneJSON 0.46.0 and pslog 0.13.0, 2026-11-06
 
 [Upgrade specification and evidence](liblockdc-0.28.0-upgrade.md) supersede

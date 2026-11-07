@@ -38,7 +38,7 @@ HTML rendering is unaffected.
 time and returns `nil` at EOF; the writer receives output chunks as they are
 produced. Do not treat it as a buffered string helper.
 
-The bundled libmdf 0.19.0 preserves hyperlink labels, punctuation and enclosing
+The bundled libmdf 0.23.0 preserves hyperlink labels, punctuation and enclosing
 styles across fragmented ANSI input and wrapping. Escaped table pipes render
 as literal `|`, including inside inline code. HTML and deck output declare each
 default font style once, with a variable weight range of 400–700.
@@ -56,8 +56,51 @@ For incremental documents, use dependency-native
 `close` methods. Manual-token rendering uses `libmdf.new(opts)`, `set_sink`,
 `write_token` and `finish`; `finish` emits any deferred link label and repeated
 successful finish does not duplicate output. Reader/writer failures are
-observable errors. Rendering may retain unfinished layout decisions; HTML
-tables retain the whole table and ANSI tables follow `table_buffer_mode`.
+observable errors. Rendering retains unfinished layout decisions. ANSI and HTML
+tables follow `table_buffer_mode = "full"|"row"`. Full mode switches to row
+output after 65536 retained bytes or 1024 rows, continuing the same table. A
+single pending row/prefix exceeding the limit fails; charts have a separate
+65536-byte limit. Decks retain one slide at a time.
+
+For literal fragments, use a handle's `write_literal(text)`, then `finish()`;
+Markdown punctuation, entities and escapes remain literal, while normal word
+wrapping applies. Manual tokens also accept `type = "literal_text"`.
+`libmdf.escape_markdown(text)` and `handle:escape_markdown(text)` instead return
+a materialized escaped string for later Markdown rendering; they do not render.
+Plain intraword underscores and literal NBSP bytes are preserved.
+`detect_osc8_support()` now accepts an xterm-compatible `TERM` when more specific
+terminal hints are absent, including SSH sessions. Explicit disable controls and
+known terminal hints still take precedence; ordinary pipe rendering stays plain.
+
+Handles and document streams expose `set_word_buffer(bytes, disable_spooling)`.
+Configure it before input or with no pending decision. Zero selects 4096 bytes;
+the maximum is 65536. By default each larger undecided word uses temporary file
+backing capped at 1 MiB, replayed in bounded chunks at its normal boundary.
+Excess bytes are discarded. With `disable_spooling = true`, only the configured
+memory prefix is retained. Reaching a limit never forces premature output.
+Temporary files close at completion, reset, failure or destruction; file errors
+fail the operation. These are per-word layout limits, not whole-document staging.
+
+## Interactive paging
+
+`libmdf.pager(path, opts)` views a named regular file on the controlling terminal.
+Omit `format` for extension detection, or select `"text"`, `"markdown"` or
+`"text/markdown; charset=utf-8"`. Navigation includes search, cyclic next/previous
+matches and resize reflow. Input bytes must remain stable until it returns;
+appended log bytes are not followed.
+
+`cache_budget` configures retained rendered content: zero/default selects 1 MiB,
+and the minimum nonzero budget is 65536 bytes. Search/index workspace is separately
+bounded; the budget is not a whole-process memory ceiling. The source is read on
+demand without a whole-file copy. Evicted Markdown and resize can replay a prefix.
+Oversized terminal geometry fails after terminal restoration.
+
+`should_cancel = function() ... end` runs synchronously on the calling Lua state.
+A true result restores terminal/signal state and returns `false, "cancelled"`;
+ordinary quit returns `true`. Callback exceptions are rethrown unchanged after
+cleanup. Cancellation cannot preempt a blocking source or terminal write. Ctrl-C
+forwards SIGINT after cleanup; if the restored handler returns or ignores it,
+the result is also `false, "cancelled"`.
 
 ## Example
 

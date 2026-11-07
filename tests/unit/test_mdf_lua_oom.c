@@ -126,5 +126,12 @@ int main(int argc, char **argv) {
              START "h=m.document_stream({width=1200},function()end);arm();h:"
                    "write(data);h:finish_document()",
              "h:reset();h:close()");
+  fault_case("literal callback",
+             START "h=m.new({width=1200});h:set_sink(function()arm();"
+                   "return string.rep('x',2000)end);h:set_word_buffer(8,false);"
+                   "h:write_literal(data);h:finish()",
+             "h:reset();h:close()");
+  fault_case("escaped result", START "h=m.new();arm();h:escape_markdown(data)",
+             "assert(h:escape_markdown('**healthy**'));h:close()");
   return 0;
 }

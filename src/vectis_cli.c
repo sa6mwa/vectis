@@ -71,22 +71,7 @@
 #include "vectis_cli_proxy_lua.h"
 #include "vectis_opcua_lua.h"
 
-typedef struct vectis_cli_embedded_resource {
-  const char *path;
-  const char *module;
-  const char *origin;
-  const char *sha256;
-  size_t offset;
-  size_t size;
-} vectis_cli_embedded_resource;
-
-typedef struct vectis_docs_pager_source {
-  size_t document_index;
-  size_t section_offset;
-  size_t heading_size;
-  int section;
-  char heading[PATH_MAX];
-} vectis_docs_pager_source;
+#include "vectis_cli_docs_source.h"
 
 #include "vectis_cli_docs.h"
 #include "vectis_cli_lua_sources.h"
@@ -3658,92 +3643,10 @@ static cpkt_lua_runtime_status vectis_lua_register_resource_module(
       resource->size, chunk_name);
 }
 
-static size_t vectis_docs_pager_read(void *userdata, char *dst, size_t cap,
-                                     int *err) {
-  static const char separator[] = "\n\n";
-  vectis_docs_pager_source *source;
-  const char *data;
-  size_t available;
-  size_t copied;
-  size_t written;
-  int heading_size;
-
-  source = (vectis_docs_pager_source *)userdata;
-  data = NULL;
-  available = 0u;
-  copied = 0u;
-  written = 0u;
-  heading_size = 0;
-  if (err != NULL) {
-    *err = 0;
-  }
-  if (source == NULL || dst == NULL) {
-    if (err != NULL) {
-      *err = 1;
-    }
-    return 0u;
-  }
-  while (written < cap && source->document_index < vectis_cli_docs_count) {
-    if (source->section == 0) {
-      if (source->section_offset == 0u) {
-        heading_size =
-            snprintf(source->heading, sizeof(source->heading),
-                     "# Vectis document: `%s`\n\n**SHA-256:** `%s`\n\n",
-                     vectis_cli_docs[source->document_index].path,
-                     vectis_cli_docs[source->document_index].sha256);
-        if (heading_size < 0 ||
-            (size_t)heading_size >= sizeof(source->heading)) {
-          if (err != NULL) {
-            *err = 1;
-          }
-          return 0u;
-        }
-        source->heading_size = (size_t)heading_size;
-      }
-      data = source->heading + source->section_offset;
-      available = source->heading_size - source->section_offset;
-    } else if (source->section == 1) {
-      data = (const char *)vectis_cli_docs_data +
-             vectis_cli_docs[source->document_index].offset +
-             source->section_offset;
-      available =
-          vectis_cli_docs[source->document_index].size - source->section_offset;
-    } else {
-      data = &separator[source->section_offset];
-      available = sizeof(separator) - 1u - source->section_offset;
-    }
-    copied = cap - written;
-    if (copied > available) {
-      copied = available;
-    }
-    if (copied > 0u) {
-      memcpy(dst + written, data, copied);
-      written += copied;
-      source->section_offset += copied;
-    }
-    if (source->section == 0 &&
-        source->section_offset == source->heading_size) {
-      source->section = 1;
-      source->section_offset = 0u;
-    } else if (source->section == 1 &&
-               source->section_offset ==
-                   vectis_cli_docs[source->document_index].size) {
-      source->section = 2;
-      source->section_offset = 0u;
-    } else if (source->section == 2 && source->section_offset == 2u) {
-      source->document_index++;
-      source->section = 0;
-      source->section_offset = 0u;
-      source->heading_size = 0u;
-    }
-  }
-  return written;
-}
-
 static int vectis_docs_command(int argc, char **argv, int index) {
   vectis_docs_pager_source pager_source;
   mdf_options pager_options;
-  mdf_source source;
+  mdf_seekable_source source;
   mdf_status status;
   size_t i;
   int pager;
@@ -3760,11 +3663,18 @@ static int vectis_docs_command(int argc, char **argv, int index) {
   }
   if (pager) {
     memset(&pager_source, 0, sizeof(pager_source));
+    pager_source.documents = vectis_cli_docs;
+    pager_source.data = vectis_cli_docs_data;
+    pager_source.count = vectis_cli_docs_count;
     source.userdata = &pager_source;
     source.read = vectis_docs_pager_read;
+    source.seek = vectis_docs_pager_seek;
     mdf_options_init(&pager_options);
-    status = mdf_pager_source("Vectis documentation", &source, &pager_options,
-                              MDF_PAGER_FORMAT_MARKDOWN);
+    status = mdf_pager_seekable_source("Vectis documentation", &source,
+                                       &pager_options,
+                                       MDF_PAGER_FORMAT_MARKDOWN, NULL, NULL);
+    if (status == MDF_CANCELLED)
+      return 130;
     if (status != MDF_OK) {
       fprintf(stderr, "vectis: failed to page documentation: %s\n",
               mdf_status_string(status));

@@ -1,8 +1,72 @@
 local mdf = require("libmdf")
 local terminal = require("vectis.terminal")
-assert(mdf.version == "0.19.0")
+assert(mdf.version == "0.23.0")
 assert(require("vectis").libs.libmdf == mdf)
 assert(terminal.libs.libmdf == mdf)
+
+-- Literal fragments preserve punctuation and unfinished words across calls.
+local literal = '**bold** [label](target) foo_bar `code` &amp;'
+local escaped = mdf.escape_markdown(literal)
+assert(escaped ~= literal)
+assert(mdf.render(escaped,{ansi_mode='off'}) == literal..'\n')
+for _, fragment in ipairs({1,3,64}) do
+  local output={}
+  local h=mdf.new({ansi_mode='off',width=120})
+  assert(h:set_sink(function(chunk)output[#output+1]=chunk end))
+  assert(h:escape_markdown(literal)==escaped)
+  for pos=1,#literal,fragment do
+    assert(h:write_literal(literal:sub(pos,pos+fragment-1)))
+  end
+  assert(h:finish());h:close()
+  assert(table.concat(output)==literal..'\n')
+end
+for _, disabled in ipairs({false,true}) do
+  local output={}
+  local h=mdf.new({ansi_mode='off',width=120})
+  assert(h:set_sink(function(chunk)output[#output+1]=chunk end))
+  assert(h:set_word_buffer(8,disabled))
+  assert(not pcall(h.set_word_buffer,h,65537))
+  assert(h:write_literal('abcdefghijkl'))
+  assert(#output==0,'pending-word limit must not force an emission')
+  assert(not pcall(h.set_word_buffer,h,16),'pending word owns its storage')
+  assert(h:write_literal(' next'))
+  assert(h:finish());h:close()
+  assert(table.concat(output)==(disabled and 'abcdefgh next\n' or 'abcdefghijkl next\n'))
+end
+local literal_words='foo_bar_baz a\194\160b\n'
+assert(mdf.render(literal_words,{ansi_mode='off'})==literal_words)
+do
+  local output={}
+  local h=mdf.new({ansi_mode='off'})
+  h:set_sink(function(chunk)output[#output+1]=chunk end)
+  assert(h:write_token({type='literal_text',text='**literal**'}))
+  assert(h:finish());h:close()
+  assert(table.concat(output)=='**literal**\n')
+  output={}
+  local stream=mdf.document_stream({ansi_mode='off'},function(chunk)output[#output+1]=chunk end)
+  assert(stream:set_word_buffer(7,true))
+  assert(stream:write('abcdefghijkl') and #output==0)
+  assert(not pcall(stream.set_word_buffer,stream,16))
+  assert(stream:finish_document() and table.concat(output)=='abcdefg\n')
+  assert(stream:begin_document() and stream:set_word_buffer(0,false));stream:close()
+end
+
+-- Full HTML tables switch to row output before EOF instead of retaining the
+-- complete table. The source generates rows; the sink retains a bounded tail.
+for _, render in ipairs({mdf.render_stream,terminal.markdown_stream}) do
+  local row,tail,saw_row=0,'',false
+  assert(render(function()
+    row=row+1
+    if row==1 then return '| value |\n| --- |\n' end
+    if row==1500 then assert(saw_row,'table must emit rows before producer EOF') end
+    if row<=1800 then return '| payload |\n' end
+    return nil
+  end,function(chunk)
+    tail=(tail..chunk):sub(-128)
+    saw_row=saw_row or tail:find('payload',1,true)~=nil
+  end,{format='html',disable_embedded_font=true,table_buffer_mode='full'}))
+  assert(saw_row and tail:find('</html>',1,true))
+end
 
 local function count(text, needle)
   local total, offset = 0, 1
@@ -27,6 +91,12 @@ local function streamed(render, text, opts, fragment)
     return chunk
   end, function(chunk) chunks[#chunks + 1] = chunk end, opts))
   return table.concat(chunks)
+end
+
+for _,fragment in ipairs({1,3,64}) do
+  for _,render in ipairs({mdf.render_stream,terminal.markdown_stream}) do
+    assert(streamed(render,literal_words,{ansi_mode='off'},fragment)==literal_words)
+  end
 end
 
 local table_md = "| value |\n| --- |\n| `left\\|right` |\n"
@@ -148,6 +218,12 @@ same_error(function()
     function() error(marker) end)
 end)
 same_error(function() mdf.render('trace\n',{write_trace=function() error(marker) end}) end)
+do
+  local h = mdf.new({ansi_mode='off'})
+  h:set_sink(function()error(marker)end)
+  same_error(function()h:write_literal('failure\n');h:finish()end)
+  h:close()
+end
 assert(not pcall(mdf.new,{theme=12}))
 assert(not pcall(mdf.new,{format='html\0ansi'}))
 local invalid, problem=terminal.markdown('bad',{theme=12})

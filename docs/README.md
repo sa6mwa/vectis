@@ -26,7 +26,8 @@ an option is available or a release is approved.
 | [liblockdc 0.28.0 upgrade](liblockdc-0.28.0-upgrade.md) | Streaming canonical appends, shared-root compatibility, aligned LoneJSON/pslog and verification. |
 | [liblockdc 0.27.0 upgrade](liblockdc-0.27.0-upgrade.md) | Historical collection leases/edits, staged append and resumable conversion evidence. |
 | [liblockdc 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md) | Historical append-writer/count-retention upgrade evidence. |
-| [MDF 0.19.0 upgrade](libmdf-0.19.0-upgrade.md) | C89 systems repository migration and natural terminal URL wrapping. |
+| [MDF 0.23.0 upgrade](libmdf-0.23.0-upgrade.md) | Bounded seekable docs paging, upstream literal/word APIs, ABI 7 and verification. |
+| [MDF 0.19.0 upgrade](libmdf-0.19.0-upgrade.md) | Historical repository migration and natural terminal URL wrapping. |
 | [MDF 0.18.0 upgrade](libmdf-0.18.0-upgrade.md) | Historical callback/ownership and palette upgrade evidence. |
 | [LQL 0.4.1 upgrade](liblql-0.4.1-upgrade.md) | Repository/lifecycle alignment with unchanged runtime and Lua surface. |
 | [LQL 0.4.0 upgrade](liblql-0.4.0-upgrade.md) | Historical cleanup upgrade evidence and retained OOM limit. |

@@ -8,7 +8,20 @@ function stack_read(capacity)
   if calls > 1 then return nil end
   local phase, emitted, offset = 0, 0, 1
   local markdown = string.rep('bounded ',1024)..'\n'
-  assert(stack_mdf.version == '0.19.0')
+  assert(stack_mdf.version == '0.23.0')
+  do
+    local h=stack_mdf.new({ansi_mode='off',width=80})
+    local emitted=0
+    assert(h:set_sink(function(chunk)
+      local copy <close> = assert(buffer.from_materialized(chunk))
+      emitted=emitted+#copy:read_materialized(0,#chunk)
+    end))
+    assert(h:set_word_buffer(64,false))
+    assert(h:write_literal(string.rep('x',5000)))
+    assert(emitted==0)
+    assert(h:finish() and emitted>=5000)
+    h:close()
+  end
   assert(stack_mdf.render_stream(function(cap)
     phase=phase+1
     if phase==1 then return '# Stack\n\n' end

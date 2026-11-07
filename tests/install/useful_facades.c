@@ -44,6 +44,9 @@ static vectis_status configure(CURL *easy, void *context, vectis_error *error) {
 }
 int vectis_install_useful_facades(void) {
   mdf_theme_palette palette;
+  mdf_options markdown_options;
+  mdf *markdown = NULL;
+  char *escaped = NULL, *rendered = NULL;
   vectis_error error;
   lql *lql_client = NULL;
   lql_error lql_err;
@@ -87,10 +90,21 @@ int vectis_install_useful_facades(void) {
         collection_edit.replacement == NULL);
   lc_collection_lease_req_init(&collection_lease);
   CHECK(collection_lease.ttl_seconds == 30 && !collection_lease.private_read);
-  CHECK(strcmp(LIBMDF_VERSION, "0.19.0") == 0);
+  CHECK(strcmp(LIBMDF_VERSION, "0.23.0") == 0);
   CHECK(mdf_theme_get_palette("default", &palette) == MDF_OK);
   CHECK(strcmp(palette.name, "default") == 0 &&
         palette.heading[0][0] == '\033');
+  mdf_options_init(&markdown_options);
+  markdown_options.ansi_mode = MDF_ANSI_OFF;
+  CHECK(mdf_create(MDF_FORMAT_ANSI, &markdown_options, &markdown) == MDF_OK);
+  CHECK(markdown->set_word_buffer(markdown, 4096u, 0) == MDF_OK);
+  CHECK(markdown->escape_markdown(markdown, "**consumer**", &escaped) ==
+        MDF_OK);
+  CHECK(markdown->render_cstr(markdown, escaped, &rendered) == MDF_OK);
+  CHECK(strcmp(rendered, "**consumer**\n") == 0);
+  markdown->string_free(markdown, rendered);
+  markdown->string_free(markdown, escaped);
+  markdown->destroy(markdown);
   CHECK(lql_new(&lql_client, &lql_err) == LQL_STATUS_OK);
   CHECK(strcmp(lql_client->version(lql_client), "0.4.1") == 0);
   CHECK(lql_client->selector_parse(lql_client, "/x=1", &lql_selection,

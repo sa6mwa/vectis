@@ -28,7 +28,7 @@ String and callback destinations default to escape-free UTF-8 output. Pass
 will be written to stdout and should follow its terminal status.
 
 The helpers pass wrapping, OSC8 hyperlinks and HTML/deck options through to
-libmdf, including `html_c89` branding and its link-label/escaped-table-pipe fixes. Persistent
+libmdf, including `c89` branding and its link-label/escaped-table-pipe fixes. Persistent
 incremental documents and manual tokens remain available through
 `terminal.libs.libmdf`; they do not need an additional Vectis wrapper.
 
@@ -50,9 +50,13 @@ assert(editor:buffer() == "vectis terminal")
 editor:close()
 ```
 
-The bundled MDF 0.19.0 includes the upstream callback, result-copy and font/token
+The bundled MDF 0.23.0 includes the upstream callback, result-copy and font/token
 ownership fixes from 0.17.0. Options still pass through unchanged. Native palette
 lookup is available in the C SDK; the upstream Lua facade has no palette API.
+Literal writes, Markdown escaping, pending-word storage and bounded file paging
+are available directly through `terminal.libs.libmdf`; see the
+[MDF manual](lua-libmdf.md) for their limits and cancellation behavior. Full
+ANSI/HTML table buffering now switches to row output at fixed retention limits.
 
 With OSC8 off and a zero right margin, MDF preserves contiguous visible URLs
 using natural terminal wraps, including styled and list URLs. Set `width` to

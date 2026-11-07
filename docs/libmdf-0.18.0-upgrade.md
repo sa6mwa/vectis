@@ -1,7 +1,7 @@
 # MDF 0.18.0 upgrade
 
 Historical verification for the 0.18.0 upgrade; current MDF selection and new
-rendering behavior are recorded in the [0.19.0 review](libmdf-0.19.0-upgrade.md).
+rendering behavior are recorded in the [0.23.0 review](libmdf-0.23.0-upgrade.md).
 
 ## Reviewed specification
 

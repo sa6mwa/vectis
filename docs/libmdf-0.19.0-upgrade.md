@@ -1,5 +1,8 @@
 # MDF 0.19.0 upgrade
 
+Historical evidence. The [0.23.0 review](libmdf-0.23.0-upgrade.md) supersedes the
+current version, ABI, pager and table-retention descriptions in this record.
+
 ## Reviewed specification
 
 Baseline `f5cedc2` selects MDF 0.18.0. Select all seven SDKs and the released

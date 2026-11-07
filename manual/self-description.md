@@ -9,6 +9,13 @@ Each document begins with a visible Markdown blockquote that records its
 embedded path and SHA-256 digest. This keeps the output Markdown-only while
 preserving the provenance needed to inspect the exact shipped documentation.
 
+`vectis -a docs --pager` views that manual on a terminal. It borrows a seekable
+view of the embedded bytes and headings; it does not concatenate or spool the
+manual. MDF reads on demand with its default 1 MiB rendered-content cache and
+separately bounded search/index workspace. Backward cache misses and resize may
+replay source bytes. Quit restores terminal state; a returning SIGINT handler
+produces cancellation and exit status 130.
+
 `vectis -a source` lists available public Lua source modules. The list contains
 the module name, origin, embedded path, and SHA-256 digest. Select source with
 either `--all`, one or more exact `--module NAME` options, or one or more exact
@@ -28,7 +35,7 @@ the embedded path, module, origin, and digest. It is not an executable combined
 Lua program. `--output` writes one selected module as its original raw bytes;
 `--output-dir` writes selected raw files under their embedded module paths.
 Neither output mode overwrites an existing file unless `-f` or `--force` is
-given. `docs` is stdout-only and therefore has no output path to force.
+given. `docs` has no output path to force; it writes stdout or uses `--pager`.
 
 The source bundle contains Lua implementation and facade files only. Native
 C-backed modules remain documented but their implementation source is not
