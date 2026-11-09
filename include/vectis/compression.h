@@ -30,6 +30,8 @@ struct vectis_compression {
   vectis_receiver_reserved_fn reserved[VECTIS_RECEIVER_RESERVED_SLOTS];
 };
 void vectis_compression_config_init(vectis_compression_config *);
+/* Algorithms: zstd, lz4 (frame), xz, zlib-ng (zlib-wrapped DEFLATE).
+ * zlib-ng levels -1..9; omission uses its native default. */
 vectis_status vectis_compression_new(const char *, const char *,
                                      const vectis_compression_config *,
                                      vectis_compression **, vectis_error *);

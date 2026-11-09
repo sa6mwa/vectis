@@ -2,7 +2,7 @@ local codec = require('vectis.compression')
 assert(require('vectis').compression == codec)
 local payload = 'hello\0binary\255' .. string.rep('bounded chunks ',20000)
 local sentinel = {}
-for _,algorithm in ipairs({'zstd','lz4','xz'}) do
+for _,algorithm in ipairs({'zstd','lz4','xz','zlib-ng'}) do
   local compressed = assert(codec.materialized(algorithm,'compress',payload))
   assert(codec.materialized(algorithm,'decompress',compressed) == payload)
   local empty = assert(codec.materialized(algorithm,'compress',''))
@@ -45,6 +45,19 @@ for _,algorithm in ipairs({'zstd','lz4','xz'}) do
   result,err=codec.stream(algorithm,'compress',function() return nil,sentinel end,function() return true end)
   assert(result==nil and err==sentinel)
 end
+local zlib=require('zlib')
+for _,level in ipairs({-1,0,1,9}) do
+  local packed=assert(codec.materialized('zlib-ng','compress',payload,{level=level}))
+  assert(zlib.decompress_materialized(packed)==payload)
+  local legacy=assert(zlib.deflate_materialized(payload,{level=level}))
+  assert(codec.materialized('zlib-ng','decompress',legacy)==payload)
+end
+for _,level in ipairs({-2,10}) do
+  assert(codec.new('zlib-ng','compress',{level=level})==nil)
+end
+local damaged=assert(codec.materialized('zlib-ng','compress',payload))
+damaged=damaged:sub(1,-2)..string.char((damaged:byte(-1)+1)%256)
+assert(codec.materialized('zlib-ng','decompress',damaged)==nil)
 for _,opts in ipairs({{unknown=1},{level=1.5},{memory_limit=1},{max_window_log=26},{['level\0hidden']=1}}) do
   assert(not pcall(function() codec.new('lz4','compress',opts) end))
 end

@@ -1,4 +1,5 @@
 local compression = require('vectis.compression')
+-- Select zlib-ng as the third argument for a zlib-compatible DEFLATE stream.
 local source <close> = assert(io.open(assert(arg[1],'input path required'),'rb'))
 local target <close> = assert(io.open(assert(arg[2],'output path required'),'wb'))
 assert(compression.stream(arg[3] or 'zstd','compress',function(capacity)

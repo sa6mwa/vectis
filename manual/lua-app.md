@@ -27,7 +27,7 @@ work rather than permanent C-only exclusions.
 | `app->proxy_route()` | `app:proxy()` | Bounded in-process reverse proxy route; the C route configuration is copied at registration. |
 | `app->json_route()`, `app->json_typed_route()`, `app->xml_route()`, `app->prefixed_json_route()`, `app->prefixed_json_typed_route()`, `app->prefixed_xml_route()` | `app:route()` plus LoneJSON or `vectis.xml` | The C forms require C-owned maps and C callbacks. Lua deliberately keeps the request callback and its values in Lua. |
 | `app->dsv_route()`, `app->prefixed_dsv_route()` | `app:dsv()` | Native streaming DSV parsing with Lua row callbacks; it does not materialize the request body. |
-| `app->upload_stream()`, `app->upload_file()`, `app->upload_reader()` | `app:upload()` | Lua exposes an ownership-safe bounded chunk callback rather than borrowed C file/reader callbacks. |
+| `app->upload_stream()` | `app:upload()` | Lua exposes bounded chunk callbacks on the request thread; native file/reader routes remain available in C. |
 | `app->cai_mcp_route()` | `app:mcp()` | Lua MCP routes buffer request, tool result and response and are stateless; the C adapter exposes a response sink. A future persistent/streamed Lua server needs an explicit product contract. |
 | `app->logger()`, `app->cai_client()`, `app->lockd_client()` | Direct binding pending | These return borrowed process-local native handles; remaining typed mappings must preserve their owner and explicit-close lifetime. |
 | `app->managed_service()`, `app->register_consumer_receiver()`, `app->consumer_service_receiver()` | Generic direct binding pending | These accept borrowed C callbacks or native lockdc receiver handles. Current convenience workflows cover concrete mailbox-backed consumer, curl, CAI, audio, SUS, and OPC UA services. |
@@ -578,10 +578,12 @@ assert(app:group({
 
 ## DSV Row Routes
 
-`app:dsv(opts)` registers a C-owned streaming upload-reader route for
+`app:dsv(opts)` registers a C-owned streaming push-upload route for
 CSV/TSV/DSV request bodies. It uses the same DSV parser and LoneJSON schema
 interop as `vectis.dsv.each()` and invokes Lua once per parsed row; it does not
-materialize the full request body.
+materialize the full request body. Parsing and Lua callbacks run on the request
+thread as bytes arrive, including rows completed before the client sends the
+remaining body. Partial fields and quotes persist across chunk boundaries.
 
 Route fields:
 
@@ -770,8 +772,8 @@ services use the supervised runtime so Kore starts from a thread-clean process
 and services materialize in the supervisor. Long-running scripts should use
 `app:run()` or `app:wait()`, not shell commands or external sleep loops.
 
-`app:upload(opts)` provides true request-body streaming through a bounded
-upload reader and Lua chunk callbacks.
+`app:upload(opts)` provides true request-body streaming through bounded native
+push callbacks and Lua chunk callbacks on the request thread.
 `stream_source` provides true live response streaming for buffered callback
 routes. `app:sse(opts)` provides an SSE-specific convenience helper on top
 of `stream_source`.
@@ -865,8 +867,8 @@ use the upstream CAI Lua facade through `cai.mcp_client` or
 
 ## Upload Routes
 
-`app:upload(opts)` registers a route whose request body is read through a
-bounded streaming reader. It does not populate `request.body`; handlers receive
+`app:upload(opts)` registers a route whose request body is delivered through
+bounded push callbacks on the request thread. It does not populate `request.body`; handlers receive
 request metadata plus `body_streaming_upload = true`, and each non-empty chunk
 is delivered to `on_chunk(request, chunk, state)` without materializing the
 whole body. `path`, `method` or `methods`, `auth`, and `openapi` fields follow
@@ -881,8 +883,10 @@ Upload fields:
 - `on_complete(request, state)`: optional callback returning a normal route
   response table/string/nil after EOF. When omitted, the route returns `204`.
 - `close(request, state)` or `on_close(request, state)`: optional cleanup
-  callback called after completion or failure.
-- `buffer_bytes`: maximum read size delivered to Lua per chunk.
+  callback called once after a successful open, on completion, failure or
+  disconnect. A failed open releases native state without calling `close`.
+- `buffer_bytes`: maximum size delivered to Lua per chunk; actual chunks can
+  be smaller at transport boundaries.
 - `max_body_bytes`: optional upload size limit.
 
 ```lua

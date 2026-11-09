@@ -81,7 +81,7 @@ static vectis_status forward(void *context, const void *data, size_t size,
   return pipe->decoder->process(pipe->decoder, data, size, verify, pipe, error);
 }
 int main(void) {
-  const char *algorithms[] = {"zstd", "lz4", "xz"};
+  const char *algorithms[] = {"zstd", "lz4", "xz", "zlib-ng"};
   size_t a, i, step;
   vectis_compression *encoder, *decoder;
   vectis_compression_config config;
@@ -94,7 +94,7 @@ int main(void) {
   pipeline pipe;
   unsigned int random_state;
   const char payload[] = "hello\0bounded bytes\377";
-  for (a = 0u; a < 3u; ++a) {
+  for (a = 0u; a < 4u; ++a) {
     memset(&encoded, 0, sizeof(encoded));
     memset(&decoded, 0, sizeof(decoded));
     assert(vectis_compression_new(algorithms[a], "compress", NULL, &encoder,
@@ -181,6 +181,20 @@ int main(void) {
     assert(pipe.count == 32u * sizeof(input) && pipe.output_calls > 1u);
     assert(encoder->close(encoder, &error) == VECTIS_OK);
     assert(pipe.decoder->close(pipe.decoder, &error) == VECTIS_OK);
+    assert(vectis_compression_new(algorithms[a], "compress", NULL, &encoder,
+                                  &error) == VECTIS_OK);
+    assert(pthread_create(&thread, NULL, foreign, encoder) == 0);
+    assert(pthread_join(thread, NULL) == 0);
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+      assert(encoder->finish(encoder, collect, &encoded, &error) ==
+             VECTIS_ERR_STATE);
+      assert(encoder->close(encoder, &error) == VECTIS_OK);
+      _exit(0);
+    }
+    assert(waitpid(child, &wait_status, 0) == child && wait_status == 0);
+    assert(encoder->close(encoder, &error) == VECTIS_OK);
   }
   vectis_compression_config_init(&config);
   config.level_set = 1;

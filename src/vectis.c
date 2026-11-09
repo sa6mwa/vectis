@@ -376,6 +376,7 @@ typedef struct vectis_dsv_parser {
   int first_field_quoted;
   int eof;
   int skip_next_lf;
+  int record_active, in_quotes, after_quote, at_field_start, escape_pending;
 } vectis_dsv_parser;
 
 struct vectis_dsv_rows {
@@ -20923,7 +20924,7 @@ static vectis_status vectis_upload_reader_write(vectis_app *app,
   return VECTIS_OK;
 }
 
-static void vectis_response_move(vectis_response *dst, vectis_response *src) {
+void vectis_internal_response_move(vectis_response *dst, vectis_response *src) {
   if (dst == NULL || src == NULL) {
     return;
   }
@@ -20968,7 +20969,7 @@ static vectis_status vectis_upload_reader_finish(vectis_app *app,
                      "upload reader handler did not produce a response");
     return VECTIS_ERR_STATE;
   }
-  vectis_response_move(response, reader_state->response);
+  vectis_internal_response_move(response, reader_state->response);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -31408,142 +31409,115 @@ static vectis_status vectis_dsv_append_current_byte(vectis_dsv_parser *parser,
   return VECTIS_OK;
 }
 
+/* The same record grammar drives pull readers and push upload chunks. */
+static vectis_status vectis_dsv_record_byte(vectis_dsv_parser *parser, int c,
+                                            int *has_record,
+                                            vectis_error *error) {
+  vectis_status status;
+  *has_record = 0;
+  if (!parser->record_active) {
+    vectis_dsv_fields_reset(&parser->fields);
+    parser->field.size = 0u;
+    if (parser->field.data != NULL)
+      parser->field.data[0] = '\0';
+    parser->first_field_quoted = parser->in_quotes = parser->after_quote =
+        parser->escape_pending = 0;
+    parser->at_field_start = parser->record_active = 1;
+  }
+  if (c == EOF) {
+    if (parser->escape_pending || (parser->in_quotes && !parser->after_quote)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       parser->escape_pending
+                           ? "unterminated escaped DSV field"
+                           : "unterminated quoted DSV field");
+      return VECTIS_ERR_INVALID;
+    }
+    if (parser->field.size > 0u || parser->fields.count > 0u ||
+        !parser->at_field_start) {
+      status = vectis_dsv_push_current_field(parser, error);
+      if (status != VECTIS_OK)
+        return status;
+      *has_record = 1;
+    }
+    parser->record_active = 0;
+    return VECTIS_OK;
+  }
+  if (parser->skip_next_lf) {
+    parser->skip_next_lf = 0;
+    if (c == '\n')
+      return VECTIS_OK;
+  }
+  if (parser->escape_pending) {
+    parser->escape_pending = 0;
+    if (c != parser->config.quote && c != parser->config.escape) {
+      status = vectis_dsv_append_current_byte(
+          parser, (char)parser->config.escape, error);
+      if (status != VECTIS_OK)
+        return status;
+    }
+    return vectis_dsv_append_current_byte(parser, (char)c, error);
+  }
+  if (parser->after_quote) {
+    if (c == parser->config.quote &&
+        parser->config.escape == parser->config.quote) {
+      parser->after_quote = 0;
+      return vectis_dsv_append_current_byte(parser, (char)c, error);
+    }
+    parser->in_quotes = parser->after_quote = 0;
+    if (c != parser->config.delimiter && c != '\r' && c != '\n') {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "unexpected character after closing DSV quote");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  if (parser->in_quotes) {
+    if (parser->config.escape != parser->config.quote &&
+        c == parser->config.escape)
+      parser->escape_pending = 1;
+    else if (c == parser->config.quote)
+      parser->after_quote = 1;
+    else
+      return vectis_dsv_append_current_byte(parser, (char)c, error);
+    return VECTIS_OK;
+  }
+  if (c == parser->config.quote && parser->at_field_start) {
+    if (parser->fields.count == 0u && parser->field.size == 0u)
+      parser->first_field_quoted = 1;
+    parser->in_quotes = 1;
+    parser->at_field_start = 0;
+    return VECTIS_OK;
+  }
+  if (c == parser->config.delimiter || c == '\r' || c == '\n') {
+    status = vectis_dsv_push_current_field(parser, error);
+    if (status != VECTIS_OK)
+      return status;
+    parser->at_field_start = 1;
+    if (c != parser->config.delimiter) {
+      if (c == '\r')
+        parser->skip_next_lf = !parser->config.trim_cr_disabled;
+      parser->physical_row++;
+      parser->record_active = 0;
+      *has_record = 1;
+    }
+    return VECTIS_OK;
+  }
+  parser->at_field_start = 0;
+  return vectis_dsv_append_current_byte(parser, (char)c, error);
+}
 static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
                                             int *has_record,
                                             vectis_error *error) {
   int c = 0;
-  int in_quotes;
-  int after_quote;
-  int at_field_start;
   vectis_status status;
-
-  *has_record = 0;
-  vectis_dsv_fields_reset(&parser->fields);
-  parser->field.size = 0u;
-  if (parser->field.data != NULL) {
-    parser->field.data[0] = '\0';
-  }
-  parser->first_field_quoted = 0;
-  in_quotes = 0;
-  after_quote = 0;
-  at_field_start = 1;
-
-  for (;;) {
+  do {
     status = vectis_dsv_parser_next_char(parser, &c, error);
-    if (status != VECTIS_OK) {
+    if (status != VECTIS_OK)
       return status;
-    }
-    if (c == EOF) {
-      if (after_quote) {
-        in_quotes = 0;
-        after_quote = 0;
-      }
-      if (in_quotes) {
-        vectis_set_error(error, VECTIS_ERR_INVALID,
-                         "unterminated quoted DSV field");
-        return VECTIS_ERR_INVALID;
-      }
-      if (parser->field.size > 0u || parser->fields.count > 0u ||
-          !at_field_start) {
-        if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
-          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-        }
-        *has_record = 1;
-      }
-      return VECTIS_OK;
-    }
-    if (parser->skip_next_lf) {
-      parser->skip_next_lf = 0;
-      if (c == '\n') {
-        continue;
-      }
-    }
-    if (after_quote) {
-      if (c == parser->config.quote &&
-          parser->config.escape == parser->config.quote) {
-        status = vectis_dsv_append_current_byte(
-            parser, (char)parser->config.quote, error);
-        if (status != VECTIS_OK) {
-          return status;
-        }
-        after_quote = 0;
-        in_quotes = 1;
-        at_field_start = 0;
-        continue;
-      }
-      in_quotes = 0;
-      after_quote = 0;
-      if (c != parser->config.delimiter && c != '\r' && c != '\n') {
-        vectis_set_error(error, VECTIS_ERR_INVALID,
-                         "unexpected character after closing DSV quote");
-        return VECTIS_ERR_INVALID;
-      }
-    }
-    if (in_quotes) {
-      if (parser->config.escape != parser->config.quote &&
-          c == parser->config.escape) {
-        status = vectis_dsv_parser_next_char(parser, &c, error);
-        if (status != VECTIS_OK) {
-          return status;
-        }
-        if (c == EOF) {
-          vectis_set_error(error, VECTIS_ERR_INVALID,
-                           "unterminated escaped DSV field");
-          return VECTIS_ERR_INVALID;
-        }
-        if (c != parser->config.quote && c != parser->config.escape) {
-          status = vectis_dsv_append_current_byte(
-              parser, (char)parser->config.escape, error);
-          if (status != VECTIS_OK) {
-            return status;
-          }
-        }
-        status = vectis_dsv_append_current_byte(parser, (char)c, error);
-        if (status != VECTIS_OK) {
-          return status;
-        }
-      } else if (c == parser->config.quote) {
-        after_quote = 1;
-      } else {
-        status = vectis_dsv_append_current_byte(parser, (char)c, error);
-        if (status != VECTIS_OK) {
-          return status;
-        }
-      }
-      continue;
-    }
-    if (c == parser->config.quote && at_field_start) {
-      if (parser->fields.count == 0u && parser->field.size == 0u) {
-        parser->first_field_quoted = 1;
-      }
-      in_quotes = 1;
-      at_field_start = 0;
-      continue;
-    }
-    if (c == parser->config.delimiter) {
-      if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
-        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-      }
-      at_field_start = 1;
-      continue;
-    }
-    if (c == '\r' || c == '\n') {
-      if (c == '\r') {
-        parser->skip_next_lf = !parser->config.trim_cr_disabled;
-      }
-      if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
-        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-      }
-      parser->physical_row++;
-      *has_record = 1;
-      return VECTIS_OK;
-    }
-    status = vectis_dsv_append_current_byte(parser, (char)c, error);
-    if (status != VECTIS_OK) {
+    status = vectis_dsv_record_byte(parser, c, has_record, error);
+    if (status != VECTIS_OK)
       return status;
-    }
-    at_field_start = 0;
-  }
+  } while (!*has_record && c != EOF);
+  return VECTIS_OK;
 }
 
 static int vectis_dsv_record_is_comment(const vectis_dsv_parser *parser) {
@@ -32406,6 +32380,177 @@ vectis_status vectis_dsv_parse_lonejson_view(
   if (status == VECTIS_OK) {
     vectis_error_clear(error);
   }
+  return status;
+}
+
+struct vectis_dsv_push {
+  vectis_dsv_parser parser;
+  vectis_dsv_fields headers;
+  lonejson_schema_view schema;
+  const char *const *columns;
+  const char **owned_columns;
+  size_t column_count, rows;
+  vectis_dsv_lonejson_storage_fn storage;
+  vectis_dsv_lonejson_row_fn row;
+  void *userdata;
+  int header_seen, done;
+  vectis_error failure;
+};
+void vectis_internal_dsv_push_free(vectis_dsv_push *push) {
+  if (push == NULL)
+    return;
+  vectis_dsv_fields_cleanup(&push->headers);
+  vectis_dsv_fields_cleanup(&push->parser.fields);
+  vectis_string_builder_cleanup(&push->parser.field);
+  free(push->owned_columns);
+  free(push);
+}
+vectis_status vectis_internal_dsv_push_new(
+    const lonejson_schema_view *schema, const vectis_dsv_config *config,
+    vectis_dsv_lonejson_storage_fn storage, vectis_dsv_lonejson_row_fn row,
+    void *userdata, vectis_dsv_push **out, vectis_error *error) {
+  vectis_dsv_push *push;
+  vectis_dsv_config effective;
+  vectis_status status;
+  if (out != NULL)
+    *out = NULL;
+  if (out == NULL || schema == NULL || schema->size != sizeof(*schema) ||
+      schema->abi_version != LONEJSON_VIEW_ABI_VERSION || schema->map == NULL ||
+      schema->runtime == NULL || schema->record_size == 0u || storage == NULL ||
+      row == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV schema, storage and row callbacks are required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_dsv_effective_config(config, &effective, error);
+  if (status != VECTIS_OK)
+    return status;
+  push = (vectis_dsv_push *)calloc(1u, sizeof(*push));
+  if (push == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "allocating DSV push parser");
+    return VECTIS_ERR_NOMEM;
+  }
+  push->parser.config = effective;
+  push->schema = *schema;
+  push->columns = effective.columns;
+  push->column_count = effective.column_count;
+  push->storage = storage;
+  push->row = row;
+  push->userdata = userdata;
+  push->header_seen = effective.header_disabled;
+  if (push->header_seen && push->columns == NULL) {
+    status = vectis_dsv_columns_from_map(schema->map, &push->owned_columns,
+                                         &push->column_count, error);
+    push->columns = push->owned_columns;
+    if (status != VECTIS_OK) {
+      vectis_internal_dsv_push_free(push);
+      return status;
+    }
+  }
+  if (push->header_seen &&
+      (push->columns == NULL || push->column_count == 0u)) {
+    vectis_internal_dsv_push_free(push);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV columns are required when no header row is used");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = push;
+  return VECTIS_OK;
+}
+static vectis_status vectis_dsv_push_record(vectis_dsv_push *push,
+                                            vectis_error *error) {
+  size_t i;
+  void *record = NULL;
+  vectis_status status;
+  if (vectis_dsv_record_is_comment(&push->parser))
+    return VECTIS_OK;
+  if (!push->header_seen) {
+    push->header_seen = 1;
+    if (push->columns == NULL) {
+      push->headers = push->parser.fields;
+      memset(&push->parser.fields, 0, sizeof(push->parser.fields));
+      push->owned_columns = (const char **)calloc(push->headers.count,
+                                                  sizeof(*push->owned_columns));
+      if (push->owned_columns == NULL) {
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "allocating DSV header columns");
+        return VECTIS_ERR_NOMEM;
+      }
+      for (i = 0u; i < push->headers.count; ++i)
+        push->owned_columns[i] = push->headers.items[i];
+      push->columns = push->owned_columns;
+      push->column_count = push->headers.count;
+    }
+    return VECTIS_OK;
+  }
+  if (push->columns == NULL || push->column_count == 0u ||
+      (!push->parser.config.strict_row_width_disabled &&
+       push->parser.fields.count != push->column_count)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV row width does not match columns");
+    return VECTIS_ERR_INVALID;
+  }
+  status = push->storage(push->userdata, push->rows + 1u, &record, error);
+  if (status != VECTIS_OK)
+    return status;
+  if (record == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV row storage callback returned NULL");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_dsv_fields_to_lonejson_value(
+      push->schema.map, push->columns, push->column_count, &push->parser.fields,
+      record, error);
+  if (status == VECTIS_OK)
+    status = push->row(push->userdata, push->rows + 1u, record, error);
+  if (status == VECTIS_OK)
+    ++push->rows;
+  return status;
+}
+vectis_status vectis_internal_dsv_push_feed(vectis_dsv_push *push,
+                                            const void *data, size_t size,
+                                            int finish, vectis_error *error) {
+  const unsigned char *bytes = (const unsigned char *)data;
+  size_t i;
+  int has_record;
+  vectis_status status;
+  if (push == NULL || (size > 0u && data == NULL)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV parser and input are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (push->failure.code != VECTIS_OK) {
+    if (error)
+      *error = push->failure;
+    return push->failure.code;
+  }
+  if (push->done) {
+    if (finish && size == 0u)
+      return VECTIS_OK;
+    vectis_set_error(error, VECTIS_ERR_STATE, "DSV parser is finished");
+    return VECTIS_ERR_STATE;
+  }
+  for (i = 0u; i < size; ++i) {
+    status =
+        vectis_dsv_record_byte(&push->parser, bytes[i], &has_record, error);
+    if (status == VECTIS_OK && has_record)
+      status = vectis_dsv_push_record(push, error);
+    if (status != VECTIS_OK)
+      goto failed;
+  }
+  if (finish) {
+    status = vectis_dsv_record_byte(&push->parser, EOF, &has_record, error);
+    if (status == VECTIS_OK && has_record)
+      status = vectis_dsv_push_record(push, error);
+    if (status != VECTIS_OK)
+      goto failed;
+    push->done = 1;
+  }
+  return VECTIS_OK;
+failed:
+  if (error != NULL)
+    push->failure = *error;
+  push->failure.code = status;
   return status;
 }
 

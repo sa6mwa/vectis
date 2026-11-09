@@ -104,7 +104,7 @@ function stack_read(capacity)
   end}))
   assert(transfer.ok and received>0)
   local compression=require('vectis.compression.core')
-  for _,algorithm in ipairs({'zstd','lz4','xz'}) do
+  for _,algorithm in ipairs({'zstd','lz4','xz','zlib-ng'}) do
     local pieces, decoded={},{}
     local encoder <close> = assert(compression.new(algorithm,'compress'))
     local function collect(chunk) pieces[#pieces+1]=chunk; return true end

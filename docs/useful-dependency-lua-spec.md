@@ -279,9 +279,9 @@ empty entries, metadata, truncated input, source/sink failure and early close.
 ## Compression: interchangeable data formats
 
 Public C: `vectis/compression.h`; Lua: `vectis.compression` with algorithm names
-`zstd`, `lz4` and `xz`.
+`zstd`, `lz4`, `xz` and `zlib-ng`.
 
-Zstandard, LZ4 frame and XZ use incremental compressor/decompressor receivers:
+Zstandard, LZ4 frame, XZ and zlib-wrapped zlib-ng use incremental compressor/decompressor receivers:
 `new(algorithm, direction, opts)`, `process(input, sink)`, `finish(sink)`, `close()`.
 Provide bounded reader-to-writer helpers and explicitly named materialized
 conveniences. Compression levels and decompression memory/window limits pass

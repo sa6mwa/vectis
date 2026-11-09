@@ -43,7 +43,7 @@ Major groups:
   [SQLite](lua-sqlite.md) and [PostgreSQL](lua-postgres.md).
 - Reports/images/codecs: `vectis/pdf.h` owns PDF documents/pages/fonts/images;
   `vectis/png.h` provides noninterlaced row flow and explicitly materialized
-  interlaced images; `vectis/compression.h` provides bounded Zstd/LZ4-frame/XZ
+  interlaced images; `vectis/compression.h` provides bounded Zstd/LZ4-frame/XZ/zlib-ng
   flow. See [PDF](lua-pdf.md), [PNG](lua-png.md), [compression](lua-compression.md).
 - Transfer/crypto/XML: `vectis/curl.h` owns reusable sessions and caller-driven
   multi transfers with bounded callbacks; `vectis/crypto.h` owns loaded keys

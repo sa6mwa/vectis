@@ -11,7 +11,7 @@ foreach(_vectis_prefix IN LISTS _vectis_bundled_prefixes)
     list(PREPEND CMAKE_FIND_ROOT_PATH "${_vectis_prefix}")
   endif()
 endforeach()
-find_dependency(CpktCore 0.6.1 CONFIG REQUIRED)
+find_dependency(CpktCore 0.7.0 CONFIG REQUIRED)
 find_dependency(CpktPostgres CONFIG REQUIRED)
 find_dependency(CpktSqlite CONFIG REQUIRED)
 find_dependency(CpktPdf CONFIG REQUIRED)
@@ -19,6 +19,7 @@ find_dependency(CpktPng CONFIG REQUIRED)
 find_dependency(CpktZstdFacade CONFIG REQUIRED)
 find_dependency(CpktLz4Facade CONFIG REQUIRED)
 find_dependency(CpktLzmaFacade CONFIG REQUIRED)
+find_dependency(CpktZlibNg CONFIG REQUIRED)
 find_dependency(Threads REQUIRED)
 find_dependency(OpenSSL CONFIG REQUIRED)
 find_dependency(ZLIB CONFIG REQUIRED)
@@ -108,6 +109,7 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LI
     cpkt::zstd
     cpkt::lz4
     cpkt::lzma
+    cpkt::zlibng
     cpkt::sqlite
     cpkt::postgres
     lockdc::postgres_static
@@ -147,6 +149,7 @@ if(NOT TARGET vectis::shared)
     cpkt::zstd_shared
     cpkt::lz4_shared
     cpkt::lzma_shared
+    cpkt::zlibng_facade_shared
     cpkt::sqlite_shared
     cpkt::postgres_shared
     lockdc::postgres_shared

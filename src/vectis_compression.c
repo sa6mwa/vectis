@@ -1,5 +1,6 @@
 #include <cpkt/lz4.h>
 #include <cpkt/lzma.h>
+#include <cpkt/zlibng.h>
 #include <cpkt/zstd.h>
 #include <limits.h>
 #include <pthread.h>
@@ -20,6 +21,8 @@ typedef struct compression_state {
   cpkt_lz4_LZ4F_dctx *ld;
   cpkt_lz4_LZ4F_preferences_t prefs;
   cpkt_lzma_lzma_stream xz;
+  cpkt_zlibng_stream ng;
+  int ng_initialized;
   unsigned char output[VECTIS_COMPRESSION_CHUNK_BYTES];
 } compression_state;
 
@@ -76,6 +79,12 @@ static void compression_release(compression_state *state) {
     cpkt_lz4_LZ4F_freeDecompressionContext(state->ld);
   if (state->algorithm == 3)
     cpkt_lzma_lzma_end(&state->xz);
+  if (state->ng_initialized) {
+    if (state->compress)
+      (void)cpkt_zlibng_deflateEnd(&state->ng);
+    else
+      (void)cpkt_zlibng_inflateEnd(&state->ng);
+  }
   free(state);
 }
 vectis_status vectis_compression_close(vectis_compression *receiver,
@@ -121,7 +130,7 @@ vectis_status vectis_compression_new(const char *algorithm,
   compression_state *state;
   vectis_status status = VECTIS_OK;
   size_t result;
-  int which, compress;
+  int which, compress, ng_result;
   cpkt_compression_u64 memory;
   cpkt_lzma_lzma_ret xresult;
   if (out != NULL)
@@ -129,16 +138,18 @@ vectis_status vectis_compression_new(const char *algorithm,
   vectis_compression_config_init(&defaults);
   if (config == NULL)
     config = &defaults;
-  which = algorithm == NULL                ? 0
-          : strcmp(algorithm, "zstd") == 0 ? 1
-          : strcmp(algorithm, "lz4") == 0  ? 2
-          : strcmp(algorithm, "xz") == 0   ? 3
-                                           : 0;
+  which = algorithm == NULL                   ? 0
+          : strcmp(algorithm, "zstd") == 0    ? 1
+          : strcmp(algorithm, "lz4") == 0     ? 2
+          : strcmp(algorithm, "xz") == 0      ? 3
+          : strcmp(algorithm, "zlib-ng") == 0 ? 4
+                                              : 0;
   compress = direction != NULL && strcmp(direction, "compress") == 0;
   if (out == NULL || which == 0 || direction == NULL ||
       (!compress && strcmp(direction, "decompress") != 0))
-    return compression_error(error, VECTIS_ERR_INVALID, 0,
-                             "expected zstd/lz4/xz and compress/decompress");
+    return compression_error(
+        error, VECTIS_ERR_INVALID, 0,
+        "expected zstd/lz4/xz/zlib-ng and compress/decompress");
   if ((config->level_set != 0 && config->level_set != 1) ||
       (!compress && config->level_set) ||
       ((which != 1 || compress) &&
@@ -154,7 +165,8 @@ vectis_status vectis_compression_new(const char *algorithm,
         (which == 2 &&
          (config->level < 0 ||
           config->level > cpkt_lz4_LZ4F_compressionLevel_max())) ||
-        (which == 3 && (config->level < 0 || config->level > 9)))))
+        (which == 3 && (config->level < 0 || config->level > 9)) ||
+        (which == 4 && (config->level < -1 || config->level > 9)))))
     return compression_error(error, VECTIS_ERR_INVALID, 0,
                              "invalid or inapplicable compression option");
   state = (compression_state *)calloc(1u, sizeof(*state));
@@ -202,7 +214,7 @@ vectis_status vectis_compression_new(const char *algorithm,
         CPKT_LZ4_LZ4F_contentChecksumEnabled;
     state->prefs.compressionLevel = config->level_set ? config->level : 0;
     state->prefs.autoFlush = 1u;
-  } else {
+  } else if (which == 3) {
     memory.lo = (unsigned int)config->memory_limit;
     memory.hi = (unsigned int)((config->memory_limit / 65536u) / 65536u);
     if (compress)
@@ -214,6 +226,21 @@ vectis_status vectis_compression_new(const char *algorithm,
     if (xresult != CPKT_LZMA_LZMA_OK)
       status = compression_error(error, VECTIS_ERR_STATE, (long)xresult,
                                  "initializing XZ codec");
+  } else {
+    ng_result = compress
+                    ? cpkt_zlibng_deflateInit(
+                          &state->ng, config->level_set
+                                          ? config->level
+                                          : CPKT_ZLIBNG_DEFAULT_COMPRESSION)
+                    : cpkt_zlibng_inflateInit(&state->ng);
+    if (ng_result == CPKT_ZLIBNG_OK)
+      state->ng_initialized = 1;
+    else
+      status = compression_error(error,
+                                 ng_result == CPKT_ZLIBNG_MEM_ERROR
+                                     ? VECTIS_ERR_NOMEM
+                                     : VECTIS_ERR_STATE,
+                                 ng_result, "initializing zlib-ng codec");
   }
   if (status != VECTIS_OK) {
     compression_release(state);
@@ -249,7 +276,7 @@ static vectis_status compression_run(compression_state *state, const void *data,
                                      void *context, vectis_error *error) {
   const unsigned char *input = (const unsigned char *)data;
   size_t remaining = size, take, used, produced, result;
-  int more = 1;
+  int more = 1, ng_result;
   vectis_status status;
   cpkt_zstd_ZSTD_inBuffer zin;
   cpkt_zstd_ZSTD_outBuffer zout;
@@ -313,7 +340,7 @@ static vectis_status compression_run(compression_state *state, const void *data,
         if (result == 0u)
           state->ended = 1;
       }
-    } else {
+    } else if (state->algorithm == 3) {
       state->xz.next_in = input;
       state->xz.avail_in = take;
       state->xz.next_out = state->output;
@@ -330,6 +357,32 @@ static vectis_status compression_run(compression_state *state, const void *data,
         return compression_error(error, VECTIS_ERR_STATE, (long)xresult,
                                  "XZ codec failed");
       if (xresult == CPKT_LZMA_LZMA_STREAM_END)
+        state->ended = 1;
+    } else {
+      state->ng.next_in = input;
+      state->ng.avail_in = (unsigned int)take;
+      state->ng.next_out = state->output;
+      state->ng.avail_out = (unsigned int)sizeof(state->output);
+      ng_result =
+          state->compress
+              ? cpkt_zlibng_deflate(&state->ng, finish ? CPKT_ZLIBNG_FINISH
+                                                       : CPKT_ZLIBNG_NO_FLUSH)
+              : cpkt_zlibng_inflate(&state->ng, finish ? CPKT_ZLIBNG_FINISH
+                                                       : CPKT_ZLIBNG_NO_FLUSH);
+      used = take - state->ng.avail_in;
+      produced = sizeof(state->output) - state->ng.avail_out;
+      state->ng.next_in = NULL;
+      state->ng.next_out = NULL;
+      state->ng.avail_in = state->ng.avail_out = 0u;
+      if (ng_result != CPKT_ZLIBNG_OK && ng_result != CPKT_ZLIBNG_STREAM_END &&
+          ng_result != CPKT_ZLIBNG_BUF_ERROR)
+        return compression_error(
+            error,
+            ng_result == CPKT_ZLIBNG_MEM_ERROR ? VECTIS_ERR_NOMEM
+                                               : VECTIS_ERR_STATE,
+            ng_result,
+            state->ng.msg == NULL ? "zlib-ng codec failed" : state->ng.msg);
+      if (ng_result == CPKT_ZLIBNG_STREAM_END)
         state->ended = 1;
     }
     if (used != 0u)

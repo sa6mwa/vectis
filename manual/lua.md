@@ -9,7 +9,7 @@ through `vectis.pdf`, with file output and explicitly materialized bytes.
 [PNG images](lua-png.md) provide row I/O and explicitly materialized interlaced
 decoding through `vectis.png`, including direct PNG-to-PDF composition.
 
-[Zstandard, LZ4-frame and XZ](lua-compression.md) provide bounded codec receivers
+[Zstandard, LZ4-frame, XZ and zlib-ng](lua-compression.md) provide bounded codec receivers
 and producer-to-consumer helpers through `vectis.compression`.
 
 App-owned [collections, storage and PostgreSQL XA](lua-storage.md) are available
@@ -23,6 +23,12 @@ dependency-native facades and Vectis-owned workflow helpers. The repository
 also carries a pure Lua top-level `vectis` module and standalone LuaRocks
 source artifacts so the Lua helper namespace can be loaded from an ordinary
 Lua 5.5 environment.
+cpkt 0.7.0's bundled Lua checks native recursion against the current OS thread's
+stack bounds, including small default musl workers. Protected overflow raises a
+normal Lua error and leaves subsequent calls usable; error handlers have reserved
+headroom. A state may move between threads only between completed, serialized
+operations. Trusted native callbacks remain responsible for their own stack
+consumption; these checks do not enlarge stacks or impose a wall-clock limit.
 Dependency-native modules should stay thin over their C implementation.
 Vectis-owned modules should provide the service/application DX where a workflow
 crosses Vectis concepts such as Kore routes, packed assets, auth, lockd

@@ -1,5 +1,20 @@
 # Vectis Lua upgrade seam audit
 
+## cpkt 0.7.0, 2026-11-09
+
+The [upgrade specification and evidence](cpkt-0.7.0-upgrade.md) supersede older
+cpkt pins below. zlib-ng is integrated through the existing owned bounded C/Lua
+compression receivers and convenience helpers using a standard zlib wire format.
+The released Lua 5.5.1 implementation adds native-stack bounds and recovery;
+upstream dependency Lua facades remain unchanged. Debug glibc test applications
+use 128 KiB default workers with cache reuse disabled and verified guards.
+Release products, installed libraries and explicit stack requests retain their
+own policies. Epoch-mtime SDK replacement now invalidates actual payload inputs.
+The new guard exposed foreign-thread entry in Lua upload/DSV routes. Both now
+use native request-thread push callbacks; the pull and push DSV paths share one
+record grammar. HTTP tests prove row delivery before body completion, retained
+auth headers, callback ownership, failure cleanup and source-response lifetime.
+
 ## MDF 0.23.0, 2026-11-07
 
 The [upgrade review](libmdf-0.23.0-upgrade.md) supersedes MDF pins, ABI and pager

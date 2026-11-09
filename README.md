@@ -59,7 +59,7 @@ Release archives are fetched through the shared verified
 `${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cpkt/deps}`
 archive cache. The current expected dependency set is:
 
-- `cpkt` 0.6.1 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.1,
+- `cpkt` 0.7.0 for curl, OpenSSL, libssh2, nghttp2, zlib, zlib-ng, Lua 5.5.1,
   the C89 Lua runtime facade, libxml2 and supporting core package metadata.
 - `cpktdb` 0.3.1 for the PostgreSQL and SQLite C89 facades.
 - `cpktmisc` 0.2.1 for OPC UA, audio/miniaudio, SUS/whisper and the optional

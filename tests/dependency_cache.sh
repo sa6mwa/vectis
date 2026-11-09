@@ -35,6 +35,7 @@ for name in cpkt cpktdb cpktmisc; do
   mkdir -p "$work/input/$name/include"
   printf '%s\n' "$name" >"$work/input/$name/include/fixture.h"
   chmod 444 "$work/input/$name/include/fixture.h"
+  touch -m -d @0 "$work/input/$name/include/fixture.h"
   tar -czf "$work/assets/$name.tar.gz" -C "$work/input" "$name"
   digest=$(sha256sum "$work/assets/$name.tar.gz" | cut -d' ' -f1)
   printf 'sdk\t%s\t1.0.0\tx86_64-linux-gnu\t%s\thttps://fixture.invalid/%s.tar.gz\n' \
@@ -87,12 +88,15 @@ for name in cpkt cpktdb cpktmisc; do
   prefix="$fixture/.cache/deps/x86_64-linux-gnu/$name"
   [[ $(cat "$prefix/include/fixture.h") == "$name" ]] || fail 'provider prefixes were merged'
   [[ $(stat -c %a "$prefix/include/fixture.h") == 444 ]] || fail 'extraction changed packaged mode'
+  [[ $(stat -c %Y "$prefix/include/fixture.h") -gt 0 ]] || fail 'epoch input was not invalidated on extraction'
 done
 prefix="$fixture/.cache/deps/x86_64-linux-gnu"
 [[ -f "$prefix/sources/fixture/lua/fixture.lua" && -f "$prefix/libpid0/include/libpid0.h" ]] || fail 'Lua/header selection missing'
 inode=$(stat -c %i "$prefix/cpkt/include/fixture.h")
+input_time=$(stat -c %y "$prefix/cpkt/include/fixture.h")
 run
 [[ $(requests) == 5 && $(stat -c %i "$prefix/cpkt/include/fixture.h") == "$inode" ]] || fail 'hit requested or re-extracted assets'
+[[ $(stat -c %y "$prefix/cpkt/include/fixture.h") == "$input_time" ]] || fail 'hit invalidated an unchanged input'
 core_hash=$(awk -F '\t' '$2=="cpkt" {print $5}' "$fixture/scripts/dependency-pins.tsv")
 printf 'corrupt' >"$CPKT_DEPENDENCY_CACHE/archives/sha256/$core_hash/cpkt.tar.gz"
 run

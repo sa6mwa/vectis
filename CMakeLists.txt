@@ -299,6 +299,7 @@ set(vectis_static_dependency_links
   cpkt::zstd
   cpkt::lz4
   cpkt::lzma
+  cpkt::zlibng
   cpkt::sqlite
   cpkt::postgres
   lockdc::postgres_static
@@ -327,6 +328,7 @@ set(vectis_shared_dependency_links
   cpkt::zstd_shared
   cpkt::lz4_shared
   cpkt::lzma_shared
+  cpkt::zlibng_facade_shared
   cpkt::sqlite_shared
   cpkt::postgres_shared
   lockdc::postgres_shared

@@ -14844,107 +14844,200 @@ static int vectis_lua_app_dsv_copy_config(lua_State *lua, int index,
   return 1;
 }
 
-static vectis_status
-vectis_lua_app_upload_drain_reader(struct lc_source *reader,
-                                   size_t buffer_bytes, vectis_error *error);
-
-static vectis_status
-vectis_lua_app_dsv_dispatch(vectis_app *app, vectis_request *request,
-                            struct lc_source *reader, vectis_response *response,
-                            void *userdata, vectis_error *error) {
-  vectis_lua_app_dsv_route *route;
-  vectis_lua_dsv_route_context context;
-  lonejson_schema_view schema;
-  vectis_status status;
+typedef struct vectis_lua_upload_state {
   lua_State *lua;
-  int base;
-  int allowed;
+  int request_ref, state_ref, allowed, closed;
+  vectis_response *auth_response;
+  vectis_dsv_push *parser;
+  vectis_lua_dsv_route_context context;
+} vectis_lua_upload_state;
+
+static void vectis_lua_upload_state_free(vectis_lua_upload_state *state) {
+  if (state == NULL)
+    return;
+  vectis_internal_dsv_push_free(state->parser);
+  vectis_internal_response_free(state->auth_response);
+  luaL_unref(state->lua, LUA_REGISTRYINDEX, state->request_ref);
+  luaL_unref(state->lua, LUA_REGISTRYINDEX, state->state_ref);
+  free(state);
+}
+static vectis_status
+vectis_lua_upload_prepare(lua_State *lua, vectis_lua_app_native_auth *auth,
+                          const char *purpose, vectis_request *request,
+                          vectis_lua_upload_state **out, vectis_error *error) {
+  vectis_lua_upload_state *state;
+  vectis_status status;
   char principal[128];
-  const char *message;
-
-  (void)app;
-  route = (vectis_lua_app_dsv_route *)userdata;
-  if (route == NULL || route->lua == NULL || route->schema_ref == LUA_NOREF ||
-      route->on_row_ref == LUA_NOREF || reader == NULL) {
-    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         "Lua DSV route is not configured");
-    return VECTIS_ERR_INVALID;
+  int base = lua_gettop(lua);
+  *out = NULL;
+  state = (vectis_lua_upload_state *)calloc(1u, sizeof(*state));
+  if (state == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                         "allocating Lua upload state");
+    return VECTIS_ERR_NOMEM;
   }
-
-  status = vectis_lua_app_route_auth_gate(route->auth, route->purpose, request,
-                                          response, principal,
-                                          sizeof(principal), &allowed, error);
-  if (status != VECTIS_OK) {
-    return status;
+  state->lua = lua;
+  state->request_ref = state->state_ref = LUA_NOREF;
+  state->auth_response = vectis_internal_response_new(error);
+  if (state->auth_response == NULL) {
+    vectis_lua_upload_state_free(state);
+    return VECTIS_ERR_NOMEM;
   }
-  if (!allowed) {
-    return vectis_lua_app_upload_drain_reader(reader, route->buffer_bytes,
-                                              error);
-  }
-
-  lua = route->lua;
-  base = lua_gettop(lua);
-  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->schema_ref);
-  vectis_lua_lonejson_schema_view_init(&schema);
-  if (vectis_lua_lonejson_check_schema(lua, -1, &schema, "DSV route schema") !=
-      0) {
-    message = lua_tostring(lua, -1);
-    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         message != NULL ? message
-                                         : "DSV route schema is "
-                                           "invalid");
-    lua_settop(lua, base);
-    return VECTIS_ERR_INVALID;
-  }
-
-  memset(&context, 0, sizeof(context));
-  context.lua = lua;
-  context.schema_index = lua_absindex(lua, -1);
-  context.record_index = 0;
-  context.on_row_ref = route->on_row_ref;
-  context.callback_owner = route;
-  status = vectis_lua_push_route_request(lua, request, principal, 0, error);
-  if (status != VECTIS_OK) {
-    lua_settop(lua, base);
-    return status;
-  }
-  context.request_index = lua_absindex(lua, -1);
-
-  status = vectis_dsv_parse_lonejson_view(
-      reader, &schema, &route->config, vectis_lua_dsv_route_new_row_storage,
-      vectis_lua_dsv_route_push_row, &context, error);
-  if (status != VECTIS_OK) {
-    lua_settop(lua, base);
-    return status;
-  }
-
-  if (route->on_complete_ref != LUA_NOREF) {
-    lua_rawgeti(lua, LUA_REGISTRYINDEX, route->on_complete_ref);
-    lua_pushvalue(lua, context.request_index);
-    lua_newtable(lua);
-    lua_pushinteger(lua, (lua_Integer)context.row_count);
-    lua_setfield(lua, -2, "rows");
-    if (vectis_lua_app_callback_pcall(lua, route, 2, 1) != LUA_OK) {
-      message = lua_tostring(lua, -1);
-      vectis_cli_error_set(error, VECTIS_ERR_STATE,
-                           message != NULL ? message
-                                           : "DSV route completion failed");
-      lua_settop(lua, base);
-      return VECTIS_ERR_STATE;
+  status = vectis_lua_app_route_auth_gate(
+      auth, purpose, request, state->auth_response, principal,
+      sizeof(principal), &state->allowed, error);
+  if (status == VECTIS_OK && state->allowed) {
+    status = vectis_lua_push_route_request(lua, request, principal, 0, error);
+    if (status == VECTIS_OK) {
+      lua_pushboolean(lua, 1);
+      lua_setfield(lua, -2, "body_streaming_upload");
+      state->request_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
     }
-    status = vectis_lua_apply_route_response(lua, route, -1, response, error);
-  } else {
-    status = vectis_response_status(response, 204, error);
+  }
+  lua_settop(lua, base);
+  if (status != VECTIS_OK) {
+    vectis_lua_upload_state_free(state);
+    return status;
+  }
+  *out = state;
+  return VECTIS_OK;
+}
+static vectis_status vectis_lua_upload_callback_error(lua_State *lua,
+                                                      vectis_error *error,
+                                                      const char *fallback) {
+  const char *message = lua_tostring(lua, -1);
+  vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                       message != NULL ? message : fallback);
+  return VECTIS_ERR_STATE;
+}
+static vectis_status vectis_lua_app_dsv_open(vectis_app *app,
+                                             vectis_request *request,
+                                             void *userdata, void **out,
+                                             vectis_error *error) {
+  vectis_lua_app_dsv_route *route = (vectis_lua_app_dsv_route *)userdata;
+  vectis_lua_upload_state *state;
+  lonejson_schema_view schema;
+  lua_State *lua = route->lua;
+  int base = lua_gettop(lua);
+  vectis_status status;
+  (void)app;
+  status = vectis_lua_upload_prepare(lua, route->auth, route->purpose, request,
+                                     &state, error);
+  if (status != VECTIS_OK)
+    return status;
+  if (state->allowed) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, route->schema_ref);
+    vectis_lua_lonejson_schema_view_init(&schema);
+    if (vectis_lua_lonejson_check_schema(lua, -1, &schema,
+                                         "DSV route schema") != 0)
+      status = vectis_lua_upload_callback_error(lua, error,
+                                                "invalid DSV route schema");
+    else {
+      state->context.lua = lua;
+      state->context.callback_owner = route;
+      state->context.on_row_ref = route->on_row_ref;
+      status = vectis_internal_dsv_push_new(
+          &schema, &route->config, vectis_lua_dsv_route_new_row_storage,
+          vectis_lua_dsv_route_push_row, &state->context, &state->parser,
+          error);
+    }
+  }
+  lua_settop(lua, base);
+  if (status != VECTIS_OK) {
+    vectis_lua_upload_state_free(state);
+    return status;
+  }
+  *out = state;
+  return VECTIS_OK;
+}
+static void vectis_lua_dsv_push_context(vectis_lua_app_dsv_route *route,
+                                        vectis_lua_upload_state *state) {
+  lua_State *lua = state->lua;
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->schema_ref);
+  state->context.schema_index = lua_absindex(lua, -1);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, state->request_ref);
+  state->context.request_index = lua_absindex(lua, -1);
+  state->context.record_index = 0;
+}
+static vectis_status vectis_lua_app_dsv_write(vectis_app *app,
+                                              vectis_request *request,
+                                              const void *data, size_t size,
+                                              void *opaque, void *userdata,
+                                              vectis_error *error) {
+  vectis_lua_app_dsv_route *route = (vectis_lua_app_dsv_route *)userdata;
+  vectis_lua_upload_state *state = (vectis_lua_upload_state *)opaque;
+  const unsigned char *bytes = (const unsigned char *)data;
+  size_t offset = 0u, take;
+  int base = lua_gettop(state->lua);
+  vectis_status status = VECTIS_OK;
+  (void)app;
+  (void)request;
+  if (!state->allowed)
+    return VECTIS_OK;
+  vectis_lua_dsv_push_context(route, state);
+  while (offset < size) {
+    take = size - offset;
+    if (route->buffer_bytes > 0u && take > route->buffer_bytes)
+      take = route->buffer_bytes;
+    status = vectis_internal_dsv_push_feed(state->parser, bytes + offset, take,
+                                           0, error);
+    if (status != VECTIS_OK)
+      break;
+    offset += take;
+  }
+  lua_settop(state->lua, base);
+  return status;
+}
+static vectis_status vectis_lua_app_dsv_finish(vectis_app *app,
+                                               vectis_request *request,
+                                               vectis_response *response,
+                                               void *opaque, void *userdata,
+                                               vectis_error *error) {
+  vectis_lua_app_dsv_route *route = (vectis_lua_app_dsv_route *)userdata;
+  vectis_lua_upload_state *state = (vectis_lua_upload_state *)opaque;
+  lua_State *lua = state->lua;
+  int base = lua_gettop(lua);
+  vectis_status status;
+  (void)app;
+  (void)request;
+  vectis_internal_response_move(response, state->auth_response);
+  if (!state->allowed) {
+    return VECTIS_OK;
+  }
+  vectis_lua_dsv_push_context(route, state);
+  status = vectis_internal_dsv_push_feed(state->parser, NULL, 0u, 1, error);
+  if (status == VECTIS_OK) {
+    if (route->on_complete_ref != LUA_NOREF) {
+      lua_rawgeti(lua, LUA_REGISTRYINDEX, route->on_complete_ref);
+      lua_rawgeti(lua, LUA_REGISTRYINDEX, state->request_ref);
+      lua_newtable(lua);
+      lua_pushinteger(lua, (lua_Integer)state->context.row_count);
+      lua_setfield(lua, -2, "rows");
+      if (vectis_lua_app_callback_pcall(lua, route, 2, 1) != LUA_OK)
+        status = vectis_lua_upload_callback_error(
+            lua, error, "DSV route completion failed");
+      else
+        status =
+            vectis_lua_apply_route_response(lua, route, -1, response, error);
+    } else
+      status = vectis_response_status(response, 204, error);
   }
   lua_settop(lua, base);
   return status;
+}
+static void vectis_lua_app_dsv_close(vectis_app *app, vectis_request *request,
+                                     void *opaque, void *userdata) {
+  (void)app;
+  (void)request;
+  (void)userdata;
+  vectis_lua_upload_state_free((vectis_lua_upload_state *)opaque);
 }
 
 static int vectis_lua_app_dsv(lua_State *lua) {
   vectis_lua_app *server;
   vectis_app *app;
   vectis_lua_app_dsv_route *route_data;
-  vectis_upload_reader_route_config route;
+  vectis_upload_route_config route;
   vectis_error error;
   vectis_status status;
   lonejson_schema_view schema;
@@ -15077,14 +15170,15 @@ static int vectis_lua_app_dsv(lua_State *lua) {
   route_data->buffer_bytes = buffer_bytes;
   route_data->max_body_bytes = max_body_bytes;
 
-  route = vectis_upload_reader_route_methods(
-      methods, route_data->path, vectis_lua_app_dsv_dispatch, route_data);
+  route = vectis_stream_upload_route_methods(
+      methods, route_data->path, vectis_lua_app_dsv_open,
+      vectis_lua_app_dsv_write, vectis_lua_app_dsv_finish,
+      vectis_lua_app_dsv_close, route_data);
   if (route_data->max_body_bytes > 0u) {
     route.body = vectis_body_upload_max(route_data->max_body_bytes);
   }
-  route.buffer_bytes = route_data->buffer_bytes;
   vectis_error_clear(&error);
-  status = app->upload_reader(app, &route, &error);
+  status = app->upload_stream(app, &route, &error);
   if (status != VECTIS_OK) {
     if (route_data->auth != NULL) {
       vectis_lua_app_native_auth_free(route_data->auth);
@@ -15134,150 +15228,69 @@ vectis_lua_app_upload_call_close(vectis_lua_app_upload_route *route,
   return VECTIS_OK;
 }
 
-static vectis_status
-vectis_lua_app_upload_drain_reader(struct lc_source *reader,
-                                   size_t buffer_bytes, vectis_error *error) {
-  unsigned char *buffer;
-  lc_error lcerr;
-  size_t nread;
+static vectis_status vectis_lua_app_upload_open(vectis_app *app,
+                                                vectis_request *request,
+                                                void *userdata, void **out,
+                                                vectis_error *error) {
+  vectis_lua_app_upload_route *route = (vectis_lua_app_upload_route *)userdata;
+  vectis_lua_upload_state *state;
+  lua_State *lua = route->lua;
+  int base = lua_gettop(lua);
   vectis_status status;
-
-  if (reader == NULL || reader->read == NULL) {
-    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         "Lua upload route reader is invalid");
-    return VECTIS_ERR_INVALID;
-  }
-  if (buffer_bytes == 0u) {
-    buffer_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
-  }
-  buffer = (unsigned char *)malloc(buffer_bytes);
-  if (buffer == NULL) {
-    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
-                         "failed to allocate Lua upload route drain buffer");
-    return VECTIS_ERR_NOMEM;
-  }
-  status = VECTIS_OK;
-  lc_error_init(&lcerr);
-  for (;;) {
-    nread = reader->read(reader, buffer, buffer_bytes, &lcerr);
-    if (nread == 0u) {
-      if (lcerr.code != LC_OK) {
-        status = vectis_lua_lc_error_to_vectis(error, lcerr.code, &lcerr,
-                                               "Lua upload route drain failed");
-      }
-      break;
-    }
-  }
-  lc_error_cleanup(&lcerr);
-  free(buffer);
-  return status;
-}
-
-static vectis_status vectis_lua_app_upload_dispatch(
-    vectis_app *app, vectis_request *request, struct lc_source *reader,
-    vectis_response *response, void *userdata, vectis_error *error) {
-  vectis_lua_app_upload_route *route;
-  lua_State *lua;
-  vectis_status status;
-  lc_error lcerr;
-  unsigned char *buffer;
-  size_t buffer_bytes;
-  size_t nread;
-  int base;
-  int allowed;
-  int request_index;
-  int state_index;
-  int close_status;
-  char principal[128];
-  const char *message;
-
   (void)app;
-  route = (vectis_lua_app_upload_route *)userdata;
-  if (route == NULL || route->lua == NULL || route->chunk_ref == LUA_NOREF ||
-      reader == NULL || reader->read == NULL) {
-    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         "Lua upload route is not configured");
-    return VECTIS_ERR_INVALID;
+  status = vectis_lua_upload_prepare(lua, route->auth, route->purpose, request,
+                                     &state, error);
+  if (status != VECTIS_OK)
+    return status;
+  if (state->allowed) {
+    if (route->open_ref != LUA_NOREF) {
+      lua_rawgeti(lua, LUA_REGISTRYINDEX, route->open_ref);
+      lua_rawgeti(lua, LUA_REGISTRYINDEX, state->request_ref);
+      if (vectis_lua_app_callback_pcall(lua, route, 1, 1) != LUA_OK)
+        status = vectis_lua_upload_callback_error(
+            lua, error, "Lua upload route open failed");
+    } else
+      lua_newtable(lua);
+    if (status == VECTIS_OK)
+      state->state_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
   }
-
-  status = vectis_lua_app_route_auth_gate(route->auth, route->purpose, request,
-                                          response, principal,
-                                          sizeof(principal), &allowed, error);
+  lua_settop(lua, base);
   if (status != VECTIS_OK) {
+    vectis_lua_upload_state_free(state);
     return status;
   }
-  if (!allowed) {
-    return vectis_lua_app_upload_drain_reader(reader, route->buffer_bytes,
-                                              error);
-  }
-
-  lua = route->lua;
-  base = lua_gettop(lua);
-  status = vectis_lua_push_route_request(lua, request, principal, 0, error);
-  if (status != VECTIS_OK) {
-    lua_settop(lua, base);
-    return status;
-  }
-  request_index = lua_absindex(lua, -1);
-  lua_pushboolean(lua, 1);
-  lua_setfield(lua, request_index, "body_streaming_upload");
-
-  if (route->open_ref != LUA_NOREF) {
-    lua_rawgeti(lua, LUA_REGISTRYINDEX, route->open_ref);
-    lua_pushvalue(lua, request_index);
-    if (vectis_lua_app_callback_pcall(lua, route, 1, 1) != LUA_OK) {
-      message = lua_tostring(lua, -1);
-      vectis_cli_error_set(error, VECTIS_ERR_STATE,
-                           message != NULL ? message
-                                           : "Lua upload route open failed");
-      lua_settop(lua, base);
-      return VECTIS_ERR_STATE;
-    }
-  } else {
-    lua_newtable(lua);
-  }
-  state_index = lua_absindex(lua, -1);
-
-  buffer_bytes = route->buffer_bytes > 0u
-                     ? route->buffer_bytes
-                     : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
-  buffer = (unsigned char *)malloc(buffer_bytes);
-  if (buffer == NULL) {
-    (void)vectis_lua_app_upload_call_close(route, request_index, state_index);
-    lua_settop(lua, base);
-    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
-                         "failed to allocate Lua upload route buffer");
-    return VECTIS_ERR_NOMEM;
-  }
-
-  lc_error_init(&lcerr);
-  for (;;) {
-    nread = reader->read(reader, buffer, buffer_bytes, &lcerr);
-    if (nread == 0u) {
-      if (lcerr.code != LC_OK) {
-        status = vectis_lua_lc_error_to_vectis(error, lcerr.code, &lcerr,
-                                               "Lua upload route read failed");
-      } else {
-        status = VECTIS_OK;
-      }
-      break;
-    }
+  *out = state;
+  return VECTIS_OK;
+}
+static vectis_status vectis_lua_app_upload_write(vectis_app *app,
+                                                 vectis_request *request,
+                                                 const void *data, size_t size,
+                                                 void *opaque, void *userdata,
+                                                 vectis_error *error) {
+  vectis_lua_app_upload_route *route = (vectis_lua_app_upload_route *)userdata;
+  vectis_lua_upload_state *state = (vectis_lua_upload_state *)opaque;
+  lua_State *lua = state->lua;
+  const char *input = (const char *)data;
+  size_t take, offset = 0u;
+  int base = lua_gettop(lua);
+  vectis_status status = VECTIS_OK;
+  (void)app;
+  (void)request;
+  if (!state->allowed)
+    return VECTIS_OK;
+  while (offset < size) {
+    take = size - offset;
+    if (route->buffer_bytes > 0u && take > route->buffer_bytes)
+      take = route->buffer_bytes;
+    if (take > VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES)
+      take = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
     lua_rawgeti(lua, LUA_REGISTRYINDEX, route->chunk_ref);
-    if (!lua_isfunction(lua, -1)) {
-      status = VECTIS_ERR_INVALID;
-      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                           "Lua upload route chunk reference is invalid");
-      break;
-    }
-    lua_pushvalue(lua, request_index);
-    lua_pushlstring(lua, (const char *)buffer, nread);
-    lua_pushvalue(lua, state_index);
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, state->request_ref);
+    lua_pushlstring(lua, input + offset, take);
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, state->state_ref);
     if (vectis_lua_app_callback_pcall(lua, route, 3, 1) != LUA_OK) {
-      message = lua_tostring(lua, -1);
-      vectis_cli_error_set(error, VECTIS_ERR_STATE,
-                           message != NULL ? message
-                                           : "Lua upload route chunk failed");
-      status = VECTIS_ERR_STATE;
+      status = vectis_lua_upload_callback_error(
+          lua, error, "Lua upload route chunk failed");
       break;
     }
     if (!(lua_isnil(lua, -1) ||
@@ -15287,53 +15300,83 @@ static vectis_status vectis_lua_app_upload_dispatch(
       status = VECTIS_ERR_INVALID;
       break;
     }
-    lua_pop(lua, 1);
-  }
-  lc_error_cleanup(&lcerr);
-  free(buffer);
-
-  if (status == VECTIS_OK) {
-    if (route->complete_ref != LUA_NOREF) {
-      lua_rawgeti(lua, LUA_REGISTRYINDEX, route->complete_ref);
-      if (!lua_isfunction(lua, -1)) {
-        status = VECTIS_ERR_INVALID;
-        vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                             "Lua upload route complete reference is invalid");
-      } else {
-        lua_pushvalue(lua, request_index);
-        lua_pushvalue(lua, state_index);
-        if (vectis_lua_app_callback_pcall(lua, route, 2, 1) != LUA_OK) {
-          message = lua_tostring(lua, -1);
-          vectis_cli_error_set(
-              error, VECTIS_ERR_STATE,
-              message != NULL ? message : "Lua upload route complete failed");
-          status = VECTIS_ERR_STATE;
-        } else {
-          status =
-              vectis_lua_apply_route_response(lua, route, -1, response, error);
-          lua_pop(lua, 1);
-        }
-      }
-    } else {
-      status = vectis_response_status(response, 204, error);
-    }
-  }
-
-  close_status =
-      vectis_lua_app_upload_call_close(route, request_index, state_index);
-  if (status == VECTIS_OK && close_status != VECTIS_OK) {
-    vectis_cli_error_set(error, close_status, "Lua upload route close failed");
-    status = close_status;
+    lua_settop(lua, base);
+    offset += take;
   }
   lua_settop(lua, base);
   return status;
+}
+static vectis_status
+vectis_lua_upload_close_callback(vectis_lua_app_upload_route *route,
+                                 vectis_lua_upload_state *state) {
+  lua_State *lua = state->lua;
+  int base = lua_gettop(lua), request_index, state_index;
+  vectis_status status;
+  if (state->closed || !state->allowed)
+    return VECTIS_OK;
+  state->closed = 1;
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, state->request_ref);
+  request_index = lua_absindex(lua, -1);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, state->state_ref);
+  state_index = lua_absindex(lua, -1);
+  status = vectis_lua_app_upload_call_close(route, request_index, state_index);
+  lua_settop(lua, base);
+  return status;
+}
+static vectis_status vectis_lua_app_upload_finish(vectis_app *app,
+                                                  vectis_request *request,
+                                                  vectis_response *response,
+                                                  void *opaque, void *userdata,
+                                                  vectis_error *error) {
+  vectis_lua_app_upload_route *route = (vectis_lua_app_upload_route *)userdata;
+  vectis_lua_upload_state *state = (vectis_lua_upload_state *)opaque;
+  lua_State *lua = state->lua;
+  int base = lua_gettop(lua);
+  vectis_status status, closed;
+  (void)app;
+  (void)request;
+  vectis_internal_response_move(response, state->auth_response);
+  if (!state->allowed) {
+    return VECTIS_OK;
+  }
+  status = VECTIS_OK;
+  if (route->complete_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, route->complete_ref);
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, state->request_ref);
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, state->state_ref);
+    if (vectis_lua_app_callback_pcall(lua, route, 2, 1) != LUA_OK)
+      status = vectis_lua_upload_callback_error(
+          lua, error, "Lua upload route complete failed");
+    else
+      status = vectis_lua_apply_route_response(lua, route, -1, response, error);
+  } else
+    status = vectis_response_status(response, 204, error);
+  lua_settop(lua, base);
+  closed = vectis_lua_upload_close_callback(route, state);
+  if (status == VECTIS_OK && closed != VECTIS_OK) {
+    vectis_cli_error_set(error, closed, "Lua upload route close failed");
+    status = closed;
+  }
+  return status;
+}
+static void vectis_lua_app_upload_close(vectis_app *app,
+                                        vectis_request *request, void *opaque,
+                                        void *userdata) {
+  vectis_lua_upload_state *state = (vectis_lua_upload_state *)opaque;
+  (void)app;
+  (void)request;
+  if (state == NULL)
+    return;
+  (void)vectis_lua_upload_close_callback(
+      (vectis_lua_app_upload_route *)userdata, state);
+  vectis_lua_upload_state_free(state);
 }
 
 static int vectis_lua_app_upload(lua_State *lua) {
   vectis_lua_app *server;
   vectis_app *app;
   vectis_lua_app_upload_route *route_data;
-  vectis_upload_reader_route_config route;
+  vectis_upload_route_config route;
   vectis_error error;
   vectis_status status;
   const char *path;
@@ -15474,14 +15517,15 @@ static int vectis_lua_app_upload(lua_State *lua) {
 
   route_data->buffer_bytes = buffer_bytes;
   route_data->max_body_bytes = max_body_bytes;
-  route = vectis_upload_reader_route_methods(
-      methods, route_data->path, vectis_lua_app_upload_dispatch, route_data);
+  route = vectis_stream_upload_route_methods(
+      methods, route_data->path, vectis_lua_app_upload_open,
+      vectis_lua_app_upload_write, vectis_lua_app_upload_finish,
+      vectis_lua_app_upload_close, route_data);
   if (route_data->max_body_bytes > 0u) {
     route.body = vectis_body_upload_max(route_data->max_body_bytes);
   }
-  route.buffer_bytes = route_data->buffer_bytes;
   vectis_error_clear(&error);
-  status = app->upload_reader(app, &route, &error);
+  status = app->upload_stream(app, &route, &error);
   if (status != VECTIS_OK) {
     if (route_data->auth != NULL) {
       vectis_lua_app_native_auth_free(route_data->auth);

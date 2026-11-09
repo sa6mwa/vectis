@@ -1,5 +1,5 @@
 local core=require('vectis.compression.core')
-for _,algorithm in ipairs({'zstd','lz4','xz'}) do
+for _,algorithm in ipairs({'zstd','lz4','xz','zlib-ng'}) do
   local encoded={}
   local compressor <close> = assert(core.new(algorithm,'compress',{level=1}))
   assert(compressor:process('hello\0binary',function(chunk) encoded[#encoded+1]=chunk; return true end))

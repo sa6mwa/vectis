@@ -1,9 +1,15 @@
-# Zstandard, LZ4 frame and XZ
+# Zstandard, LZ4 frame, XZ and zlib-ng
 
 `require('vectis.compression')` (also `vectis.compression`) supports `zstd`,
-`lz4` and `xz`. Each receiver handles one standard frame/container; decoders
+`lz4`, `xz` and `zlib-ng`. Each receiver handles one standard frame/container; decoders
 reject trailing bytes, concatenated frames and incomplete input. Existing zlib
 bindings are separate. LZO is deferred.
+
+`zlib-ng` uses cpkt's public C89 facade over zlib-ng 2.3.3. It produces and
+accepts one zlib-wrapped DEFLATE stream, interoperable with the existing zlib
+bindings. Select it explicitly; the other codecs and zlib/gzip APIs keep their
+existing implementations. Native gzip files, dictionaries and engine-specific
+controls remain accessible in the C SDK rather than duplicated Lua APIs.
 
 ```lua
 local codec = require('vectis.compression')
@@ -32,7 +38,8 @@ Options reject unknown/inapplicable keys:
 
 - `level` applies only to compression. Zstandard uses its pinned native range;
   LZ4 selects 0 through the native maximum high-compression level; XZ accepts
-  0–9. Omission uses native defaults (Zstandard 3, LZ4 0, XZ 6). XZ level zero
+  0–9. zlib-ng accepts -1 (native default) through 9. Omission uses native
+  defaults (Zstandard 3, LZ4 0, XZ 6, zlib-ng -1). XZ/zlib-ng level zero
   is distinct from omission. LZ4 acceleration selection is outside this slice.
 - `max_window_log` applies only to Zstandard decompression, 10–31 (subject to
   native platform limits), default 26 (64 MiB).
@@ -40,7 +47,7 @@ Options reject unknown/inapplicable keys:
   default 67108864. The provider reports insufficient memory limits as errors.
 
 LZ4 output uses 64 KiB blocks, content checksums and native bounded autoflush.
-XZ uses CRC64. Chunk boundaries do not imply a Zstandard or XZ flush. Each codec
+XZ uses CRC64. Chunk boundaries do not imply a Zstandard, XZ or zlib-ng flush. Each codec
 may keep its bounded internal buffers/dictionary; the facade never collects a
 whole stream. Receivers are confined to their creating process/thread, start
 no worker threads and reject callback reentry/close on the active receiver.

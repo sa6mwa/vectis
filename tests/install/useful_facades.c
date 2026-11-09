@@ -66,7 +66,7 @@ int vectis_install_useful_facades(void) {
   vectis_mutable_bytes png, bytes, plaintext;
   vectis_crypto_gcm_result encrypted;
   unsigned char pixels[] = {0x12, 0x34, 0x56, 0xff}, key[16], nonce[12];
-  const char *algorithms[] = {"zstd", "lz4", "xz"};
+  const char *algorithms[] = {"zstd", "lz4", "xz", "zlib-ng"};
   vectis_compression *encoder = NULL, *decoder = NULL;
   consumer_bytes compressed, decompressed;
   vectis_xml_document *document = NULL;
@@ -153,7 +153,7 @@ int vectis_install_useful_facades(void) {
   pdf_image->close(pdf_image);
   page->close(page);
   CHECK(pdf->close(pdf, &error) == VECTIS_OK);
-  for (i = 0u; i < 3u; ++i) {
+  for (i = 0u; i < 4u; ++i) {
     memset(&compressed, 0, sizeof(compressed));
     memset(&decompressed, 0, sizeof(decompressed));
     CHECK(vectis_compression_new(algorithms[i], "compress", NULL, &encoder,

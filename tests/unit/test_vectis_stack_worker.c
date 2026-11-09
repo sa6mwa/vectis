@@ -13,6 +13,7 @@
 #include "vectis_lua_xml_objects.h"
 #include "vectis_lua_zlib_raw.h"
 #include "vectis_lua_zlib_stream.h"
+#include <cpkt/zlibng.h>
 #include <lauxlib.h>
 #include <lc/lc.h>
 #include <lualib.h>
@@ -26,6 +27,7 @@
 #include <vectis/embedded_fs.h>
 #include <vectis/totp_qr.h>
 #include <vectis/webdav.h>
+#include <zlib.h>
 #define CHECK(condition)                                                       \
   do {                                                                         \
     if (!(condition)) {                                                        \
@@ -341,6 +343,19 @@ static int webdav_case(const char *root, int direct) {
   free(copied);
   return 0;
 }
+static int zlibng_crc_case(void) {
+  unsigned char *data;
+  unsigned int actual;
+  size_t i;
+  data = (unsigned char *)malloc(300000u);
+  CHECK(data != NULL);
+  for (i = 0u; i < 300000u; ++i)
+    data[i] = (unsigned char)(i * 31u);
+  actual = cpkt_zlibng_crc32_z(0u, data, 300000u);
+  CHECK(actual == (unsigned int)crc32(0u, data, 300000u));
+  free(data);
+  return 0;
+}
 static void *worker(void *context) {
   worker_case *test = (worker_case *)context;
   vectis_qr *qr;
@@ -355,8 +370,9 @@ static void *worker(void *context) {
          (unsigned long)stack_size);
   pthread_attr_destroy(&attributes);
 #endif
-  if (lua_case(test) || lockdc_case(test->root) || embedded_case(test->root) ||
-      webdav_case(test->root, 0) || webdav_case(test->root, 1))
+  if (zlibng_crc_case() || lua_case(test) || lockdc_case(test->root) ||
+      embedded_case(test->root) || webdav_case(test->root, 0) ||
+      webdav_case(test->root, 1))
     return NULL;
   qr = (vectis_qr *)malloc(sizeof(*qr));
   if (qr == NULL)

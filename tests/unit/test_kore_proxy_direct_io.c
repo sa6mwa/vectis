@@ -73,6 +73,7 @@ struct sender_args {
 };
 
 static struct direct_metrics *metrics;
+static int tls_read_ready[2] = {-1, -1};
 
 extern void vectis_kore_set_prebody_probe(int (*probe)(struct http_request *,
                                                        const void *, size_t));
@@ -279,8 +280,11 @@ static void direct_pump(struct connection *c) {
                                                              : KORE_EVENT_READ;
         if (ssl_error == SSL_ERROR_WANT_WRITE)
           metrics->tls_read_want_write++;
-        else
+        else {
           metrics->tls_read_want_read++;
+          if (metrics->tls_read_want_read == 1u && tls_read_ready[1] >= 0)
+            assert(write(tls_read_ready[1], "r", 1u) == 1);
+        }
         break;
       }
       kore_connection_disconnect(c);
@@ -711,6 +715,14 @@ static void check_tls_relay(unsigned short port, const unsigned char *payload) {
     response_header[++header_used] = '\0';
   }
   assert(strstr(response_header, " 101 ") != NULL);
+  /* Hold the first payload until the server has actually exercised WANT_READ.
+   * Receiving the upgrade header alone does not establish that condition. */
+  {
+    struct pollfd ready = {tls_read_ready[0], POLLIN, 0};
+    char byte;
+    assert(poll(&ready, 1, 5000) == 1);
+    assert(read(tls_read_ready[0], &byte, 1u) == 1 && byte == 'r');
+  }
   sent = 0;
   while (sent < TLS_PAYLOAD_SIZE) {
     chunk = TLS_PAYLOAD_SIZE - sent;
@@ -1077,6 +1089,7 @@ int main(void) {
   config.tls.certificate_path = cert_path;
   config.tls.private_key_path = key_path;
   config.tls.ca_bundle_path = cert_path;
+  assert(pipe(tls_read_ready) == 0);
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
@@ -1084,6 +1097,8 @@ int main(void) {
   route = vectis_route(VECTIS_HTTP_GET, "/stream", stream_response, NULL);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   assert(app->start(app, &error) == VECTIS_OK);
+  assert(close(tls_read_ready[1]) == 0);
+  tls_read_ready[1] = -1;
   check_tls_relay(port, payload);
   check_tls_http_restore(port);
   metrics->stream_probe_active = 1;
@@ -1091,6 +1106,8 @@ int main(void) {
   metrics->stream_probe_active = 0;
   assert(vectis_stop(app, &error) == VECTIS_OK);
   app->close(app);
+  assert(close(tls_read_ready[0]) == 0);
+  tls_read_ready[0] = -1;
   vectis_kore_set_prebody_probe(NULL);
   vectis_kore_set_worker_teardown_probe(NULL);
   assert(remove(cert_path) == 0);

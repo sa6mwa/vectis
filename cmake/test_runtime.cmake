@@ -25,10 +25,21 @@ foreach(prefix IN LISTS CMAKE_PREFIX_PATH)
   endif()
 endforeach()
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND (VECTIS_BUILD_TESTS OR VECTIS_BUILD_FUZZERS))
+  add_library(vectis_debug_worker_stack OBJECT
+    "${CMAKE_SOURCE_DIR}/tests/helpers/debug_worker_stack_init.c")
+  vectis_configure_c89_target(vectis_debug_worker_stack)
+  target_link_libraries(vectis_debug_worker_stack PUBLIC Threads::Threads)
+  set(vectis_constrained_debug_workers ON)
+endif()
+
 function(vectis_pin_local_executables directory)
   get_property(targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
   foreach(target IN LISTS targets)
     get_target_property(kind ${target} TYPE)
+    if(kind STREQUAL "EXECUTABLE" AND vectis_constrained_debug_workers)
+      target_link_libraries(${target} PRIVATE vectis_debug_worker_stack)
+    endif()
     # Release CLI is static and must retain its normal shipping metadata.
     if(kind STREQUAL "EXECUTABLE" AND NOT
        (target STREQUAL "vectis_bin" AND CMAKE_BUILD_TYPE STREQUAL "Release"))

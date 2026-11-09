@@ -181,6 +181,41 @@ static void expect(const char *path, const char *body, long code,
           !memcmp(response.body, expected, response.body_size));
   vectis_http_response_cleanup(&response);
 }
+static void dsv_live_behavior(void) {
+  static const char first[] =
+      "POST /dsv-live HTTP/1.1\r\nHost: localhost\r\n"
+      "Connection: close\r\nContent-Length: 11\r\n\r\nid\none\n";
+  struct sockaddr_in address;
+  struct timeval timeout;
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  char response[1024];
+  size_t used = 0u;
+  ssize_t got;
+  CHECK(fd >= 0);
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = htons((unsigned short)atoi(strrchr(base_url, ':') + 1));
+  timeout.tv_sec = memory_mode ? 45 : 5;
+  timeout.tv_usec = 0;
+  CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+        0);
+  CHECK(connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
+  CHECK(send(fd, first, sizeof(first) - 1u, 0) ==
+        (ssize_t)(sizeof(first) - 1u));
+  until("live row 1\n"); /* The rest of the declared body has not been sent. */
+  CHECK(send(fd, "two\n", 4u, 0) == 4);
+  until("live row 2\n");
+  while ((got = recv(fd, response + used, sizeof(response) - 1u - used, 0)) >
+         0) {
+    used += (size_t)got;
+    CHECK(used < sizeof(response) - 1u);
+  }
+  CHECK(got == 0);
+  response[used] = 0;
+  CHECK(strstr(response, " 200 ") && strstr(response, "streamed"));
+  close(fd);
+}
 static void source_behavior(void) {
   static const char *kinds[] = {"spooled_source", "stream_source"};
   static const char *contexts[] = {"route", "before", "after", "dsv", "upload"};
@@ -222,6 +257,14 @@ static void source_behavior(void) {
   until("dsv_source close rejected\n");
   until("dsv_source read rejected\n");
   until("dsv_source reset rejected\n");
+  dsv_live_behavior();
+  for (i = 0u; i < 4u; ++i) {
+    static const char *const errors[] = {"open", "chunk", "complete", "close"};
+    snprintf(path, sizeof(path), "/upload-error-%s", errors[i]);
+    expect(path, "abc", 500, NULL);
+    expect("/healthy", NULL, 200, "healthy");
+  }
+  expect("/upload-error-cleanup", NULL, 200, "clean");
   for (i = 0; i < 6u; ++i) {
     snprintf(marker, sizeof(marker), "%s rejected\n", lifetime[i]);
     until(marker);

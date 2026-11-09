@@ -9,6 +9,7 @@
 
 #include "vectis_internal.h"
 #include <lc/lc.h>
+#include <libxml/xmlerror.h>
 #include <lonejson.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
@@ -2756,6 +2757,77 @@ static void assert_cai_worker_surface(void) {
   mailbox->destroy(mailbox);
 }
 
+static void assert_dsv_push(const lonejson_schema_view *schema) {
+  static const char input[] =
+      " # metadata\r\nid,count,active\r\n\"a\"\"b\nline\",2,true\r\n"
+      "# ignored\r\nlast,3,false";
+  static const char *const invalid[] = {
+      "id,count,active\nbad,1\n", "id,count,active\n\"unterminated",
+      "id,count,active\n\"bad\"x,1,true\n",
+      "id,count,active\nbad,no-number,true\n"};
+  sample_dsv_view_rows rows;
+  vectis_dsv_config config = vectis_dsv_csv();
+  vectis_dsv_push *push = NULL;
+  vectis_error error;
+  size_t i, j;
+  vectis_status status;
+  memset(&rows, 0, sizeof(rows));
+  config.comment_prefix = "#";
+  assert(vectis_internal_dsv_push_new(schema, &config, sample_dsv_view_storage,
+                                      sample_dsv_view_row, &rows, &push,
+                                      &error) == VECTIS_OK);
+  for (i = 0u; i < sizeof(input) - 1u; ++i) {
+    assert(vectis_internal_dsv_push_feed(push, input + i, 1u, 0, &error) ==
+           VECTIS_OK);
+    if (i == sizeof(input) - 2u) {
+      assert(rows.rows.count == 1u); /* First row delivered before input EOF. */
+      assert(strcmp(rows.rows.last_id, "a\"b\nline") == 0);
+    }
+  }
+  assert(vectis_internal_dsv_push_feed(push, NULL, 0u, 1, &error) == VECTIS_OK);
+  assert(rows.rows.count == 2u && rows.rows.total == 5);
+  assert(strcmp(rows.rows.last_id, "last") == 0);
+  assert(vectis_internal_dsv_push_feed(push, NULL, 0u, 1, &error) == VECTIS_OK);
+  assert(vectis_internal_dsv_push_feed(push, "x", 1u, 0, &error) ==
+         VECTIS_ERR_STATE);
+  vectis_internal_dsv_push_free(push);
+  config = vectis_dsv_csv_rows();
+  config.escape = '\\';
+  memset(&rows, 0, sizeof(rows));
+  assert(vectis_internal_dsv_push_new(schema, &config, sample_dsv_view_storage,
+                                      sample_dsv_view_row, &rows, &push,
+                                      &error) == VECTIS_OK);
+  {
+    const char escaped[] = "\"a\\\"b\",7,true\n";
+    for (i = 0u; i < sizeof(escaped) - 1u; ++i)
+      assert(vectis_internal_dsv_push_feed(push, escaped + i, 1u, 0, &error) ==
+             VECTIS_OK);
+  }
+  assert(rows.rows.count == 1u && strcmp(rows.rows.last_id, "a\"b") == 0);
+  assert(vectis_internal_dsv_push_feed(push, NULL, 0u, 1, &error) == VECTIS_OK);
+  vectis_internal_dsv_push_free(push);
+  for (j = 0u; j < sizeof(invalid) / sizeof(invalid[0]) + 1u; ++j) {
+    config = vectis_dsv_csv();
+    if (j == sizeof(invalid) / sizeof(invalid[0]))
+      config.max_field_bytes = 2u;
+    memset(&rows, 0, sizeof(rows));
+    assert(vectis_internal_dsv_push_new(
+               schema, &config, sample_dsv_view_storage, sample_dsv_view_row,
+               &rows, &push, &error) == VECTIS_OK);
+    status = VECTIS_OK;
+    for (i = 0u; invalid[j % 4u][i] && status == VECTIS_OK; ++i)
+      status = vectis_internal_dsv_push_feed(push, invalid[j % 4u] + i, 1u, 0,
+                                             &error);
+    if (status == VECTIS_OK)
+      status = vectis_internal_dsv_push_feed(push, NULL, 0u, 1, &error);
+    assert(status == VECTIS_ERR_INVALID);
+    assert(rows.rows.count == 0u);
+    assert(vectis_internal_dsv_push_feed(push, "valid", 5u, 1, &error) ==
+           status);
+    vectis_internal_dsv_push_free(push);
+  }
+}
+
 static void assert_dsv_surface(void) {
   const char csv[] =
       "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
@@ -2854,6 +2926,7 @@ static void assert_dsv_surface(void) {
   assert(view_rows.rows.total == 5);
   assert(view_rows.rows.active_count == 1);
   assert(strcmp(view_rows.rows.last_id, "beta,quoted") == 0);
+  assert_dsv_push(&schema_view);
   lonejson_free(json_runtime);
 
   dsv_source =
@@ -4354,5 +4427,7 @@ int main(void) {
   assert_cai_worker_surface();
   assert_dsv_surface();
   assert_xml_surface();
+  /* Negative XML cases leave a thread-local diagnostic owned by libxml. */
+  xmlResetLastError();
   return 0;
 }

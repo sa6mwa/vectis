@@ -88,6 +88,9 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
     else
       tar -xpzf "$archive" -C "$staging" --strip-components=1
     fi
+    # Published archives can use epoch mtimes. Replacement payloads must be
+    # newer build inputs even when their paths match an earlier SDK.
+    find "$staging" -type f -exec touch -m -- {} +
     mkdir -p "$(dirname -- "$prefix")"
     rm -rf -- "$prefix"
     mv -- "$staging" "$prefix"

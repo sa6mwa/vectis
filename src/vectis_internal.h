@@ -302,6 +302,17 @@ vectis_response *vectis_internal_response_new(vectis_error *error);
 void vectis_internal_response_init(vectis_response *response);
 void vectis_internal_response_cleanup(vectis_response *response);
 void vectis_internal_response_free(vectis_response *response);
+void vectis_internal_response_move(vectis_response *destination,
+                                   vectis_response *source);
+typedef struct vectis_dsv_push vectis_dsv_push;
+vectis_status vectis_internal_dsv_push_new(const lonejson_schema_view *,
+                                           const vectis_dsv_config *,
+                                           vectis_dsv_lonejson_storage_fn,
+                                           vectis_dsv_lonejson_row_fn, void *,
+                                           vectis_dsv_push **, vectis_error *);
+vectis_status vectis_internal_dsv_push_feed(vectis_dsv_push *, const void *,
+                                            size_t, int, vectis_error *);
+void vectis_internal_dsv_push_free(vectis_dsv_push *);
 int vectis_internal_response_status_code(const vectis_response *response);
 const char *
 vectis_internal_response_content_type(const vectis_response *response);

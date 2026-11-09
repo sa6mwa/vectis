@@ -1,5 +1,9 @@
 # Musl worker-stack review
 
+The [cpkt 0.7.0 upgrade](cpkt-0.7.0-upgrade.md) adds current Lua native-stack,
+zlib-ng and constrained glibc Debug evidence. Measurements below describe their
+original repair baseline; they do not establish the current dependency selection.
+
 Scope: libvectis and its owned Lua bindings at `1068b39`, reviewed after
 reloading the pkt-systems-cmake-lifecycle skill. The library must work on musl
 worker threads with their default 128 KiB stack. A main-thread test or an enlarged

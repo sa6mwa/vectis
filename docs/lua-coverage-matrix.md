@@ -1,5 +1,10 @@
 # Lua Coverage Matrix
 
+cpkt is 0.7.0. The existing compression receiver adds `zlib-ng`; the released
+Lua VM guards native stack limits. Lua upload/DSV routes use request-thread push
+callbacks, with registry-owned request state and incremental row parsing. See
+the [upgrade review](cpkt-0.7.0-upgrade.md) for current verification and scope.
+
 MDF is 0.23.0 (ABI 7) from `c89systems/libmdf`. Released Lua adds literal writes,
 escaping, pending-word configuration and cancellable bounded file paging.
 Vectis docs uses seekable embedded input; Markdown helpers retain their owned
@@ -70,7 +75,7 @@ Archive linkage awaits an upstream no-LZO variant; LZO is explicitly deferred.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | dep:postgres | Public cpkt PostgreSQL | yes | yes | yes | yes | yes | Owned connect/progress/readiness, single-row cursors, exact text/NULL/OID/format, prepared reuse, local transaction outcomes and copied lazy `app:pg` declarations. Native/live normal/packed tests prove late SQL errors, first SQLSTATE retention, callback identity, deferred COMMIT failure, lost receipt, zero-wait lock probes and ownership. Allocation/memory evidence is scoped in `docs/useful-dependency-lua-progress.md`; see `manual/lua-postgres.md`. |
 | dep:png | Public libpng | yes | yes | yes | yes | n/a | Bounded noninterlaced RGBA8 reads and RGB/RGBA/gray8 writes, file/protected callback I/O, text/resolution metadata, limits and explicit interlaced materialization. Independent palette/tRNS/16-bit fixtures, lazy large-image row delivery, callback identity/reentry, OOM cleanup and PNG-to-PDF composition have native/normal/packed evidence. See `manual/lua-png.md`. |
-| dep:compression | Zstandard / LZ4 frame / XZ | yes | yes | yes | yes | n/a | Public C89 adapter receivers and `vectis.compression` implement bounded process/finish sinks, reader-to-writer flow and explicitly materialized helpers. Native pipeline/failure/ownership, Lua allocation failures, normal/packed behavior and preload checks pass. See `manual/lua-compression.md`; aggregate installation/platform gates remain pending. |
+| dep:compression | Zstandard / LZ4 frame / XZ / zlib-ng | yes | yes | yes | yes | n/a | Public C89 adapter receivers and `vectis.compression` implement bounded process/finish sinks, reader-to-writer flow and explicitly materialized helpers. Native pipeline/failure/ownership, Lua allocation failures, normal/packed behavior and preload checks pass. See `manual/lua-compression.md`; see the current cpkt upgrade review for installation and platform evidence. |
 | dep:pdf | cpkt PDF / Haru | yes | yes | yes | yes | n/a | Document/page/font/image ownership, text/geometry, original TrueType/PNG/JPEG fixtures, UTF-8 font selection, file/materialized output and in-memory image loading. Normal/packed behavior, native process/thread refusal and allocation-failure cleanup pass. Haru buffers PDF output; this API does not promise streaming. See `manual/lua-pdf.md`. |
 | dep:sqlite | cpkt SQLite | yes | yes | yes | yes | n/a | Standalone open/prepare/bind/row iteration/reset/exec/transactions and copied `app:sqlite` declarations use public C89 APIs. Exact integers, NULL/text/blob, errors, parent closure, process/thread ownership and allocation failures have focused checks. App declarations open after startup/fork, invalidate children on stop/restart and detach on app close. See `manual/lua-sqlite.md`. |
 | dep:lockdc-postgres | Separate liblockdc PostgreSQL XA driver | yes | yes | yes | yes | yes | Official `require("lockdc.postgres")` and `vectis.libs.lockdc_postgres` register the linked participant. `vectis.pg` adapts its exact managed borrow through public C89 APIs. Real rootless Podman Kube tests prove commit, abort, poisoned SQL errors, binary/text/NULL parameters and retained commit recovery after coordinator restart without SQL replay. This remains the distinct XA ownership path alongside standalone SQL receivers. |

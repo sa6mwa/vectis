@@ -26,6 +26,7 @@ an option is available or a release is approved.
 | [liblockdc 0.28.0 upgrade](liblockdc-0.28.0-upgrade.md) | Streaming canonical appends, shared-root compatibility, aligned LoneJSON/pslog and verification. |
 | [liblockdc 0.27.0 upgrade](liblockdc-0.27.0-upgrade.md) | Historical collection leases/edits, staged append and resumable conversion evidence. |
 | [liblockdc 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md) | Historical append-writer/count-retention upgrade evidence. |
+| [cpkt 0.7.0 upgrade](cpkt-0.7.0-upgrade.md) | zlib-ng compression integration, Lua native-stack policy and verification. |
 | [MDF 0.23.0 upgrade](libmdf-0.23.0-upgrade.md) | Bounded seekable docs paging, upstream literal/word APIs, ABI 7 and verification. |
 | [MDF 0.19.0 upgrade](libmdf-0.19.0-upgrade.md) | Historical repository migration and natural terminal URL wrapping. |
 | [MDF 0.18.0 upgrade](libmdf-0.18.0-upgrade.md) | Historical callback/ownership and palette upgrade evidence. |
@@ -61,7 +62,7 @@ include pull payloads, automatic blocking-handler renewal, kind-filtered intake,
 isolated lanes, quotas/restart policy,
 shared-runtime leadership and managed cross-process replies. Their existence
 does not undo the delivered receipt/wake path. The standalone/app-owned SQLite and PostgreSQL receivers, PDF, PNG,
-Zstd/LZ4-frame/XZ, curl sessions/multi, reusable OpenSSL keys/AES-GCM and XML
+Zstd/LZ4-frame/XZ/zlib-ng, curl sessions/multi, reusable OpenSSL keys/AES-GCM and XML
 DOM/XPath/SAX are implemented under the
 [useful dependency scope](useful-dependency-lua-spec.md); see its
 [implementation and verification evidence](useful-dependency-lua-progress.md).

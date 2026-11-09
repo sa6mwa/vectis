@@ -4,6 +4,7 @@ local app = assert(v.app.new({app_name='source-lifetime', bind='127.0.0.1',
   worker_set_affinity_disabled=true, shutdown_grace_ms=1000,
   request_body_spool_dir=assert(os.getenv('TMPDIR'))..'/spool', tls={mode='disabled'}}))
 local exit_callback_weak=setmetatable({}, {__mode='v'})
+local owner_codec
 do
   local replaced=function() error('replaced fork exit callback ran') end
   exit_callback_weak[1]=replaced
@@ -14,10 +15,17 @@ assert(app:on_fork_exit(function(role)
   assert(not pcall(app.start,app))
   assert(not pcall(app.close,app))
   assert(not pcall(app.on_fork_exit,app,nil))
+  if owner_codec then assert(owner_codec:close()); owner_codec=nil end
   io.stdout:write('fork exit '..role..'\n');io.stdout:flush()
 end))
 collectgarbage('collect');assert(exit_callback_weak[1]==nil)
 local function reject(phase)
+  -- The first ordinary route establishes worker-process/request-thread
+  -- ownership. Upload, DSV and response-source callbacks must share it.
+  if not owner_codec then
+    owner_codec=assert(v.compression.new('zlib-ng','compress'))
+  end
+  assert(owner_codec:process('x',function() return true end),phase..': foreign thread')
   collectgarbage('collect')
   local ok, err = pcall(app.close, app)
   assert(not ok and tostring(err):find('app callback', 1, true), phase..': close was accepted')
@@ -68,6 +76,27 @@ assert(app:dsv({path='/dsv',buffer_bytes=2,
   on_row=function(_,row) reject('dsv row'); assert(row.id=='one') end,
   on_complete=function(_,summary) reject('dsv complete'); assert(summary.rows==1); return owned_response('dsv_source','spooled_source') end,
 }))
+assert(app:dsv({path='/dsv-live',buffer_bytes=1,
+  schema=j.schema('live-row',{j.field('id',j.string({required=true}))}),
+  on_row=function(n,row)
+    reject('live dsv row')
+    assert(row.id==(n==1 and 'one' or 'two'))
+    io.stdout:write('live row '..n..'\n');io.stdout:flush()
+  end,
+  on_complete=function(_,summary) assert(summary.rows==2);return 'streamed' end,
+}))
+local failed_upload_closes=0
+for _,phase in ipairs({'open','chunk','complete','close'}) do
+  assert(app:upload({path='/upload-error-'..phase,buffer_bytes=1,
+    open=function() reject('error upload open');if phase=='open' then error(phase) end;return {} end,
+    on_chunk=function() reject('error upload chunk');if phase=='chunk' then error(phase) end;return true end,
+    on_complete=function() reject('error upload complete');if phase=='complete' then error(phase) end;return 'ok' end,
+    close=function() reject('error upload close');failed_upload_closes=failed_upload_closes+1;if phase=='close' then error(phase) end end,
+  }))
+end
+assert(app:route({path='/upload-error-cleanup',method='GET',handler=function()
+  assert(failed_upload_closes==3);return 'clean'
+end}))
 -- Getter failures occur after the handler's protected call. No partial native
 -- source or callback registry roots may survive these conversion failures.
 local weak=setmetatable({}, {__mode='v'})
