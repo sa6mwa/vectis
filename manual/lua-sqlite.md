@@ -4,6 +4,10 @@
 the installed public cpkt C89 API. This is a Vectis-owned binding. It requires
 the native embedded runtime; the Lua source rock alone does not supply SQLite.
 
+cpktdb 0.4.0 supplies SQLite 3.54.1. Ordinary queries expose its SQL features,
+including JSON string formatting (`format('%J', value)`) and date modifiers
+such as `end of month`. No separate Lua wrapper is required.
+
 ```lua
 local sqlite = require("vectis.sqlite")
 local db <close> = assert(sqlite.open(":memory:"))
@@ -65,6 +69,20 @@ Expected failures return `nil,error` with `status`, `status_string`, `source`,
 raises. SQL is limited to 1 MiB, 256 parameters and 1024 columns; total parameter
 bytes and copied row bytes are each limited to 16 MiB. Excess fails without
 truncation. These limits do not bound all provider allocations or query work.
+
+SQLite retains its 1,000-level expression limit. On small default worker stacks,
+some recursive SQL compilation/planning paths can instead report a native stack
+budget error (`dependency_code = 1`). This is a normal failed preparation: close
+any retained cursor, handle the error and continue using the connection. A failed
+operation in `transaction` follows the existing rollback/diagnostic contract.
+Arithmetic compilation and pathname traversal use the released stack-budget
+repairs; Vectis does not enlarge application stacks.
+
+SQLite 3.54 also rejects ALTER TABLE operations that add, drop or rename special
+rowid columns (`ROWID`, `_ROWID_`, `OID`). Existing database files are used directly;
+the upgrade adds no Vectis format migration or compatibility parser.
+The released native limits cap each schema at 10,000,000 objects and each trigger
+at 65,000 statements. Vectis retains these provider defaults.
 
 Resources have idempotent Lua `close`, `__close` and `__gc`. Database close
 invalidates retained statements. Receivers belong to their creating process and

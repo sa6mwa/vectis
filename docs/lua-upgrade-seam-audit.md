@@ -1,5 +1,15 @@
 # Vectis Lua upgrade seam audit
 
+## cpktdb 0.4.0, 2026-11-10
+
+The [upgrade review](cpktdb-0.4.0-upgrade.md) supersedes older database bundle
+pins below. SQLite 3.54.1 uses the existing native/Lua receiver, app declaration,
+transaction and error paths. Default-worker regressions exercise arithmetic,
+indexed operands, NULL/boolean semantics, deep controlled errors and pathname
+resolution. New native completeness and SQL-function string-result APIs remain
+C-only: there is no corresponding current Vectis Lua workflow. No provider
+facade or application stack default is modified.
+
 ## cpkt 0.7.0, 2026-11-09
 
 The [upgrade specification and evidence](cpkt-0.7.0-upgrade.md) supersede older

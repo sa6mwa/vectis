@@ -4,6 +4,8 @@ assert(vectis.sqlite == sqlite)
 assert(require('vectis.sql').NULL == sqlite.NULL)
 assert(require('vectis.pg').NULL == sqlite.NULL)
 local db = assert(sqlite.open(':memory:'))
+local upgrade_cases=dofile(assert(os.getenv('VECTIS_SQLITE_UPGRADE_CASES')))
+upgrade_cases(db,sqlite.NULL)
 local function exec(sql, params) return assert(db:exec(sql, params or {})) end
 exec('create table t (id INTEGER PRIMARY KEY, text TEXT, data BLOB, n)')
 local inserted = exec('insert into t values (?,?,?,?)',
@@ -132,6 +134,7 @@ options.name = 'changed'
 assert(owned:exec('create table app_data (value)', {}) == nil)
 assert(app:sqlite({name='application',path=':memory:'}) == nil)
 assert(app:start())
+upgrade_cases(owned,sqlite.NULL)
 assert(owned:exec('create table app_data (value)', {}))
 assert(owned:exec('insert into app_data values (?)', {'persistent'}))
 assert(app:sqlite({name='late',path=':memory:'}) == nil)

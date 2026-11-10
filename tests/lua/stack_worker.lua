@@ -124,6 +124,7 @@ function stack_read(capacity)
 end
 local sqlite = require('vectis.sqlite.core')
 local db <close> = assert(sqlite.open(':memory:'))
+dofile(stack_script_path:gsub('stack_worker%.lua$','sqlite_upgrade_cases.lua'))(db,sqlite.NULL)
 local params, placeholders = {}, {}
 for i=1,256 do params[i]=i; placeholders[i]='?' end
 local row = assert(assert(db:query('SELECT '..table.concat(placeholders,','),params)):next())

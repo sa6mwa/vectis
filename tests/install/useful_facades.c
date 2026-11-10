@@ -1,3 +1,4 @@
+#include <cpkt/sqlite.h>
 #include <lc/lc.h>
 #include <libmdf.h>
 #include <lql/lql.h>
@@ -112,6 +113,7 @@ int vectis_install_useful_facades(void) {
   lql_client->selector_destroy(lql_client, lql_selection);
   lql_client->destroy(lql_client);
   memset(&error, 0, sizeof(error));
+  CHECK(strcmp(cpkt_sqlite_library_version(), "3.54.1") == 0);
   CHECK(vectis_sqlite_open(":memory:", NULL, &sqlite, &error) == VECTIS_OK);
   CHECK(sqlite->prepare(sqlite, "SELECT 7", strlen("SELECT 7"), 1, &statement,
                         &error) == VECTIS_OK);

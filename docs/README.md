@@ -27,6 +27,7 @@ an option is available or a release is approved.
 | [liblockdc 0.27.0 upgrade](liblockdc-0.27.0-upgrade.md) | Historical collection leases/edits, staged append and resumable conversion evidence. |
 | [liblockdc 0.24.0 upgrade](liblockdc-0.24.0-upgrade.md) | Historical append-writer/count-retention upgrade evidence. |
 | [cpkt 0.7.0 upgrade](cpkt-0.7.0-upgrade.md) | zlib-ng compression integration, Lua native-stack policy and verification. |
+| [cpktdb 0.4.0 upgrade](cpktdb-0.4.0-upgrade.md) | SQLite 3.54.1, guarded database worker stacks and integration evidence. |
 | [MDF 0.23.0 upgrade](libmdf-0.23.0-upgrade.md) | Bounded seekable docs paging, upstream literal/word APIs, ABI 7 and verification. |
 | [MDF 0.19.0 upgrade](libmdf-0.19.0-upgrade.md) | Historical repository migration and natural terminal URL wrapping. |
 | [MDF 0.18.0 upgrade](libmdf-0.18.0-upgrade.md) | Historical callback/ownership and palette upgrade evidence. |

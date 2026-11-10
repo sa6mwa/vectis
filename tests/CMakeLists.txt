@@ -62,6 +62,7 @@ if(VECTIS_BUILD_TESTS AND VECTIS_BUILD_BINARY)
     COMMAND "${CMAKE_COMMAND}" "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
       "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}/tests/sqlite"
       "-DSCRIPT=${CMAKE_SOURCE_DIR}/tests/lua/sqlite.lua"
+      "-DEXTRA_ENV=VECTIS_SQLITE_UPGRADE_CASES=${CMAKE_SOURCE_DIR}/tests/lua/sqlite_upgrade_cases.lua"
       -P "${CMAKE_SOURCE_DIR}/tests/lua/upgrade_seams.cmake")
   set_tests_properties(vectis_lua_sqlite PROPERTIES LABELS "lua;local;packed;failure-fast" TIMEOUT 15 RUN_SERIAL TRUE)
   add_test(NAME vectis_lua_upstream_facades

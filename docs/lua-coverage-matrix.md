@@ -1,5 +1,10 @@
 # Lua Coverage Matrix
 
+cpktdb is 0.4.0: SQLite 3.54.1 flows through the existing owned C/Lua and app
+receivers, with guarded compilation/planning on small workers. PostgreSQL 18.6
+and iODBC 3.52.16 remain unchanged. See the
+[database upgrade review](cpktdb-0.4.0-upgrade.md) for scope and verification.
+
 cpkt is 0.7.0. The existing compression receiver adds `zlib-ng`; the released
 Lua VM guards native stack limits. Lua upload/DSV routes use request-thread push
 callbacks, with registry-owned request state and incremental row parsing. See
