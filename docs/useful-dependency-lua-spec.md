@@ -257,12 +257,11 @@ encode accepts packed pixels matching the declared format, with no padding.
 
 ## Archive: bundles and import/export
 
-Blocked dependency: the selected public `cpkt::archive` target imports
-`cpkt::libarchive_static`, whose declared closure includes
-`cpkt::lzo_native_static`; the shared equivalent also requires LZO. The user
-explicitly deferred LZO. Do not link an archive binding or ship an unverified
-stub. This component awaits an upstream cpktmisc variant with a public archive
-target and implementation that do not require LZO. Other components proceed.
+Status updated with cpktmisc 0.4.0: its public static/shared archive targets no
+longer require LZO, clearing the original dependency blocker. The binding below
+remains planned and unimplemented; the version upgrade preserves shipped
+surfaces. LZO remains explicitly deferred. A future archive implementation must
+keep external-program filters disabled, including upstream's lzop fallback.
 
 Public C: `vectis/archive.h`; Lua: `vectis.archive`. Readers accept explicit paths
 or bounded callbacks; iterate copied entry metadata and read entry bytes in

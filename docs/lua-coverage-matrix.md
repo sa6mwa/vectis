@@ -74,7 +74,10 @@ Current useful-surface implementation follows
 SQLite standalone receivers and app-owned declarations are implemented;
 PDF reports and standalone/app-owned PostgreSQL are implemented.
 PNG row/materialized I/O and selected compression codecs are implemented.
-Archive linkage awaits an upstream no-LZO variant; LZO is explicitly deferred.
+cpktmisc 0.4.0 removes LZO, unblocking the separately planned archive binding;
+that binding remains unimplemented. LZO is explicitly deferred. Existing misc
+receivers use the new stack-safe provider workspaces; see the
+[upgrade review](cpktmisc-0.4.0-upgrade.md) for worker and integration evidence.
 
 | ID | Surface | Native | DX | Local | Packed | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -195,8 +198,8 @@ The earlier exhaustive parity requirements for GSSAPI/SASL/plugins and raw
 libssh2 are superseded by the useful-surface specification. SSH is parked.
 SQLite, standalone PostgreSQL, PDF/PNG and selected compression are delivered
 with scoped evidence above, including reusable OpenSSL keys/AES-GCM.
-XML DOM/XPath/SAX is delivered with component evidence. Curl sessions/multi and Vectis HTTP ownership are delivered. Archive awaits an
-upstream public target without transitive LZO; LZO is deferred. Existing
+XML DOM/XPath/SAX is delivered with component evidence. Curl sessions/multi and Vectis HTTP ownership are delivered. Archive is now unblocked by
+cpktmisc 0.4.0, but its binding remains unimplemented; LZO is deferred. Existing
 workflows remain available; component evidence does not complete the whole goal.
 
 ## Response conversion and logger ownership regression evidence

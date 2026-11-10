@@ -1,5 +1,17 @@
 # Vectis Lua upgrade seam audit
 
+## cpktmisc 0.4.0, 2026-11-10
+
+The [upgrade specification and evidence](cpktmisc-0.4.0-upgrade.md) supersede
+older misc pins and archive-blocker descriptions below. Existing OPC UA,
+audio/SUS, PDF/PNG and bounded compression receivers consume the released
+providers. Default-worker checks cover UTF-8 CID fonts, compression and deep
+diagnostic ownership; no shipping stack policy or authoritative Lua facade is
+changed. Audio allocation errors retain the existing dependency diagnostic.
+FFI admission limits remain an SDK C contract, with no current Lua FFI workflow.
+LZO is absent from 0.4.0; the separately planned archive binding is now
+unblocked, still unimplemented. No external filter fallback is exposed.
+
 ## cpktdb 0.4.0, 2026-11-10
 
 The [upgrade review](cpktdb-0.4.0-upgrade.md) supersedes older database bundle

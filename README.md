@@ -62,7 +62,7 @@ archive cache. The current expected dependency set is:
 - `cpkt` 0.7.0 for curl, OpenSSL, libssh2, nghttp2, zlib, zlib-ng, Lua 5.5.1,
   the C89 Lua runtime facade, libxml2 and supporting core package metadata.
 - `cpktdb` 0.4.0 for the PostgreSQL and SQLite 3.54.1 C89 facades.
-- `cpktmisc` 0.2.1 for OPC UA, audio/miniaudio, SUS/whisper and the optional
+- `cpktmisc` 0.4.0 for OPC UA, audio/miniaudio, SUS/whisper and the optional
   data/compression/PDF/PNG/FFI facades. Each bundle keeps its own SDK prefix.
 - `liblockdc` 0.28.0 plus its separate PostgreSQL XA provider for lockd C and
   Lua surfaces, incremental Pouch collections, count/state retention and transactional workflows.

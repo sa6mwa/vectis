@@ -1,5 +1,9 @@
 # Audio Lua Facade
 
+The cpktmisc 0.4.0 decoder keeps MP3 network scratch on the heap and compacts
+the bounded rewind buffer in batches. Reads remain incremental; allocation
+failure is reported through the existing `audio.ERR_ALLOC` dependency error.
+
 `require("audio")` exposes the dependency-native cpkt audio facade in the
 embedded Vectis Lua runtime. It is a receiver-shell binding over the bundled
 `cpkt_audio` C89 facade, not a higher-level Vectis workflow wrapper.

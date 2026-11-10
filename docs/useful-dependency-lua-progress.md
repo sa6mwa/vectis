@@ -9,8 +9,10 @@ and implementation review provide current completion status and evidence.
 
 Existing upstream Lua facades remain unchanged. The user subsequently authorized
 the released LQL 0.4.0 upgrade; see `liblql-0.4.0-upgrade.md`. SSH stays deferred. LZO was explicitly deferred by the user.
-Archive is blocked because cpktmisc 0.2.1's public static/shared archive targets
-link LZO transitively. No SDK patches or link-closure bypasses were made.
+Archive was blocked by cpktmisc 0.2.1's transitive LZO linkage. The 0.4.0 upgrade
+removes that upstream dependency, so the binding is now unblocked but remains
+unimplemented. No SDK patches or link-closure bypasses were made. Older
+component checkpoints below describe their original dependency baseline.
 
 ## SQLite standalone receiver
 
@@ -257,7 +259,7 @@ package and review evidence follows; these counts describe their scoped runs.
 
 ## Remaining implementation
 
-- Archive after the stated upstream dependency blocker is resolved.
+- Archive binding (dependency blocker resolved by cpktmisc 0.4.0).
 - Final aggregate behavior, memory/service, package/static/shared and promised
   platform verification, documentation reconciliation and implementation review.
 
@@ -268,7 +270,7 @@ All selected SQLite, PostgreSQL, PDF, PNG, Zstd/LZ4-frame/XZ, curl, OpenSSL and
 XML surfaces are implemented, including native ownership, Lua integration,
 Vectis-owned convenience seams, docs/examples and packaging declarations. The
 user-authorized LQL 0.4.0 upgrade consumes its released facade unchanged. The
-remaining archive scope is deferred with LZO; SSH and upstream provider changes
+remaining archive scope is now unblocked but unimplemented; LZO, SSH and upstream provider changes
 remain excluded. The implementation review records the final integration pass.
 
 The user required completing the whole implementation before testing. The earlier

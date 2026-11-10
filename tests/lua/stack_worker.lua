@@ -135,6 +135,10 @@ local encoded=assert(png.encode_materialized({width=1,height=1,format='rgba8',pi
 assert(png.decode_materialized(encoded).pixels==pixels)
 local pdf <close> = assert(require('vectis.pdf.core').new())
 local page <close> = assert(pdf:add_page())
+-- UTF-8 TrueType fonts build CID maps; keep the default worker stack intact.
+local font_path=stack_script_path:gsub('lua/stack_worker%.lua$','fixtures/pdf/VectisTest.ttf')
+local font <close> = assert(pdf:load_font(font_path,{encoding='UTF-8'}))
+assert(page:text(20,170,'A中',{font=font,size=14}))
 local image <close> = assert(pdf:load_image_materialized(encoded,{format='png'}))
 assert(page:image(image,10,10,20,20))
 assert(pdf:bytes_materialized():sub(1,5)=='%PDF-')
