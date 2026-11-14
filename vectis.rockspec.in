@@ -21,7 +21,7 @@ App-owned Pouch collections, leases, atomic edits, staged append writers,
 count retention and resumable compression conversion use the released
 liblockdc 0.28.0 surface unchanged.
   ]],
-  homepage = "https://github.com/sa6mwa/vectis",
+  homepage = "https://github.com/c89systems/vectis",
   license = "MIT",
 }
 

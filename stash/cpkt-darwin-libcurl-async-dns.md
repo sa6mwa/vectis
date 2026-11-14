@@ -17,7 +17,7 @@ of a libcurl or Kore runtime defect.
   `c.pkt.systems-0.10.0-arm64-apple-darwin.tar.gz`, SHA-256
   `f63f0e6e847108b287726dbd8d2566ee9255d2c744d8cfcf3b192a4ca791de77`.
 - Native `macos-26` arm64 run:
-  https://github.com/sa6mwa/vectis/actions/runs/36192250879
+  https://github.com/c89systems/vectis/actions/runs/36192250879
 - The dedicated `vectis_unit_proxy_curl_capabilities` test reports:
 
   ```text
